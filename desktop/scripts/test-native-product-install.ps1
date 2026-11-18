@@ -139,7 +139,15 @@ try {
         $phase = 'installed-lan-entry'
         & $python -B (Join-Path $repoRoot 'native-host/tests/lan_entry_windows.py') --runtime $installed --report (Join-Path $buildRoot 'native-product-lan.json')
         if ($LASTEXITCODE -ne 0) { throw 'Installed LAN/Web HTTPS entry gate failed.' }
-        $report.lanEntryQualified = $true
+        # The receipt states whether a private LAN HTTPS interface actually existed on this
+        # machine. Copy its real value; a runner without a private IPv4 must not be recorded
+        # as qualified LAN delivery.
+        $lanReceiptPath = Join-Path $buildRoot 'native-product-lan.json'
+        if (-not (Test-Path -LiteralPath $lanReceiptPath)) { throw 'LAN entry receipt is missing.' }
+        $lanReceipt = Get-Content -LiteralPath $lanReceiptPath -Raw | ConvertFrom-Json
+        if ($lanReceipt.passed -ne $true) { throw 'LAN entry receipt did not pass.' }
+        $report.lanEntryQualified = [bool]$lanReceipt.lanHttpsQualified
+        $report.lanEntrySkipReason = [string]$lanReceipt.lanHttpsSkipReason
         $phase = 'same-machine-upgrade'
         $match = [regex]::Match($version, '^(5\.[01]\.0-rc\.)([0-9]+)$')
         if (-not $match.Success) { throw 'Complete candidate version is not rc.N.' }

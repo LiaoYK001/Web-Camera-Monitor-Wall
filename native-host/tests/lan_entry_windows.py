@@ -6,6 +6,12 @@ separate process that reaches the product through the machine's private LAN
 interface over HTTPS, which proves the reverse proxy, the local CA, the allowed
 origins and independent sessions. A physically separate computer on the user's
 network is still required for R3-004 device qualification.
+
+A CI Windows host can legitimately have no private IPv4 interface at all. That is
+recorded honestly as ``lanHttpsQualified=false`` with a skip reason while the
+entry's own contracts (setting persistence, receipt, loopback-only switch, no
+listener, account sessions, restart behaviour, process cleanup) are still proved;
+the gate never claims HTTPS LAN delivery it could not reach.
 """
 from __future__ import annotations
 
@@ -118,7 +124,8 @@ def exercise(runtime, report):
         raise ValueError("test-side PowerShell 7 required")
     evidence = {"schema": 1, "kind": "native-lan-entry", "version": manifest["version"],
         "passed": False, "checks": [], "lastCheckpoint": "prepare",
-        "remoteDeviceQualified": False, "addresses": [], "port": 0}
+        "remoteDeviceQualified": False, "lanHttpsQualified": False, "lanHttpsSkipReason": "",
+        "addresses": [], "port": 0}
     process = None
     port = 18443 + secrets.randbelow(2000)
     account = {"username": "lan-owner", "password": secrets.token_urlsafe(24)}
@@ -170,42 +177,41 @@ def exercise(runtime, report):
         profile.mkdir()
         try:
             evidence["lastCheckpoint"] = "setting-persisted"
-            contract.write_setting(profile, True, port)
-            addresses = contract.discover_addresses()
-            evidence["discoveredAddresses"] = list(addresses)
-            if not addresses:
-                raise AssertionError("no private IPv4 address on this Windows host; the LAN "
-                    "entry cannot be qualified without one")
+            setting = contract.write_setting(profile, True, port)
+            assert setting["enabled"] is True and setting["port"] == port, \
+                "the LAN setting did not persist for this profile"
+            discovered = contract.discover_addresses()
+            evidence["discoveredAddresses"] = list(discovered)
             evidence["lastCheckpoint"] = "installed-entry-started"
             status = launch(profile)
             evidence["ownerPid"] = status["ownerPid"]
-            evidence["lastCheckpoint"] = "lan-receipt-published"
-            receipt = status.get("lan") or {}
-            assert receipt.get("enabled") is True, "the status receipt did not report the LAN entry"
-            assert receipt.get("running") is True, "the LAN HTTPS listener did not start"
-            assert receipt.get("urls"), "the LAN entry published no HTTPS URL"
-            assert receipt.get("pendingRestart") is False, \
-                "a boot-time entry must not report a pending restart"
-            assert receipt.get("switchPort"), "the private LAN switch is not listening on loopback"
-            assert all(url.startswith("https://") for url in receipt["urls"]), \
-                "the LAN entry must publish HTTPS URLs only"
-            assert contract.private_ipv4(addresses[0]), "discovered address is not private"
-            evidence["addresses"] = list(addresses)
-            evidence["port"] = port
-            evidence["urls"] = list(receipt["urls"])
-            assert tcp_open(addresses[0], port), "the LAN HTTPS port is not reachable on the LAN interface"
-            evidence["checks"].append("lan-https-listener-reachable-on-private-interface")
+            local_port = int(status["origin"].rsplit(":", 1)[1])
 
-            evidence["lastCheckpoint"] = "local-ca-issued"
-            certificate = profile / "caddy/pki/authorities/local/root.crt"
-            wait_for(lambda: certificate.is_file(), "the product local CA was not issued", timeout=30)
+            def loopback():
+                return Client("127.0.0.1", local_port, secure=False)
+
+            def boot_receipt(value):
+                receipt = value.get("lan") or {}
+                assert receipt.get("enabled") is True, "the status receipt did not report the LAN entry"
+                assert receipt.get("pendingRestart") is False, \
+                    "a boot-time entry must not report a pending restart"
+                assert receipt.get("switchPort"), "the private LAN switch is not listening on loopback"
+                return receipt
+
+            evidence["lastCheckpoint"] = "lan-receipt-published"
+            receipt = boot_receipt(status)
+            addresses = tuple(receipt.get("addresses") or ())
+            assert all(url.startswith("https://") for url in receipt.get("urls") or ()), \
+                "the LAN entry must publish HTTPS URLs only"
 
             evidence["lastCheckpoint"] = "switch-loopback-only"
+            # The switch is the window's private channel: no token, no toggle, and
+            # it must never answer on the LAN address the consumers use.
             switch = Client("127.0.0.1", receipt["switchPort"], secure=False)
-            assert switch.request("/lan")[0] == 401, \
-                "the LAN switch answered without the host token"
+            assert switch.request("/lan")[0] == 401, "the LAN switch answered without the host token"
             assert switch.request("/lan", {"enabled": False, "port": port})[0] == 401, \
                 "the LAN switch accepted an unauthenticated toggle"
+            assert tcp_open("127.0.0.1", receipt["switchPort"]), "the private switch is not on loopback"
             evidence["checks"].append("lan-switch-rejects-unauthenticated-read-and-toggle")
 
             evidence["lastCheckpoint"] = "status-file-reports-the-entry"
@@ -216,56 +222,110 @@ def exercise(runtime, report):
                 "the status file did not publish the private switch port"
             assert published.get("lan", {}).get("enabled") is True, \
                 "the status file did not report the enabled LAN entry"
-            assert published.get("lan", {}).get("urls") == receipt["urls"], \
+            assert published.get("lan", {}).get("urls") == receipt.get("urls") or [], \
                 "the status file and the switch receipt disagree about the published URLs"
             evidence["checks"].append("lan-receipt-published-for-support-diagnostics")
 
-            evidence["lastCheckpoint"] = "lan-https-health"
-            lan = Client(addresses[0], port, secure=True, cafile=certificate)
-            code, body = lan.request("/api/v1/health", origin=f"https://{addresses[0]}:{port}")
-            assert code == 200, f"LAN HTTPS health failed: {code} {body[:200]}"
-            evidence["checks"].append("ca-verified-https-health-through-product-proxy")
-
-            evidence["lastCheckpoint"] = "foreign-origin-rejected"
-            rejected, rejected_body = lan.request("/api/v1/auth/login", {"username": account["username"],
-                "password": account["password"]}, origin="http://127.0.0.1:1")
-            assert rejected != 200, "a foreign Origin was accepted over the LAN entry"
-            assert "session" not in rejected_body.lower(), "a rejected Origin issued account data"
-            evidence["checks"].append(f"foreign-origin-rejected-{rejected}")
-
-            evidence["lastCheckpoint"] = "lan-login-and-session"
-            code, _ = lan.request("/api/v1/auth/login", account, origin=f"https://{addresses[0]}:{port}")
-            assert code == 200 and lan.cookie, f"LAN HTTPS login failed: {code}"
-            code, body = lan.request("/api/v1/auth/session", cookie=lan.cookie,
-                origin=f"https://{addresses[0]}:{port}")
-            assert code == 200 and account["username"] in body, "LAN session is not authenticated"
-
-            evidence["lastCheckpoint"] = "loopback-and-lan-sessions-independ"
-            local = Client("127.0.0.1", status["origin"].rsplit(":", 1)[1], secure=False)
+            evidence["lastCheckpoint"] = "account-provisioned-on-loopback"
+            # The installed product starts with an empty account store; the first
+            # account is created through the loopback setup endpoint, then the same
+            # real account is used by every later client.
+            local = loopback()
+            code, body = local.request("/api/v1/auth/setup")
+            assert code == 200 and json.loads(body).get("registrationOpen") is True, \
+                f"the account store did not open registration on a fresh profile: {code} {body[:160]}"
+            code, _ = local.request("/api/v1/auth/setup", account, origin=status["origin"])
+            assert code == 201, f"the first account could not be created: {code}"
             code, _ = local.request("/api/v1/auth/login", account, origin=status["origin"])
-            assert code == 200 and local.cookie, f"loopback login failed after LAN login: {code}"
-            code, _ = local.request("/api/v1/auth/session", cookie=local.cookie, origin=status["origin"])
-            assert code == 200, "loopback session lost after the LAN session opened"
-            code, _ = lan.request("/api/v1/auth/logout", {}, cookie=lan.cookie, method="POST",
-                origin=f"https://{addresses[0]}:{port}")
-            assert code == 204, f"LAN logout did not report: {code}"
-            code, _ = lan.request("/api/v1/auth/session", cookie=lan.cookie,
-                origin=f"https://{addresses[0]}:{port}")
-            assert code != 200, "the closed LAN session still authenticated"
-            code, _ = local.request("/api/v1/auth/session", cookie=local.cookie, origin=status["origin"])
-            assert code == 200, "ending the LAN client stopped the local consumer"
-            evidence["checks"].append("two-clients-share-one-product-and-exit-independently")
+            assert code == 200 and local.cookie, f"loopback login failed: {code}"
+            code, session = local.request("/api/v1/auth/session", cookie=local.cookie,
+                origin=status["origin"])
+            assert code == 200 and account["username"] in session, "loopback session is not authenticated"
+            code, _ = local.request("/api/v1/auth/setup", account, origin=status["origin"])
+            assert code == 409, "a created account store still accepted a second first account"
+            evidence["checks"].append("first-account-created-through-loopback-setup")
+
+            if addresses:
+                evidence["lanHttpsQualified"] = True
+                assert contract.private_ipv4(addresses[0]), "discovered address is not private"
+                assert tcp_open(addresses[0], port), \
+                    "the LAN HTTPS port is not reachable on the LAN interface"
+                evidence["checks"].append("lan-https-listener-reachable-on-private-interface")
+
+                evidence["lastCheckpoint"] = "local-ca-issued"
+                certificate = profile / "caddy/pki/authorities/local/root.crt"
+                wait_for(lambda: certificate.is_file(), "the product local CA was not issued", timeout=30)
+
+                evidence["lastCheckpoint"] = "lan-https-health"
+                lan = Client(addresses[0], port, secure=True, cafile=certificate)
+                code, body = lan.request("/api/v1/health", origin=f"https://{addresses[0]}:{port}")
+                assert code == 200, f"LAN HTTPS health failed: {code} {body[:200]}"
+                evidence["checks"].append("ca-verified-https-health-through-product-proxy")
+
+                evidence["lastCheckpoint"] = "foreign-origin-rejected"
+                rejected, rejected_body = lan.request("/api/v1/auth/login", account,
+                    origin="http://127.0.0.1:1")
+                assert rejected != 200, "a foreign Origin was accepted over the LAN entry"
+                assert "session" not in rejected_body.lower(), "a rejected Origin issued account data"
+                evidence["checks"].append(f"foreign-origin-rejected-{rejected}")
+
+                evidence["lastCheckpoint"] = "lan-login-and-session"
+                code, _ = lan.request("/api/v1/auth/login", account, origin=f"https://{addresses[0]}:{port}")
+                assert code == 200 and lan.cookie, f"LAN HTTPS login failed: {code}"
+                code, body = lan.request("/api/v1/auth/session", cookie=lan.cookie,
+                    origin=f"https://{addresses[0]}:{port}")
+                assert code == 200 and account["username"] in body, "LAN session is not authenticated"
+
+                evidence["lastCheckpoint"] = "loopback-and-lan-sessions-independ"
+                again = loopback()
+                code, _ = again.request("/api/v1/auth/login", account, origin=status["origin"])
+                assert code == 200 and again.cookie, f"loopback login failed after LAN login: {code}"
+                code, _ = again.request("/api/v1/auth/session", cookie=again.cookie, origin=status["origin"])
+                assert code == 200, "loopback session lost after the LAN session opened"
+                code, _ = lan.request("/api/v1/auth/logout", {}, cookie=lan.cookie, method="POST",
+                    origin=f"https://{addresses[0]}:{port}")
+                assert code == 204, f"LAN logout did not report: {code}"
+                code, _ = lan.request("/api/v1/auth/session", cookie=lan.cookie,
+                    origin=f"https://{addresses[0]}:{port}")
+                assert code != 200, "the closed LAN session still authenticated"
+                code, _ = again.request("/api/v1/auth/session", cookie=again.cookie, origin=status["origin"])
+                assert code == 200, "ending the LAN client stopped the local consumer"
+                evidence["checks"].append("two-clients-share-one-product-and-exit-independently")
+            else:
+                # Honest degradation: this host exposes no private IPv4, so no LAN
+                # HTTPS URL can exist. The entry must stay closed rather than fall
+                # back to plain HTTP, and the local consumer must keep working.
+                evidence["lanHttpsSkipReason"] = "no-private-ipv4-interface"
+                assert receipt.get("running") is False, \
+                    "a LAN entry without a private address must not start a listener"
+                assert receipt.get("urls") == [], \
+                    "a LAN entry without a private address published URLs"
+                assert receipt.get("reason") == "lan-address-unavailable", \
+                    f"unexpected LAN reason: {receipt.get('reason')}"
+                assert not tcp_open("127.0.0.1", port), \
+                    "the LAN port opened anyway without a private address"
+                code, _ = local.request("/api/v1/auth/session", cookie=local.cookie, origin=status["origin"])
+                assert code == 200, "the local consumer broke when no LAN address existed"
+                evidence["checks"].append("lan-entry-stays-closed-without-a-private-address")
+                print("NOTE no private IPv4 interface: LAN HTTPS is reported as not qualified")
+
+            evidence["addresses"] = list(addresses)
+            evidence["port"] = port
+            evidence["urls"] = list(receipt.get("urls") or ())
 
             evidence["lastCheckpoint"] = "disable-and-restart-closes-listener"
             stop(profile)
             contract.write_setting(profile, False, port)
             status = launch(profile)
-            receipt = status.get("lan") or {}
-            assert receipt.get("enabled") is False, "the restart did not read the disabled setting"
-            assert receipt.get("urls") == [], "a disabled LAN entry still published URLs"
-            assert not tcp_open(addresses[0], port), "the LAN port stayed open after disabling"
-            local = Client("127.0.0.1", status["origin"].rsplit(":", 1)[1], secure=False)
-            code, _ = local.request("/api/v1/auth/login", account, origin=status["origin"])
+            disabled = status.get("lan") or {}
+            assert disabled.get("enabled") is False, "the restart did not read the disabled setting"
+            assert disabled.get("urls") == [], "a disabled LAN entry still published URLs"
+            assert disabled.get("running") is False, "a disabled LAN entry still runs a listener"
+            for address in addresses:
+                assert not tcp_open(address, port), "the LAN port stayed open after disabling"
+            assert not tcp_open("127.0.0.1", port), "the LAN port stayed open on loopback after disabling"
+            again = loopback()
+            code, _ = again.request("/api/v1/auth/login", account, origin=status["origin"])
             assert code == 200, "loopback monitoring stopped working after disabling the LAN entry"
             evidence["checks"].append("disabled-setting-restarts-without-a-listener")
             stop(profile)
