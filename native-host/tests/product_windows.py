@@ -529,6 +529,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 ffmpeg, ffprobe = pixel_windows.locked_ffmpeg(private, False)
                 fixtures = pixel_windows.make_fixtures(private, ffmpeg, ffprobe, shutil.which("node"), all_hevc=True)
                 assert all(item["codec"] == "hevc" for item in fixtures)
+                assert fixtures[0]["audioTracks"] == 2, "dual audio-track fixture was not encoded"
                 evidence["fixtures"] = fixtures
                 rtsp = pixel_windows.LoopbackRtsp(private, ffmpeg, ffprobe, fixtures, secrets.token_hex(16), False)
                 phase = "existing-camera-api"
