@@ -67,11 +67,16 @@ void ProductLanSwitch::request(const QByteArray &method, const QJsonObject &body
 		pending_.remove(reply);
 		const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 		const auto document = QJsonDocument::fromJson(*bytes);
-		// A transport failure or a non-JSON body is reported as 0 so the window
-		// keeps the last known receipt instead of guessing a new state.
-		const int result_code = reply->error() == QNetworkReply::NoError && document.isObject()
+		// A transport failure, or a 2xx/3xx body this switch cannot parse, is reported
+		// as 0 so the window keeps the last known receipt instead of guessing a new
+		// state. A real HTTP error status is always reported, JSON body or not, because
+		// the window must distinguish "the switch refused" from "the switch is silent".
+		// Qt reports a 401/500 response as a reply error too, so the status attribute
+		// decides first: any HTTP error status is surfaced, a silent transport failure
+		// (no status at all) stays 0.
+		const int result_code = code >= 400
 			? code
-			: (code >= 400 ? code : 0);
+			: (reply->error() == QNetworkReply::NoError && document.isObject() ? code : 0);
 		reply->deleteLater();
 		callback(result_code, document.isObject() ? document.object() : QJsonObject{});
 	});

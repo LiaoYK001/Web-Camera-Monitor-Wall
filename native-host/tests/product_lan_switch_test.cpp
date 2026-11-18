@@ -17,13 +17,6 @@ using webobs::native_host::ProductLanSwitch;
 const QByteArray secret(64, 'a');
 void require(bool value, const char *message) { if (!value) throw std::runtime_error(message); }
 
-void pause(int ms)
-{
-	QEventLoop loop;
-	QTimer::singleShot(ms, &loop, &QEventLoop::quit);
-	loop.exec();
-}
-
 struct Fixture {
 	// The listener is heap-owned so a test can close it: destroying QTcpServer releases the
 	// listening socket on every Qt 6 version, which is what the dead-switch case needs.
@@ -119,8 +112,13 @@ int main(int argc, char **argv)
 		require(client.usable(), "the loopback LAN switch was refused");
 		require(exchange(fixture, client, "GET", {}) == 200, "LAN status read failed");
 		require(fixture.requests.contains("GET /lan HTTP/1.1"), "LAN status is not a plain GET");
-		require(fixture.requests.contains("X-WebOBS-Native-Token: " + secret), "host token was not supplied");
-		require(!fixture.requests.contains("Cookie:"), "the LAN switch request carried a session cookie");
+		// Qt canonicalizes raw header names (X-Webobs-Native-Token) and HTTP names are
+		// case-insensitive, so the fixture compares the whole header block lowercased.
+		const QByteArray lowered = fixture.requests.toLower();
+		require(lowered.contains("x-webobs-native-token: " + QByteArray(secret).toLower()),
+			"host token was not supplied");
+		require(lowered.contains("origin: http://127.0.0.1:"), "the LAN switch request has no own origin");
+		require(!lowered.contains("cookie:"), "the LAN switch request carried a session cookie");
 
 		fixture.next_body = R"({"enabled":true,"port":18443,"urls":["https://192.168.1.9:18443"],
 			"running":false,"pendingRestart":true})";
@@ -134,10 +132,19 @@ int main(int argc, char **argv)
 		require(exchange(fixture, client, "POST", QJsonObject{{"enabled", false}, {"port", 18443}}) == 401,
 			"an unauthenticated LAN toggle was not reported");
 
+		// A 200 whose body is not a JSON object is unreadable: report 0 so the window
+		// keeps the last receipt instead of inventing a state.
+		fixture.next_code = 200;
+		fixture.send_json = false;
+		require(exchange(fixture, client, "POST", QJsonObject{{"enabled", true}, {"port", 18443}}) == 0,
+			"an unreadable LAN reply was reported as a usable state");
+
+		// A server error is reported even when the body is an HTML error page.
 		fixture.next_code = 500;
+		fixture.send_json = true;
 		fixture.next_body = QByteArray("<html>not json</html>");
-		require(exchange(fixture, client, "POST", QJsonObject{{"enabled", false}, {"port", 18443}}) == 0,
-			"an unreadable LAN reply was reported as a status code");
+		require(exchange(fixture, client, "POST", QJsonObject{{"enabled", false}, {"port", 18443}}) == 500,
+			"a failing LAN switch was reported as silent instead of refused");
 
 		fixture.oversized = true;
 		fixture.next_code = 200;
