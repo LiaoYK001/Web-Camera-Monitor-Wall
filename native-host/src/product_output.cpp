@@ -246,7 +246,8 @@ struct ProductProgramOutputImpl {
 			return false;
 		}
 		const int api_port = free_tcp_port();
-		const int rtsp_port = free_tcp_port();
+		int rtsp_port = free_tcp_port();
+		while (rtsp_port && rtsp_port == api_port) rtsp_port = free_tcp_port();
 		const int udp_port = free_udp_port();
 		if (!api_port || !rtsp_port || !udp_port) {
 			error = "mediamtx-port-failed";
