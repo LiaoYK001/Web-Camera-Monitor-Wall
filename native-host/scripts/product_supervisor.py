@@ -497,6 +497,8 @@ class ProductSupervisor:
                 WEBOBS_NATIVE_PROFILE_ROOT=str(self.root / "native-profile"))
             if self.complete and getattr(self, "program_recordings", None) is not None:
                 frontend_environment["WEBOBS_PROGRAM_RECORDINGS"] = str(self.program_recordings)
+                frontend_environment["WEBOBS_SUPPORT_BUNDLE_ROOT"] = str(self.root / "support")
+                (self.root / "support").mkdir(parents=True, exist_ok=True)
             frontend = self.start("frontend", [str(self.runtime / "bin/64bit/obs64.exe"),
                 "--portable", "--disable-updater"], environment=frontend_environment)
             self.status("running")
