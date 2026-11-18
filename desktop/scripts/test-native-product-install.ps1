@@ -140,6 +140,22 @@ try {
     }
     $before = Get-ProfileFingerprint
     if ($complete) {
+        $phase = 'installed-legacy-import'
+        # The old-data import path the user actually has: MIGRATE-LEGACY.cmd ships the
+        # packaged importer, so this gate fills a disposable install through the real
+        # installed entry, imports it with that shipped importer, and proves the imported
+        # install signs in with the old account and keeps devices, events and the NVR
+        # policy. Only the config/database/backup-key path is qualified; recordings,
+        # archives and the Electron-era scene/studio documents are not, which is why
+        # fullFeatureMigrationQualified stays false.
+        & $python -B (Join-Path $repoRoot 'native-host/tests/legacy_import_windows.py') --runtime $installed --report (Join-Path $buildRoot 'native-product-legacy-import.json')
+        if ($LASTEXITCODE -ne 0) { throw 'Installed old-data import gate failed.' }
+        $legacyReceiptPath = Join-Path $buildRoot 'native-product-legacy-import.json'
+        if (-not (Test-Path -LiteralPath $legacyReceiptPath)) { throw 'Old-data import receipt is missing.' }
+        $legacyReceipt = Get-Content -LiteralPath $legacyReceiptPath -Raw | ConvertFrom-Json
+        if ($legacyReceipt.passed -ne $true) { throw 'Old-data import receipt did not pass.' }
+        $report.legacyConfigImportQualified = [bool]$legacyReceipt.legacyConfigImportQualified
+        $report.legacyImportedFiles = [int]$legacyReceipt.importedFiles
         $phase = 'installed-lan-entry'
         & $python -B (Join-Path $repoRoot 'native-host/tests/lan_entry_windows.py') --runtime $installed --report (Join-Path $buildRoot 'native-product-lan.json')
         if ($LASTEXITCODE -ne 0) { throw 'Installed LAN/Web HTTPS entry gate failed.' }
