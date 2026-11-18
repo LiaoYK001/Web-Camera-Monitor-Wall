@@ -489,6 +489,33 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 expected_media=expected_media, quick_order=quick_order,
                 program_scene=program_scene, program_media=program_media)
             checkpoint("pixels-" + label + "-observed")
+            if program_scene is not None:
+                # A cut TAKE retires and re-creates owned sources while the wall keeps
+                # running, so the capture window can straddle that switch and report a
+                # frozen slot for a wall that is mid-switch. The host's own per-input
+                # health counters (frame serial and time since the last serial change,
+                # counted over the wall, the Program Scene and every open projector) must
+                # show every input advancing before the pixel assertion starts. The count
+                # is read from the state instead of hard-coded, because a Program Scene
+                # legitimately owns more inputs than the five-input wall.
+                def inputs_advancing(snapshot):
+                    entries = [entry for entry in snapshot.get("videoInputs", []) if isinstance(entry, dict)]
+                    if len(entries) < 5:
+                        return None
+                    for entry in entries:
+                        serial, stalled = entry.get("serial"), entry.get("stalledMs")
+                        if type(serial) is not int or serial <= 0 or type(stalled) is not int \
+                                or stalled < 0 or stalled > 2000:
+                            return None
+                    return {"inputs": len(entries),
+                        "worstStalledMs": max(int(entry["stalledMs"]) for entry in entries)}
+                waited = time.monotonic()
+                advancing = wait_for(lambda: inputs_advancing(state()),
+                    lambda: (label + ": the host did not report every watched input advancing: "
+                        + json.dumps(state().get("videoInputs", []), sort_keys=True)[:400]),
+                    timeout=20)
+                evidence.setdefault("programPixelInputWait", []).append(
+                    {"phase": label, "waitedMs": int((time.monotonic() - waited) * 1000), **advancing})
             if blank:
                 assert observed.get("phase") == "locked" and observed.get("mediaSources") == 0
             elif observed.get("sessionBound") is not True:
@@ -615,7 +642,25 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                         "slots": [{"camera": str(binding.get("cameraId") or "")[:24],
                             "uuid": str(binding.get("sourceUuid") or "")[:8]}
                             for binding in observed.get("bindings", [])[:8]
-                            if isinstance(binding, dict)]}
+                            if isinstance(binding, dict)],
+                        # Whether the frozen slot's own source delivered callbacks during
+                        # the capture window separates "media side stopped feeding frames"
+                        # from "frames arrived but the item did not repaint"; without this
+                        # a frozen slot has no cause at all.
+                        "inputSerialDelta": None}
+                    later = state()
+                    def serials(snapshot):
+                        return {str(entry.get("uuid") or ""): entry.get("serial")
+                            for entry in snapshot.get("videoInputs", []) if isinstance(entry, dict)}
+                    earlier_serials, after_serials = serials(observed), serials(later)
+                    evidence["pixelFailureDiagnostics"]["inputSerialDelta"] = [
+                        {"uuid": uuid, "before": earlier_serials.get(uuid), "after": after_serials.get(uuid),
+                         "advanced": (type(after_serials.get(uuid)) is int and type(earlier_serials.get(uuid)) is int
+                                      and after_serials[uuid] > earlier_serials[uuid])}
+                        for uuid in sorted(after_serials)]
+                    evidence["pixelFailureDiagnostics"]["stalledMsAfterCapture"] = [
+                        {"uuid": str(entry.get("uuid") or ""), "stalledMs": entry.get("stalledMs")}
+                        for entry in later.get("videoInputs", []) if isinstance(entry, dict)]
                     stalled = [entry["index"] for entry in harness["pathProgress"] if entry["flowing"] is False]
                     if (dead or unreadable or stalled) and fixture_retry:
                         # The synthetic fixture itself dropped out: restart every dead publisher,
