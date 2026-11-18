@@ -6,6 +6,15 @@
 
 该结果只关闭更新/安装/升级链的首轮实际门禁，不是正式 v5.1 发布：非空逐轨音频、同一原生宿主的 Program 合成录像/推流、LAN/Caddy 远端/离线、完整旧档案迁移、物理多屏/DPI/音频/硬解和两小时长稳仍未关闭。`fullFeatureMigrationQualified=false`、`hardwareDecodeVerified=false`；内部 rc.16/rc.17 字节不创建公开 Release，也不打开稳定 feed。
 
+### 完整功能接线增量 / integration increment
+
+- 多轨声音：显式非空 `audioInputs` 由音频专用 FFmpeg 逐轨 `track/gain/mute/syncOffset` 混音，经本机 TCP MPEG-TS 送入同一 OBS 场景的单一音频源；视频仍直接 RTSP。OBS 输出总线、监听、主音量、volmeter dBFS、`audioSources` 诊断和失败清理已接线；空 `audioInputs` 和旧语义保持不变。
+- Program 合成输出：同一原生宿主按需创建 x264 + AAC/Opus 编码器；录像先写私有临时 MKV，停止后由锁定 FFmpeg 流复制成 MP4；WHIP 推流按需启动私有 MediaMTX，停止后释放。无输出任务时不创建编码器、不启动 MediaMTX。活动输出期间关闭主窗口保留托盘宿主，可恢复或显式停止退出。
+- 备份与诊断：加密备份同时包含 `config` 与 `native-profile`，旧 config-only 包兼容且不删除现有工作区；原生支持包导出固定 schema 的版本/启动/渲染器/媒体/音频/Program 计数和 OBS 标记统计，不含 URL、令牌、日志正文、媒体或输出路径。
+- 合成双音轨、MP4 H.264/AAC、八帧合成像素、WHIP 后 RTSP H.264/Opus、实际视频帧、支持包脱敏和 MediaMTX 退出已加入 Windows 门禁；目标机真实摄像头/扬声器、编码性能、LAN/Caddy、离线同步和两小时长稳仍需主要验证。
+
+Windows rc.23（音频）与 rc.24（Program 输出/备份/支持包）完整门禁：结果以实际 run 回执为准，未通过前不作为发布资格。
+
 优先修复rc.1审查确认的v4.5工作区迁移路径、缓存安装包执行前完整性校验和预发布版本比较。继续现有R2–R7的完整声音、OBS合成输出、远端/离线、迁移/更新、后台任务、体积性能及稳定性工作；不能把未接线项归为仅待实机。
 
 保留v4.5与v5.0.0-rc.1的公开字节。开发只面向dev，正式发布按指定版本审查流程，Windows x64之外的暂停交付范围不变。最终说明必须绑定实际源码、安装包、回执及剩余目标机未测项。
