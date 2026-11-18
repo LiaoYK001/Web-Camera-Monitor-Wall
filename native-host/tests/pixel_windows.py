@@ -157,7 +157,12 @@ class LoopbackRtsp:
             mediamtx = locked_mediamtx(private, offline)
             eol = chr(10)
             config = private / "mediamtx.yml"
-            config.write_text(eol.join(["logLevel: warn", "rtspAddress: 127.0.0.1:8554", "paths:", "  all_others:"]) + eol,
+            # The loopback fixture owns only RTSP. Its default API/WebRTC
+            # listeners would collide with unrelated product or runner ports
+            # and can make MediaMTX exit before the fixture becomes readable.
+            config.write_text(eol.join(["logLevel: warn", "api: false", "webrtc: false",
+                              "hls: false", "rtmp: false", "srt: false",
+                              "rtspAddress: 127.0.0.1:8554", "paths:", "  all_others:"]) + eol,
                               encoding="utf-8")
             self.server = subprocess.Popen([str(mediamtx), str(config)], cwd=private, stdin=subprocess.DEVNULL,
                                            stdout=self.log, stderr=subprocess.STDOUT)

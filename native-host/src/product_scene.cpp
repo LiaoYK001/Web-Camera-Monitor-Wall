@@ -227,7 +227,13 @@ struct ProductSceneSource {
 		obs_data_set_string(settings.get(), "input",
 			QStringLiteral("udp://127.0.0.1:%1?pkt_size=1316").arg(port).toUtf8().constData());
 		obs_data_set_string(settings.get(), "input_format", "mpegts");
-		obs_data_set_bool(settings.get(), "restart_on_activate", true);
+		// Audio-only media sources have no rendered surface and therefore
+		// never acquire OBS's "showing" reference. The upstream ffmpeg_source
+		// restart-on-activate path deliberately refuses to start playback when
+		// the source is not showing, which would leave the UDP mixer unread.
+		// Start with the owned graph instead: the source lives exactly as long
+		// as this graph and is removed by the destructor.
+		obs_data_set_bool(settings.get(), "restart_on_activate", false);
 		obs_data_set_bool(settings.get(), "close_when_inactive", false);
 		obs_data_set_int(settings.get(), "buffering_mb", 1);
 		obs_data_set_int(settings.get(), "reconnect_delay_sec", 2);

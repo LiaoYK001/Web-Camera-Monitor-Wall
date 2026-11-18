@@ -1227,11 +1227,15 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             evidence["mediaQualified"] = with_media
             evidence["mediaScope"] = "synthetic-five-hevc-final-preview-pixels" if with_media else "not-run"
             evidence["passed"] = True
-        except Exception:
+        except Exception as error:
             gate_failed[0] = True
             # Synthetic logs stay private. Only fixed marker categories, bounded
             # counts and numeric exit status leave this disposable test profile.
             evidence["failurePhase"] = phase
+            detail = f"{type(error).__name__}: {error}"
+            for private_value in (str(private), str(runtime), str(profile)):
+                detail = detail.replace(private_value, "<private>")
+            evidence["failureDetail"] = detail[:300]
             evidence["entryExitCode"] = process.poll() if process is not None else None
             stopped = status()
             if stopped.get("bootId") == active_boot_id or (process is not None and stopped.get("ownerPid") == process.pid):
