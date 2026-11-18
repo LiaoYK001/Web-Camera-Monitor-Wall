@@ -22,7 +22,7 @@ struct Fixture {
 	// listening socket on every Qt 6 version, which is what the dead-switch case needs.
 	std::unique_ptr<QTcpServer> server = std::make_unique<QTcpServer>();
 	QByteArray requests;
-	int connections = 0, next_code = 200;
+	int connections = 0, responses = 0, next_code = 200;
 	QByteArray next_body = R"({"enabled":false,"port":18443,"urls":[],"running":false,"pendingRestart":false})";
 	bool oversized = false, send_json = true, failed = false;
 	Fixture()
@@ -52,6 +52,7 @@ struct Fixture {
 						  "\r\nConnection: close\r\n\r\n" + body;
 					socket->write(payload);
 					socket->disconnectFromHost();
+					++responses;
 				});
 			}
 		});
@@ -65,9 +66,11 @@ QUrl endpoint(int port)
 	return QUrl(QString("http://127.0.0.1:%1/lan").arg(port));
 }
 
-int exchange(Fixture &fixture, ProductLanSwitch &client, const QByteArray &method, const QJsonObject &body)
+int exchange(Fixture &fixture, ProductLanSwitch &client, const QByteArray &method, const QJsonObject &body,
+		const char *label)
 {
 	fixture.requests.clear();
+	fixture.responses = 0;
 	bool answered = false;
 	int code = -1;
 	client.request(method, body, [&answered, &code](int result, const QJsonObject &) {
@@ -81,10 +84,19 @@ int exchange(Fixture &fixture, ProductLanSwitch &client, const QByteArray &metho
 			loop.quit();
 	});
 	poll.start(20);
-	QTimer::singleShot(3000, &loop, &QEventLoop::quit);
+	// The client's own deadline aborts the reply at 4 s, so 6 s of event loop is enough to
+	// distinguish "answered slowly" from "Qt dispatched nothing" on a loaded CI host.
+	QTimer::singleShot(6000, &loop, &QEventLoop::quit);
 	loop.exec();
 	poll.stop();
-	require(answered, "the LAN switch never answered");
+	if (!answered) {
+		// Connections reached the listener and it replied, but no client callback arrived:
+		// the Qt HTTP path is at fault. Zero connections means the OS never delivered the
+		// loopback connection. Naming the side keeps the next run actionable.
+		std::cerr << "no LAN switch answer for " << label << ": connections=" << fixture.connections
+		          << " responses=" << fixture.responses << '\n';
+		throw std::runtime_error("the LAN switch never answered");
+	}
 	return code;
 }
 } // namespace
@@ -105,12 +117,35 @@ int main(int argc, char **argv)
 			refusal.request("GET", {}, [&code](int result, const QJsonObject &) { code = result; });
 			require(code == 0, "unsafe LAN endpoint still attempted a request");
 		}
+		// Prove the loopback listener is reachable through the OS socket API before blaming
+		// the Qt HTTP client: a failed probe names an OS/firewall problem, a passed probe with
+		// a stalled reply names the Qt network path on this build.
+		QTcpSocket probe;
+		probe.connectToHost("127.0.0.1", fixture.port());
+		require(probe.waitForConnected(3000), "the loopback fixture socket could not connect");
+		probe.write("GET /lan HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+		require(probe.waitForBytesWritten(3000), "the LAN probe request was not written");
+		// The fixture replies from its readyRead signal, so the reply needs the event loop;
+		// a blocking waitForReadyRead would prove nothing about the OS socket path.
+		QEventLoop probe_loop;
+		QTimer probe_poll;
+		QObject::connect(&probe_poll, &QTimer::timeout, &probe_loop, [&probe, &probe_loop] {
+			if (probe.bytesAvailable() > 0)
+				probe_loop.quit();
+		});
+		probe_poll.start(20);
+		QTimer::singleShot(3000, &probe_loop, &QEventLoop::quit);
+		probe_loop.exec();
+		probe_poll.stop();
+		require(probe.readAll().startsWith("HTTP/1.1 200"), "the loopback fixture never answered the raw probe");
+		probe.disconnectFromHost();
+
 		ProductLanSwitch short_secret(endpoint(fixture.port()), QByteArray(63, 'a'));
 		require(!short_secret.usable(), "a malformed host token was accepted");
 
 		ProductLanSwitch client(endpoint(fixture.port()), secret);
 		require(client.usable(), "the loopback LAN switch was refused");
-		require(exchange(fixture, client, "GET", {}) == 200, "LAN status read failed");
+		require(exchange(fixture, client, "GET", {}, "status-read") == 200, "LAN status read failed");
 		require(fixture.requests.contains("GET /lan HTTP/1.1"), "LAN status is not a plain GET");
 		// Qt canonicalizes raw header names (X-Webobs-Native-Token) and HTTP names are
 		// case-insensitive, so the fixture compares the whole header block lowercased.
@@ -122,7 +157,7 @@ int main(int argc, char **argv)
 
 		fixture.next_body = R"({"enabled":true,"port":18443,"urls":["https://192.168.1.9:18443"],
 			"running":false,"pendingRestart":true})";
-		require(exchange(fixture, client, "POST", QJsonObject{{"enabled", true}, {"port", 18443}}) == 200,
+		require(exchange(fixture, client, "POST", QJsonObject{{"enabled", true}, {"port", 18443}}, "toggle-on") == 200,
 			"LAN share toggle failed");
 		require(fixture.requests.contains("POST /lan HTTP/1.1"), "LAN toggle is not a POST");
 		// Qt canonicalizes header names differently across versions, so the JSON body
@@ -132,32 +167,32 @@ int main(int argc, char **argv)
 
 		fixture.next_code = 401;
 		fixture.next_body = R"({"error":"unauthorized"})";
-		require(exchange(fixture, client, "POST", QJsonObject{{"enabled", false}, {"port", 18443}}) == 401,
+		require(exchange(fixture, client, "POST", QJsonObject{{"enabled", false}, {"port", 18443}}, "refused-status") == 401,
 			"an unauthenticated LAN toggle was not reported");
 
 		// A 200 whose body is not a JSON object is unreadable: report 0 so the window
 		// keeps the last receipt instead of inventing a state.
 		fixture.next_code = 200;
 		fixture.send_json = false;
-		require(exchange(fixture, client, "POST", QJsonObject{{"enabled", true}, {"port", 18443}}) == 0,
+		require(exchange(fixture, client, "POST", QJsonObject{{"enabled", true}, {"port", 18443}}, "unreadable-body") == 0,
 			"an unreadable LAN reply was reported as a usable state");
 
 		// A server error is reported even when the body is an HTML error page.
 		fixture.next_code = 500;
 		fixture.send_json = true;
 		fixture.next_body = QByteArray("<html>not json</html>");
-		require(exchange(fixture, client, "POST", QJsonObject{{"enabled", false}, {"port", 18443}}) == 500,
+		require(exchange(fixture, client, "POST", QJsonObject{{"enabled", false}, {"port", 18443}}, "server-error") == 500,
 			"a failing LAN switch was reported as silent instead of refused");
 
 		fixture.oversized = true;
 		fixture.next_code = 200;
-		require(exchange(fixture, client, "GET", {}) == 0, "an oversized LAN reply was accepted");
+		require(exchange(fixture, client, "GET", {}, "oversized-reply") == 0, "an oversized LAN reply was accepted");
 
 		// A dead switch reports 0 so the window keeps the last known receipt.
 		Fixture dead;
 		ProductLanSwitch alone(endpoint(dead.port()), secret);
 		dead.close();
-		require(exchange(dead, alone, "GET", {}) == 0, "a closed LAN switch was reported as a status code");
+		require(exchange(dead, alone, "GET", {}, "dead-switch") == 0, "a closed LAN switch was reported as a status code");
 	} catch (const std::exception &error) {
 		std::cerr << "FAIL native LAN switch: " << error.what() << '\n';
 		return 1;
