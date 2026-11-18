@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 215 · 2026-11-19T01:14:36+08:00（UTC+08）
+> 快照版本 216 · 2026-11-19T01:22:23+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #216 · 2026-11-19T01:22:23+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：rc.51(run 44349201714)在 program-before-take 暴露第六路 Program 专用静音源 serial 恒为 0；同时发现两处回环修复路径用 UI video-progress 标签（只允许 1..5 路且需已收帧等于路数）证明恢复，Program 相位必有 6 路输入因此该修复必然抛错。已在 #67(39c43fd)改为用 LoopbackRtsp.path_progress 包数与逐输入帧计数器在实测 2.5s 窗口内推进来证明，blank 相位只证包流；未削弱任何像素/帧断言。rc.52(run 44356064395, 4a487d1)仍在跑，将给出停滞输入名与逐路包数。
+- 证据：python3 -m py_compile native-host/tests/product_windows.py；native-host/tests/test_build_contract.py 45 OK；native-host/tests/test_complete_supervisor.py PASS；分支链已 rebase 并强推：#67 39c43fd → #70 84c9302 → #71 89ec20a → #74 b03008d → #75 c19bcda
+- 源码：`3ddaacb3c835d589f413803180d06a2f7fb05c8d`
 ## #215 · 2026-11-19T01:14:36+08:00 · log
 
 - Agent：`deepseek-v51-20261118-01`；任务：`V51-007`

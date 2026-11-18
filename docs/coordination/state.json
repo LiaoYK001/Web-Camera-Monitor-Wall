@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 215,
-  "updated_at": "2026-11-19T01:14:36+08:00",
+  "revision": 216,
+  "updated_at": "2026-11-19T01:22:23+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1289,12 +1289,13 @@
         "rc.46 artifact receipt(run 44323126258): lastCheckpoint=pixels-program-after-take-captured, progressError=Frozen final pixels on slot 2, inputSerialDelta 6/6 advanced, stalledMsAfterCapture 0, publishers alive, stalledPaths empty",
         "rc.48 receipt artifact(sha 9a694ce,version 5.1.0-rc.46): lastCheckpoint=pixels-program-before-take-observed, programPixelInputWait=null；rc.47(447dbba) 同阶段同症状；重基后本机 test_build_contract/test_product_lan/test_encrypted_backup/test_complete_supervisor/test_native_updater/test_compare_runtime_sizes/test_complete_release_policy 全部 OK；新 run 44339344891 @4f38150 product_mode+complete+measure_obs_baseline+upgrade_previous, soak_minutes=0",
         "run 44339344891 receipt native-product-entry-ui.json; commit a92d11b; run 44349201714",
-        "commit 4adff47 (PR #67); receipt /tmp/rc51.NjL1/native-product-entry-ui.json lastCheckpoint pixels-program-before-take-observed programPixelInputWait waitedMs 30077 windows 12 countedInputs 5"
+        "commit 4adff47 (PR #67); receipt /tmp/rc51.NjL1/native-product-entry-ui.json lastCheckpoint pixels-program-before-take-observed programPixelInputWait waitedMs 30077 windows 12 countedInputs 5",
+        "python3 -m py_compile native-host/tests/product_windows.py；native-host/tests/test_build_contract.py 45 OK；native-host/tests/test_complete_supervisor.py PASS；分支链已 rebase 并强推：#67 39c43fd → #70 84c9302 → #71 89ec20a → #74 b03008d → #75 c19bcda"
       ],
       "blocker": "",
       "next_step": "rc.33 绿后双语合并 #67 进 dev；#71/#70 base 改 dev；目标机声学/串音与安装包绑定仍在用户集中验收，不得写成通过",
-      "updated_at": "2026-11-19T01:14:33+08:00",
-      "last_note": "rc.51 回执给出新故障形状：program-before-take 里 Program 专用源 'WebOBS Program fixture-five.fixture-source-4' 连续 30 s 报告 showing/active/mediaState=PLAYING 而 serial 仍为 0，另有已计数输入停滞；旧回执把停滞输入与包计数证据截断，无法区分'合成回环停止推包'与'产品打开但不出帧'。因此给 #67 门禁增加判定与证据而不放宽像素断言：等待窗口失败后先实测五条回环路径（发布进程状态、ffprobe 可读性、两次包计数），只重启确实停止推包的路径并重新计时（最多两次）；路径仍在推包则直接失败，并把 stagnantInputs（uuid+前后 serial）、完整 videoInputs 快照、发布进程状态与 pathProgress 写进回执；PLAYING 且零回调持续 ≥8 s 判为真实停滞。本机 py_compile + native-host/tests/test_build_contract.py 45 OK + test_complete_supervisor.py PASS；Windows 证据待 rc.52（run 44356064395，ref codex/v51-r5-soak=4a487d1，version 5.1.0-rc.52）。"
+      "updated_at": "2026-11-19T01:22:23+08:00",
+      "last_note": "rc.51(run 44349201714)在 program-before-take 暴露第六路 Program 专用静音源 serial 恒为 0；同时发现两处回环修复路径用 UI video-progress 标签（只允许 1..5 路且需已收帧等于路数）证明恢复，Program 相位必有 6 路输入因此该修复必然抛错。已在 #67(39c43fd)改为用 LoopbackRtsp.path_progress 包数与逐输入帧计数器在实测 2.5s 窗口内推进来证明，blank 相位只证包流；未削弱任何像素/帧断言。rc.52(run 44356064395, 4a487d1)仍在跑，将给出停滞输入名与逐路包数。"
     },
     {
       "id": "COORD-008",
@@ -3918,6 +3919,18 @@
         "307910f/2560a52/4a487d1 pushed; suites re-run green"
       ],
       "git_revision": "19695a5dffb571ad4afdcc4d7889b69eb85677f5"
+    },
+    {
+      "sequence": 216,
+      "at": "2026-11-19T01:22:23+08:00",
+      "agent": "deepseek-v51-20261118-01",
+      "task": "V51-008",
+      "action": "log",
+      "note": "rc.51(run 44349201714)在 program-before-take 暴露第六路 Program 专用静音源 serial 恒为 0；同时发现两处回环修复路径用 UI video-progress 标签（只允许 1..5 路且需已收帧等于路数）证明恢复，Program 相位必有 6 路输入因此该修复必然抛错。已在 #67(39c43fd)改为用 LoopbackRtsp.path_progress 包数与逐输入帧计数器在实测 2.5s 窗口内推进来证明，blank 相位只证包流；未削弱任何像素/帧断言。rc.52(run 44356064395, 4a487d1)仍在跑，将给出停滞输入名与逐路包数。",
+      "evidence": [
+        "python3 -m py_compile native-host/tests/product_windows.py；native-host/tests/test_build_contract.py 45 OK；native-host/tests/test_complete_supervisor.py PASS；分支链已 rebase 并强推：#67 39c43fd → #70 84c9302 → #71 89ec20a → #74 b03008d → #75 c19bcda"
+      ],
+      "git_revision": "3ddaacb3c835d589f413803180d06a2f7fb05c8d"
     }
   ]
 }
