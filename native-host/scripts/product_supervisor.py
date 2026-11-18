@@ -267,11 +267,13 @@ class ProductSupervisor:
                 "WEBOBS_DETECTOR_PYTHON_MODULE": str(self.runtime / "services/analytics/detector_worker.py"),
                 "WEBOBS_CAMERA_BACKGROUND_PROBES": "true",
                 "WEBOBS_NVR_ENABLED": "true", "WEBOBS_GO2RTC_ENABLED": "true",
-                # The native host publishes the real Program over the bundled
-                # WHIP/MediaMTX path only while the user starts Program output.
-                # Advertising the existing WHEP proxy lets the authenticated
-                # management UI consume that same output.
-                "WEBOBS_COMPOSITE_ENABLED": "true",
+                # Direct-only stays authoritative in webobsd: composite_enabled
+                # would switch the control server into the full OBS engine path
+                # (obs_startup, x264/WHIP outputs) and it exits during native
+                # startup. The native host owns Program recording/WHIP with a
+                # private MediaMTX on demand, so the core keeps advertising
+                # composite as disabled until its proxy can read that real state.
+                "WEBOBS_COMPOSITE_ENABLED": "false",
             })
             if detector_model.is_file():
                 self.environment["WEBOBS_DETECTOR_MODEL"] = str(detector_model)

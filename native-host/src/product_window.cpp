@@ -230,6 +230,9 @@ class ProductWindow final : public QWidget {
 			parts << tr("录像错误：%1").arg(value.recording_error);
 		if (!value.stream_error.isEmpty())
 			parts << tr("推流错误：%1").arg(value.stream_error);
+		if (value.recording || value.streaming)
+			parts << (value.audio_tracks ? tr("节目音轨掩码 %1").arg(QString::number(value.audio_tracks))
+				: tr("节目无音轨"));
 		output_health_->setText(parts.isEmpty() ? tr("Program 输出：空闲") : parts.join(" · "));
 		if (record_program_)
 			record_program_->setText(value.recording ? tr("停止 Program 录制") : tr("录制 Program"));
@@ -251,7 +254,10 @@ class ProductWindow final : public QWidget {
 				status_->setText(tr("请先应用并确认 Program 场景，再开始录制。"));
 				return;
 			}
-			if (!program_output_->start_recording(error))
+			// The recording must encode the tracks the applied Program actually
+			// uses; a fixed track 0 would save a silent file while the product
+			// meter still reports a peak.
+			if (!program_output_->start_recording(error, program_->audio_output_tracks()))
 				status_->setText(tr("Program 录像启动失败：%1").arg(error));
 			else
 				status_->setText(tr("Program 录制中，使用同一原生宿主输出。"));
@@ -273,7 +279,7 @@ class ProductWindow final : public QWidget {
 				status_->setText(tr("请先应用并确认 Program 场景，再开始推流。"));
 				return;
 			}
-			if (!program_output_->start_streaming(error))
+			if (!program_output_->start_streaming(error, program_->audio_output_tracks()))
 				status_->setText(tr("Program 推流启动失败：%1").arg(error));
 			else
 				status_->setText(tr("Program 正在通过本机 WHIP 推流。"));
@@ -437,7 +443,8 @@ class ProductWindow final : public QWidget {
 			{"mediaMtxRunning", value.media_mtx_running},
 			{"streamPublishUrl", value.stream_publish_url},
 			{"streamPlaybackUrl", value.stream_playback_url},
-			{"streamError", value.stream_error}};
+			{"streamError", value.stream_error},
+			{"audioTracks", double(value.audio_tracks)}};
 	}
 	bool select_monitor(obs_scene_t *scene)
 	{

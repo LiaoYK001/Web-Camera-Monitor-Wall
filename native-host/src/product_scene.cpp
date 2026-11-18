@@ -430,6 +430,21 @@ std::vector<ProductAudioProgress> ProductSceneGraph::audio_progress()
 	return result;
 }
 
+std::uint32_t ProductSceneGraph::audio_output_tracks()
+{
+	std::uint32_t tracks = 0;
+	for (const auto &entry : sources_) {
+		if (!entry || !entry->source || obs_source_muted(entry->source))
+			continue;
+		tracks |= obs_source_get_audio_mixers(entry->source);
+#ifdef WEBOBS_NATIVE_PRODUCT_MODE
+		if (entry->audio_source && !obs_source_muted(entry->audio_source))
+			tracks |= obs_source_get_audio_mixers(entry->audio_source);
+#endif
+	}
+	return tracks;
+}
+
 std::unique_ptr<ProductSceneGraph> create_product_scene(ProductSourcePool &pool,
 	const std::string &owner, const SceneDocument &document,
 	const std::vector<ProductCamera> &bindings, std::string &error)

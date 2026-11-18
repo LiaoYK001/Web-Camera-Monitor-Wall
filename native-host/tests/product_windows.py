@@ -1146,6 +1146,67 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 assert pixel_result.get("passed") is True, "recorded Program frames did not match the applied scene"
                 evidence["checks"].append("program-composite-mp4-recording")
                 checkpoint("program-recording-pixels")
+                # Decoded audio, the output-bus positive control. The Program mix
+                # sums the fixture's two fixed pitches, so both bands must appear
+                # in the finished file. A recorder pinned to OBS track 0 while the
+                # Scene selects track 2 produces a silent MP4 even though the
+                # product meter reports a peak, which a stream header cannot show.
+                recording_mask = recorded.get("audioTracks")
+                assert recording_mask == 2, \
+                    f"Program recording encoded audio track mask {recording_mask}; expected 2 for audioTrack 2"
+                recorded_low = pixel_windows.band_rms(ffmpeg, str(recorded_path), 0, lowpass=600)
+                recorded_high = pixel_windows.band_rms(ffmpeg, str(recorded_path), 0, highpass=660)
+                evidence["programRecordingBandRms"] = {"below600Hz": recorded_low,
+                    "above660Hz": recorded_high, "audioTrackMask": recording_mask}
+                assert recorded_low > 150 and recorded_high > 150, \
+                    "recorded Program audio lost one of the two fixture pitches"
+                evidence["checks"].append("program-recording-decodes-both-fixture-pitches")
+                checkpoint("program-recording-audio-decoded")
+                # Second bus configuration: the same host must stay audible when
+                # the Program source selects the default output track. This is the
+                # non-default-versus-default reproduction the output bus needs.
+                phase = "program-recording-default-bus"
+                default_scene = json.loads(json.dumps(alt_scene))
+                default_scene.update(id="fixture-audio-default", name="Fixture Program default bus")
+                default_scene["sources"][0]["audioTrack"] = 1
+                code, _, studio = request("/api/v1/studio", cookie=cookie)
+                assert code == 200
+                studio["scenes"] = [scene for scene in studio["scenes"]
+                    if scene["id"] != "fixture-audio-default"] + [default_scene]
+                studio["programSceneId"] = "fixture-audio-default"
+                code, _, studio = request("/api/v1/studio", studio, cookie=cookie, method="PUT",
+                    revision=studio["revision"])
+                assert code == 200, "Studio did not accept the default-bus Program scene"
+                wait_for(lambda: state().get("programSceneId") == "fixture-audio-default" and
+                    state().get("programApplyState") == "applied" and
+                    state().get("program", {}).get("mediaSources") == 2,
+                    "default-bus Program scene did not apply", timeout=20)
+                checkpoint("program-default-bus-applied")
+                assert ui("record-program")
+                wait_for(lambda: state().get("programOutput", {}).get("recording") is True,
+                    "default-bus Program recording did not start", timeout=20)
+                time.sleep(5.5)
+                assert ui("record-program")
+                def default_recording_ready():
+                    value = state().get("programOutput", {})
+                    path = value.get("recordingPath") if isinstance(value, dict) else None
+                    return value if (value.get("recording") is False and value.get("recordingReady") is True and
+                        isinstance(path, str) and Path(path).is_file() and Path(path).suffix.lower() == ".mp4") else None
+                default_recorded = wait_for(default_recording_ready, "default-bus Program MP4 was not finalized",
+                    timeout=120)
+                default_path = Path(default_recorded["recordingPath"])
+                assert default_path != recorded_path, "second Program recording reused the first file"
+                assert default_recorded.get("audioTracks") == 1, \
+                    f"default-bus recording encoded mask {default_recorded.get('audioTracks')}, expected 1"
+                default_low = pixel_windows.band_rms(ffmpeg, str(default_path), 0, lowpass=600)
+                default_high = pixel_windows.band_rms(ffmpeg, str(default_path), 0, highpass=660)
+                evidence["programRecordingDefaultBus"] = {"path": default_path.name,
+                    "below600Hz": default_low, "above660Hz": default_high,
+                    "audioTrackMask": default_recorded.get("audioTracks")}
+                assert default_low > 150 and default_high > 150, \
+                    "default-bus Program recording lost one of the two fixture pitches"
+                evidence["checks"].append("program-recording-default-and-nondefault-bus-both-audible")
+                checkpoint("program-default-bus-recording-decoded")
                 # WHIP publishing uses the same Program OBS output and owns a
                 # private MediaMTX only while streaming. RTSP playback proves
                 # the packets reached a real consumer, not just an active flag.
@@ -1178,6 +1239,17 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     for stream in stream_streams), "published Program has no H.264 video"
                 assert any(stream.get("codec_type") == "audio" and stream.get("codec_name") == "opus"
                     for stream in stream_streams), "published Program has no Opus audio"
+                # An Opus stream header is not audible evidence. Decode the real
+                # consumer and require both fixture pitches inside the band split.
+                assert streamed.get("audioTracks") == 1, \
+                    f"WHIP publisher encoded mask {streamed.get('audioTracks')}, expected the default bus 1"
+                published_low = pixel_windows.band_rms(ffmpeg, playback_url, 0, lowpass=600)
+                published_high = pixel_windows.band_rms(ffmpeg, playback_url, 0, highpass=660)
+                evidence["programStreamBandRms"] = {"below600Hz": published_low,
+                    "above660Hz": published_high, "audioTrackMask": streamed.get("audioTracks")}
+                assert published_low > 150 and published_high > 150, \
+                    "published Program audio lost one of the two fixture pitches"
+                evidence["checks"].append("program-whip-decodes-both-fixture-pitches")
                 stream_frames = subprocess.run([str(runtime / "bin/ffprobe.exe"), "-v", "error",
                     "-rtsp_transport", "tcp", "-select_streams", "v:0", "-read_intervals", "%+#20",
                     "-show_entries", "frame=pts_time", "-of", "json", playback_url],

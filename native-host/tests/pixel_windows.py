@@ -312,6 +312,44 @@ def picture_counts(frames, require_b_frames: bool) -> tuple[int, int]:
     return len(frames), count
 
 
+def _decode_pcm(ffmpeg: Path, source: str, stream_index: int, sample_rate: int,
+                duration: float, filters: tuple[str, ...] = ()) -> array.array | None:
+    """Decode one audio stream into mono signed 16-bit samples with the locked FFmpeg."""
+    transport = ["-rtsp_transport", "tcp"] if source.startswith("rtsp://") else []
+    command = [str(ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin", *transport,
+        "-i", source, "-map", f"0:a:{stream_index}"]
+    if filters:
+        command += ["-af", ",".join(filters)]
+    command += ["-c:a", "pcm_s16le", "-ac", "1", "-ar", str(sample_rate), "-t", f"{duration:.1f}",
+                "-f", "s16le", "-"]
+    decoded = subprocess.run(command, capture_output=True, timeout=90)
+    if decoded.returncode != 0:
+        stderr = decoded.stderr.decode("utf-8", errors="replace")[-400:]
+        raise ValueError(f"locked ffmpeg could not decode audio track {stream_index}: {stderr}")
+    samples = array.array("h")
+    samples.frombytes(decoded.stdout[:len(decoded.stdout) // 2 * 2])
+    return samples if len(samples) >= sample_rate else None
+
+
+def band_rms(ffmpeg: Path, source: str, stream_index: int, *, lowpass: float = 0,
+             highpass: float = 0, sample_rate: int = 8000, duration: float = 3.0) -> float:
+    """Energy of one decoded band, used to prove each fixture pitch survived.
+
+    A Program mix sums both fixture tones, so a single frequency estimate cannot
+    separate them. Filtering below and above the midpoint and measuring RMS twice
+    proves both tracks reached the artifact instead of trusting a boolean.
+    """
+    filters = []
+    if lowpass:
+        filters.append(f"lowpass=f={lowpass:g}")
+    if highpass:
+        filters.append(f"highpass=f={highpass:g}")
+    samples = _decode_pcm(ffmpeg, source, stream_index, sample_rate, duration, tuple(filters))
+    if samples is None:
+        raise AssertionError("decoded audio window is shorter than one second")
+    return round(math.sqrt(sum(value * value for value in samples) / len(samples)), 1)
+
+
 def tone_probe(ffmpeg: Path, source: str, stream_index: int, *, sample_rate: int = 8000,
                duration: float = 2.0) -> tuple[float, float] | None:
     """Decode one audio stream to mono PCM and estimate its dominant pure tone.
@@ -321,18 +359,10 @@ def tone_probe(ffmpeg: Path, source: str, stream_index: int, *, sample_rate: int
     carries signal rather than only a track header. A short window returns None
     so an RTSP reader can retry while the publisher is still warming up.
     """
-    transport = ["-rtsp_transport", "tcp"] if source.startswith("rtsp://") else []
-    decoded = subprocess.run([str(ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin", *transport,
-        "-i", source, "-map", f"0:a:{stream_index}",
-        "-c:a", "pcm_s16le", "-ac", "1", "-ar", str(sample_rate), "-t", f"{duration:.1f}",
-        "-f", "s16le", "-"], capture_output=True, timeout=60)
-    if decoded.returncode != 0:
-        stderr = decoded.stderr.decode("utf-8", errors="replace")[-400:]
-        raise ValueError(f"locked ffmpeg could not decode audio track {stream_index}: {stderr}")
-    samples = array.array("h")
-    samples.frombytes(decoded.stdout[:len(decoded.stdout) // 2 * 2])
-    if len(samples) < sample_rate:
+    decoded = _decode_pcm(ffmpeg, source, stream_index, sample_rate, duration)
+    if decoded is None:
         return None
+    samples = decoded
     rms = math.sqrt(sum(value * value for value in samples) / len(samples))
     crossings = sum(1 for index in range(1, len(samples)) if (samples[index - 1] < 0) != (samples[index] < 0))
     return round(rms, 1), round(crossings * .5 / (len(samples) / sample_rate), 1)

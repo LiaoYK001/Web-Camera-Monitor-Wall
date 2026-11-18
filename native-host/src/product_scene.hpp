@@ -59,6 +59,10 @@ public:
 	~ProductSceneGraph();
 	std::vector<ProductVideoProgress> video_progress() const;
 	std::vector<ProductAudioProgress> audio_progress();
+	// Bitmask of the OBS output audio tracks that currently carry audio for this
+	// graph. Silent sources contribute nothing, so an audio-free Program records
+	// video only instead of encoding a silent track.
+	std::uint32_t audio_output_tracks();
 	friend std::unique_ptr<ProductSceneGraph> create_product_scene(
 		ProductSourcePool &, const std::string &, const SceneDocument &,
 		const std::vector<ProductCamera> &, std::string &);
