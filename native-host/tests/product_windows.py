@@ -1190,6 +1190,24 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     "native Program publisher did not release MediaMTX", timeout=30)
                 evidence["checks"].append("program-composite-whip-stream")
                 checkpoint("program-streaming-stopped")
+                phase = "support-bundle"
+                assert ui("support-bundle")
+                def support_bundle_ready():
+                    value = state().get("supportBundle", {})
+                    path = value.get("path") if isinstance(value, dict) else None
+                    return value if isinstance(path, str) and Path(path).is_file() else None
+                bundle_state = wait_for(support_bundle_ready, "native support bundle was not written", timeout=20)
+                bundle_path = Path(bundle_state["path"])
+                assert bundle_path.stat().st_size <= 262144, "native support bundle exceeds its bound"
+                bundle_text = bundle_path.read_text(encoding="utf-8")
+                assert all(marker not in bundle_text for marker in ("rtsp://", "rtsps://", "http://", "https://")), \
+                    "native support bundle retained a private media or service URL"
+                bundle = json.loads(bundle_text)
+                assert bundle.get("schema") == 1 and bundle.get("kind") == "native-product-support-bundle"
+                assert isinstance(bundle.get("audioSources"), list) and isinstance(bundle.get("obsLogMarkers"), dict)
+                assert isinstance(bundle.get("windows"), list) and isinstance(bundle.get("programOutput"), dict)
+                evidence["checks"].append("native-support-bundle-redacted")
+                checkpoint("support-bundle-written")
                 checkpoint("program-projector-close")
                 assert ui("projector-close")
                 checkpoint("program-projector-closed")
@@ -1454,6 +1472,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 "programSceneId", "programSceneFingerprint", "programApplyState", "startupStudioDeferred") if key in observed}
             evidence["observedState"]["watchingSavedScene"] = bool(observed.get("sceneId"))
             evidence["observedState"]["programOutput"] = observed.get("programOutput", {})
+            evidence["observedState"]["supportBundle"] = observed.get("supportBundle", {})
             evidence["observedState"]["projectorCount"] = len(observed.get("projectors", []))
             evidence["observedState"]["projectorGeometry"] = [
                 {"slot": view.get("slot"), "geometry": view.get("geometry"),

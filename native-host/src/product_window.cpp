@@ -15,6 +15,7 @@
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDesktopServices>
 #include <QElapsedTimer>
 #include <QEvent>
@@ -126,6 +127,9 @@ class ProductWindow final : public QWidget {
 	QPushButton *record_program_ = nullptr;
 	QPushButton *stream_program_ = nullptr;
 	QLabel *output_health_ = nullptr;
+	QPushButton *support_bundle_ = nullptr;
+	QString last_support_bundle_;
+	QString support_bundle_error_;
 	QPushButton *stats_button_ = nullptr;
 	QPointer<QWidget> stats_window_;
 	std::array<bool, 2> projector_pending_{};
@@ -272,6 +276,108 @@ class ProductWindow final : public QWidget {
 		}
 		refresh_output_health();
 	}
+	void generate_support_bundle()
+	{
+		if (user_id_.isEmpty()) return;
+		support_bundle_error_.clear();
+		QJsonArray audio_sources;
+		std::set<std::string> audio_seen;
+		int video_sources = 0, video_received = 0, video_stalled = 0, video_unknown = 0;
+		std::set<std::string> video_seen;
+		const auto collect = [&](const std::shared_ptr<ProductSceneGraph> &graph) {
+			if (!graph) return;
+			for (const auto &audio : graph->audio_progress()) {
+				if (!audio_seen.insert(audio.source_id).second) continue;
+				audio_sources.append(QJsonObject{{"sourceId", QString::fromStdString(audio.source_id)},
+					{"available", audio.available}, {"active", audio.source_active},
+					{"peakDbfs", double(audio.peak_dbfs)}});
+			}
+			for (const auto &video : graph->video_progress()) {
+				if (!video_seen.insert(video.uuid).second) continue;
+				++video_sources;
+				if (!video.available) ++video_unknown;
+				else if (video.serial > 0) ++video_received;
+				else ++video_stalled;
+			}
+		};
+		collect(wall_);
+		collect(program_);
+		for (const auto &view : projectors_)
+			if (view && view->window) collect(view->graph);
+		QJsonArray windows;
+		if (preview_)
+			windows.append(QJsonObject{{"role", "main-preview"},
+				{"qtClass", QString::fromLatin1(preview_->metaObject()->className())}});
+		if (program_projector_)
+			windows.append(QJsonObject{{"role", program_projector_->isFullScreen() ?
+					"program-fullscreen" : "program-projector"},
+				{"qtClass", QString::fromLatin1(program_projector_->metaObject()->className())}});
+		for (std::size_t i = 0; i < projectors_.size(); ++i)
+			if (projectors_[i] && projectors_[i]->window)
+				windows.append(QJsonObject{{"role", QString("fixed-scene-%1").arg(i + 1)},
+					{"qtClass", QString::fromLatin1(projectors_[i]->window->metaObject()->className())}});
+		QJsonObject output = program_output_state();
+		output.remove("recordingPath");
+		output.remove("recordingError");
+		output.remove("streamPublishUrl");
+		output.remove("streamPlaybackUrl");
+		output.remove("streamError");
+		const QStringList markers{"Switched to Preview/Program mode", "Switched to regular Preview mode",
+			"Failed to initialize", "Failed to create", "QWidget", "QObject", "QLayout",
+			"Shutting down", "All scene data cleared", "Number of remaining allocations"};
+		QJsonObject marker_counts;
+		const QString log_dir = QDir(qEnvironmentVariable("WEBOBS_NATIVE_PROFILE_ROOT"))
+			.absoluteFilePath("obs-studio/logs");
+		const auto logs = QDir(log_dir).entryInfoList({"*.txt"}, QDir::Files, QDir::Time);
+		if (!logs.isEmpty()) {
+			QFile log(logs.first().absoluteFilePath());
+			if (log.size() <= 4 * 1024 * 1024 && log.open(QIODevice::ReadOnly)) {
+				log.seek((std::max)(qint64(0), log.size() - 2 * 1024 * 1024));
+				const QString tail = QString::fromUtf8(log.read(2 * 1024 * 1024));
+				for (const auto &marker : markers)
+					marker_counts.insert(marker, (std::min)(1000, int(tail.count(marker))));
+			}
+		}
+		const QJsonObject bundle{{"schema", 1},
+			{"kind", "native-product-support-bundle"},
+			{"generatedAt", QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
+			{"productVersion", qEnvironmentVariable("WEBOBS_NATIVE_PRODUCT_VERSION")},
+			{"bootId", qEnvironmentVariable("WEBOBS_NATIVE_BOOT_ID")},
+			{"phase", watching_.isEmpty() ? "authenticated" : "graph-applied"},
+			{"programApplyState", program_apply_state_},
+			{"mediaSources", media_source_count()},
+			{"renderer", renderer_device_json(renderer_device_)},
+			{"videoInputs", QJsonObject{{"sources", video_sources}, {"received", video_received},
+				{"stalled", video_stalled}, {"unknown", video_unknown}}},
+			{"audioSources", audio_sources},
+			{"programOutput", output},
+			{"windows", windows},
+			{"obsLogMarkers", marker_counts}};
+		const QByteArray payload = QJsonDocument(bundle).toJson(QJsonDocument::Compact) + '\n';
+		if (payload.size() > 262144) {
+			support_bundle_error_ = "support-bundle-too-large";
+			status_->setText(tr("支持包超过大小上限，未保存。"));
+			return;
+		}
+		QString root = qEnvironmentVariable("WEBOBS_SUPPORT_BUNDLE_ROOT");
+		if (root.isEmpty())
+			root = QDir(qEnvironmentVariable("WEBOBS_NATIVE_PROFILE_ROOT")).absoluteFilePath("../support");
+		if (!QDir().mkpath(root)) {
+			support_bundle_error_ = "support-bundle-directory-failed";
+			status_->setText(tr("无法创建支持包目录。"));
+			return;
+		}
+		const QString path = QDir(root).absoluteFilePath(
+			"WebOBS-support-" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + ".json");
+		QSaveFile file(path);
+		if (!file.open(QIODevice::WriteOnly) || file.write(payload) != payload.size() || !file.commit()) {
+			support_bundle_error_ = "support-bundle-write-failed";
+			status_->setText(tr("支持包写入失败。"));
+			return;
+		}
+		last_support_bundle_ = path;
+		status_->setText(tr("支持包已保存：%1").arg(path));
+	}
 	int media_source_count() const
 	{
 		int media_sources = 0;
@@ -403,6 +509,8 @@ class ProductWindow final : public QWidget {
 			if (view && view->window)
 				collect_audio(view->graph);
 		state.insert("audioSources", audio_sources);
+		state.insert("supportBundle", QJsonObject{{"path", last_support_bundle_},
+			{"error", support_bundle_error_}});
 		state.insert("startupStudioDeferred", frontend_->property("webobsStudioDeferredToProduct").toBool());
 		state.insert("restoreGuardHits", frontend_->property("webobsRestoreGuardHits").toInt());
 		state.insert("refusedCollection", frontend_->property("webobsRefusedCollection").toString());
@@ -1132,7 +1240,7 @@ class ProductWindow final : public QWidget {
 		clear_media();
 		login_->setEnabled(true);
 		for (auto *button : {watch_, save_, logout_, refresh_, scene_watch_, stats_button_, program_projector_button_,
-			     record_program_, stream_program_})
+			     record_program_, stream_program_, support_bundle_})
 			if (button) button->setEnabled(false);
 		slot_count_->setEnabled(false);
 		camera_choices_->clear();
@@ -1222,7 +1330,8 @@ class ProductWindow final : public QWidget {
 					if (saved.value(role).isObject()) projector_placements_[role] = saved.value(role);
 			}
 			observe_state("authenticated");
-			for (auto *button : {watch_, logout_, refresh_, scene_watch_, stats_button_, record_program_, stream_program_})
+			for (auto *button : {watch_, logout_, refresh_, scene_watch_, stats_button_, record_program_, stream_program_,
+				     support_bundle_})
 				button->setEnabled(true);
 			status_->setText(tr("已登录，正在读取授权设备目录…"));
 			heartbeat_.start(2000);
@@ -1794,6 +1903,11 @@ public:
 			output_health_->setObjectName("webobsOutputHealth");
 			output_health_->setWordWrap(true);
 			layout->addWidget(output_health_);
+			support_bundle_ = new QPushButton(tr("生成支持包"), this);
+			support_bundle_->setObjectName("webobsSupportBundle");
+			support_bundle_->setToolTip(tr("导出有界脱敏状态、计数和 OBS 标记统计；不包含摄像机地址、令牌、日志正文或媒体。"));
+			layout->addWidget(support_bundle_);
+			connect(support_bundle_, &QPushButton::clicked, this, [this] { generate_support_bundle(); });
 		}
 		auto *manage = new QPushButton(tr("设备与来源管理"), this);
 		manage->setObjectName("webobsManageDevices");
