@@ -1484,7 +1484,12 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     return value if (isinstance(value, dict) and value.get("streaming") is True and
                         value.get("streamConnected") is True and
                         isinstance(value.get("streamPlaybackUrl"), str)) else None
-                streamed = wait_for(streaming_ready, "native Program WHIP publishing did not start", timeout=40)
+                def streaming_failure():
+                    # MediaMTX and the WHIP output report their refusal in the host's own
+                    # output state; without this the gate would only say "did not start".
+                    return ("native Program WHIP publishing did not start: host="
+                        + json.dumps(state().get("programOutput", {}), sort_keys=True)[:700])
+                streamed = wait_for(streaming_ready, streaming_failure, timeout=40)
                 playback_url = streamed["streamPlaybackUrl"]
                 assert re.fullmatch(r"rtsp://127\.0\.0\.1:[0-9]{2,5}/program", playback_url), \
                     "native Program publisher exposed an unexpected playback URL"

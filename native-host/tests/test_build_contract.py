@@ -177,6 +177,26 @@ class BuildContractTests(unittest.TestCase):
         self.assertNotIn("Start-Process", launcher)  # Explicit child environment, fixed CWD.
         self.assertNotIn("--multi", launcher)  # Do not bypass upstream portable instance guard.
 
+    def test_program_output_relay_allocates_every_loopback_port(self):
+        """The private Program relay must never assume a fixed publish port.
+
+        The product's own distribution gateway MediaMTX binds WebRTC on 8889, and
+        Windows reserves dynamic port ranges that can make a fixed port unbindable
+        with nothing listening on it. Either case refused the WHIP start while the
+        host state still reported an empty streamError, so every relay listener is
+        allocated as a free loopback port and each refusal is recorded.
+        """
+        source = (ROOT / "native-host/src/product_output.cpp").read_text(encoding="utf-8")
+        for forbidden in ("webrtcAddress: 127.0.0.1:8889", "http://127.0.0.1:8889", "port_available(8889)"):
+            self.assertNotIn(forbidden, source)
+        self.assertIn("int whip_port = free_tcp_port();", source)
+        self.assertIn("webrtcAddress: 127.0.0.1:%3", source)
+        self.assertIn('QStringLiteral("http://127.0.0.1:%1/program/whip").arg(whip_port)', source)
+        start = source[source.index("bool start_media_mtx"):source.index("bool start_recording")]
+        for refusal in ("mediamtx-unavailable", "mediamtx-port-failed", "mediamtx-directory-failed",
+                        "mediamtx-config-failed", "mediamtx-start-failed", "mediamtx-timeout"):
+            self.assertIn('stream_error = error = "%s"' % refusal, start)
+
     def test_build_symbols_are_stripped_before_the_manifest(self):
         builder = (ROOT / "desktop/scripts/build-obs-native.ps1").read_text(encoding="utf-8")
         workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text(encoding="utf-8")
