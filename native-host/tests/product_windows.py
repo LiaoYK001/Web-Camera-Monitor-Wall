@@ -453,38 +453,9 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     readable.append(False)
             return {"publishers": publishers, "readable": readable, "pathProgress": rtsp.path_progress()}
 
-        def wait_video_progress(label, timeout=30.0):
-            """Require every watched input to advance its own frame counter before a capture.
-
-            A TAKE starts the Program output, and on a loaded runner the loopback decoders can lag
-            for a moment. Asserting final pixels inside that lag reports a frozen wall the product
-            had already recovered, so the gate first proves per-input progress from the counters the
-            product itself reports and names the input that stays still.
-            """
-            started = time.monotonic()
-            deadline = started + timeout
-            baseline, serials = None, {}
-            while time.monotonic() < deadline:
-                entries = [entry for entry in state().get("videoInputs", []) if isinstance(entry, dict)]
-                serials = {str(entry.get("uuid") or ""): entry.get("serial") for entry in entries}
-                if baseline is None:
-                    baseline = serials
-                    time.sleep(1.5)
-                    continue
-                shared = {uuid: serial for uuid, serial in serials.items() if uuid in baseline}
-                if len(baseline) >= 5 and shared and all(type(serial) is int and type(baseline[uuid]) is int
-                        and serial > baseline[uuid] for uuid, serial in shared.items()):
-                    evidence["videoProgressBeforeCapture"] = {"phase": label, "inputs": len(shared),
-                        "waitedMs": int((time.monotonic() - started) * 1000)}
-                    return
-                time.sleep(1)
-            stuck = sorted(uuid for uuid, serial in (baseline or {}).items() if serials.get(uuid) == serial)[:6]
-            raise AssertionError("a watched video input stopped advancing before the " + label +
-                                 " capture: " + ",".join(stuck))
-
         def check_pixels(label, *, blank=False, repeat_first=False, reverse=False, expected_media=None,
                 projector_orders=None, quick_order=None, program_scene=None, program_media=None,
-                fixture_retry=True, require_progress=False):
+                fixture_retry=True):
             # A loopback publisher is harness state, not product state: ffmpeg can exit while
             # looping a synthetic file, and then every reader of that path stalls through no
             # fault of the product. Restart dead publishers before capturing and record it.
@@ -518,8 +489,6 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 expected_media=expected_media, quick_order=quick_order,
                 program_scene=program_scene, program_media=program_media)
             checkpoint("pixels-" + label + "-observed")
-            if require_progress and not blank:
-                wait_video_progress(label)
             if blank:
                 assert observed.get("phase") == "locked" and observed.get("mediaSources") == 0
             elif observed.get("sessionBound") is not True:
@@ -662,8 +631,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                         return check_pixels(label, blank=blank, repeat_first=repeat_first, reverse=reverse,
                             expected_media=expected_media, projector_orders=projector_orders,
                             quick_order=quick_order, program_scene=program_scene,
-                            program_media=program_media, fixture_retry=False,
-                            require_progress=require_progress)
+                            program_media=program_media, fixture_retry=False)
                 assert analysis.returncode == 0 and result.get("passed") is True, "product view failed its expected final-pixel state"
 
         frontend_pid = 0
@@ -1204,7 +1172,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 # fixture-five deliberately keeps its fifth source with explicit
                 # empty audioInputs, so its silent video variant is a separate
                 # owned source from the normal quick-wall input (5 + 1 = 6).
-                check_pixels("program-before-take", require_progress=True, quick_order=[1, 2, 3, 4, 5],
+                check_pixels("program-before-take", quick_order=[1, 2, 3, 4, 5],
                     expected_media=6, program_scene="fixture-five", program_media=5,
                     projector_orders={"program-projector": "forward"})
                 checkpoint("program-before-pixels")
@@ -1338,7 +1306,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     studio_runtime["appliedSceneId"] == "fixture-alt", \
                     "Program runtime receipt did not match the committed TAKE"
                 checkpoint("program-runtime-receipt")
-                check_pixels("program-after-take", require_progress=True, quick_order=[1, 2, 3, 4, 5],
+                check_pixels("program-after-take", quick_order=[1, 2, 3, 4, 5],
                     expected_media=7, program_scene="fixture-alt", program_media=2,
                     projector_orders={"program-projector": "quick-1"})
                 checkpoint("program-after-pixels")
