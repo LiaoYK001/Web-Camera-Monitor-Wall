@@ -2,6 +2,7 @@
 
 #include "product_media.hpp"
 #include "webobs/scene_document.hpp"
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -12,6 +13,20 @@ struct ProductVideoProgress {
 	std::string uuid;
 	bool available = false;
 	std::int64_t serial = 0; // Opaque delivered-video callback serial, never a rendering/hardware claim.
+};
+struct ProductAudioProgress {
+	std::string source_id;
+	bool available = false;
+	bool source_active = false;
+	bool source_showing = false;
+	int process_exit_code = -1;
+	float peak_dbfs = -120.0f;
+	int media_state = 0;
+	double volume = 0;
+	bool muted = false;
+	unsigned int mixers = 0;
+	std::int64_t sync_offset = 0;
+	std::string mixer_log;
 };
 
 // Main-thread only. Entries are owned by graphs, never by a global OBS name.
@@ -36,11 +51,14 @@ public:
 	obs_scene_t *scene = nullptr;
 	// One UUID per document source, in document order; repeats are deliberate.
 	std::vector<std::string> uuids;
+	// Owned audio-mix source UUIDs, one per source with explicit nonempty audio.
+	std::vector<std::string> audio_uuids;
 	ProductSceneGraph() = default;
 	ProductSceneGraph(const ProductSceneGraph &) = delete;
 	ProductSceneGraph &operator=(const ProductSceneGraph &) = delete;
 	~ProductSceneGraph();
 	std::vector<ProductVideoProgress> video_progress() const;
+	std::vector<ProductAudioProgress> audio_progress();
 	friend std::unique_ptr<ProductSceneGraph> create_product_scene(
 		ProductSourcePool &, const std::string &, const SceneDocument &,
 		const std::vector<ProductCamera> &, std::string &);
@@ -49,8 +67,10 @@ public:
 // Resolved bindings must come from the authenticated product authority. Every
 // document source is checked against its exact binding before any source I/O.
 // No authorization is granted by this renderer. Unsupported business-source
-// kinds, nonempty per-track audio routing and assets fail explicitly until
-// their resolvers are wired. Explicit empty audioInputs keep video but silence audio.
+// kinds and assets fail explicitly until their resolvers are wired. Explicit
+// empty audioInputs keep video but silence audio. In the product build,
+// nonempty audioInputs use a bounded audio-only FFmpeg mixer feeding one owned
+// OBS source; the video source remains the direct RTSP source.
 std::unique_ptr<ProductSceneGraph> create_product_scene(ProductSourcePool &pool,
 	const std::string &owner, const SceneDocument &document,
 	const std::vector<ProductCamera> &bindings, std::string &error);

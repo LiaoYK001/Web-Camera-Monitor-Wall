@@ -8,7 +8,9 @@ config directory. This runner never loads an existing scene or camera profile.
 from __future__ import annotations
 
 import argparse
+import array
 import ctypes
+import math
 import hashlib
 import json
 import os
@@ -157,7 +159,12 @@ class LoopbackRtsp:
             mediamtx = locked_mediamtx(private, offline)
             eol = chr(10)
             config = private / "mediamtx.yml"
-            config.write_text(eol.join(["logLevel: warn", "rtspAddress: 127.0.0.1:8554", "paths:", "  all_others:"]) + eol,
+            # The loopback fixture owns only RTSP. Its default API/WebRTC
+            # listeners would collide with unrelated product or runner ports
+            # and can make MediaMTX exit before the fixture becomes readable.
+            config.write_text(eol.join(["logLevel: warn", "api: false", "webrtc: false",
+                              "hls: false", "rtmp: false", "srt: false",
+                              "rtspAddress: 127.0.0.1:8554", "paths:", "  all_others:"]) + eol,
                               encoding="utf-8")
             self.server = subprocess.Popen([str(mediamtx), str(config)], cwd=private, stdin=subprocess.DEVNULL,
                                            stdout=self.log, stderr=subprocess.STDOUT)
@@ -211,7 +218,7 @@ class LoopbackRtsp:
 
     def _publisher_command(self, index: int) -> list[str]:
         return [str(self.ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin", "-re", "-stream_loop", "-1",
-                "-i", str(self.fixture_paths[index]), "-c", "copy", "-f", "rtsp", "-rtsp_transport", "tcp",
+                "-i", str(self.fixture_paths[index]), "-map", "0", "-c", "copy", "-f", "rtsp", "-rtsp_transport", "tcp",
                 self.urls[index]]
 
     def _start_publisher(self, index: int) -> None:
@@ -304,6 +311,32 @@ def picture_counts(frames, require_b_frames: bool) -> tuple[int, int]:
     return len(frames), count
 
 
+def tone_probe(ffmpeg: Path, source: str, stream_index: int, *, sample_rate: int = 8000,
+               duration: float = 2.0) -> tuple[float, float] | None:
+    """Decode one audio stream to mono PCM and estimate its dominant pure tone.
+
+    Zero-crossing analysis needs no third-party dependency yet separates the
+    fixture's 440 Hz and 880 Hz tracks, and the RMS value proves the stream
+    carries signal rather than only a track header. A short window returns None
+    so an RTSP reader can retry while the publisher is still warming up.
+    """
+    transport = ["-rtsp_transport", "tcp"] if source.startswith("rtsp://") else []
+    decoded = subprocess.run([str(ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin", *transport,
+        "-i", source, "-map", f"0:a:{stream_index}",
+        "-c:a", "pcm_s16le", "-ac", "1", "-ar", str(sample_rate), "-t", f"{duration:.1f}",
+        "-f", "s16le", "-"], capture_output=True, timeout=60)
+    if decoded.returncode != 0:
+        stderr = decoded.stderr.decode("utf-8", errors="replace")[-400:]
+        raise ValueError(f"locked ffmpeg could not decode audio track {stream_index}: {stderr}")
+    samples = array.array("h")
+    samples.frombytes(decoded.stdout[:len(decoded.stdout) // 2 * 2])
+    if len(samples) < sample_rate:
+        return None
+    rms = math.sqrt(sum(value * value for value in samples) / len(samples))
+    crossings = sum(1 for index in range(1, len(samples)) if (samples[index - 1] < 0) != (samples[index] < 0))
+    return round(rms, 1), round(crossings * .5 / (len(samples) / sample_rate), 1)
+
+
 def make_fixtures(private: Path, ffmpeg: Path, ffprobe: Path, node: str, *, all_hevc: bool = False) -> list[dict]:
     """All encoders exit here, BEFORE OBS launches; no dummy recording/output."""
     fixtures = []
@@ -322,8 +355,15 @@ def make_fixtures(private: Path, ffmpeg: Path, ffprobe: Path, node: str, *, all_
             video_args = ["-c:v", "libx265", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
                           "-x265-params", f"pools=1:frame-threads=1:keyint=10:min-keyint=10:scenecut=0:b-adapt=0:bframes={requested_b_frames}:log-level=error"]
         command = [str(ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-f", "rawvideo",
-                   "-pixel_format", "rgb24", "-video_size", "320x180", "-framerate", "10", "-i", str(raw),
-                   "-an", *video_args, "-f", "matroska", str(video)]
+                   "-pixel_format", "rgb24", "-video_size", "320x180", "-framerate", "10", "-i", str(raw)]
+        if channel == 0:
+            command += ["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=8",
+                        "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=8",
+                        "-map", "0:v:0", "-map", "1:a:0", "-map", "2:a:0",
+                        "-c:a", "aac", "-b:a", "64k", "-shortest"]
+        else:
+            command += ["-an"]
+        command += [*video_args, "-f", "matroska", str(video)]
         subprocess.run(command, check=True, capture_output=True, timeout=90)
         probe = subprocess.run([str(ffprobe), "-v", "error", "-select_streams", "v:0", "-read_intervals", "%+#32",
                                 "-show_entries", "stream=codec_name,width,height,has_b_frames:frame=pict_type",
@@ -333,10 +373,33 @@ def make_fixtures(private: Path, ffmpeg: Path, ffprobe: Path, node: str, *, all_
         specification = {"codec": codec, "width": 320, "height": 180, "requestedBFrames": requested_b_frames}
         if not probe_matches_fixture(streams, specification):
             raise AssertionError("Encoded fixture codec/dimensions/reordering did not match its specification")
+        audio_tracks = 0
+        audio_tones = []
+        if channel == 0:
+            audio_probe = subprocess.run(
+                [str(ffprobe), "-v", "error", "-select_streams", "a", "-show_entries",
+                 "stream=index,codec_type,codec_name", "-of", "json", str(video)],
+                check=True, capture_output=True, text=True, timeout=20)
+            audio_streams = json.loads(audio_probe.stdout).get("streams", [])
+            if len(audio_streams) != 2 or any(item.get("codec_type") != "audio" for item in audio_streams):
+                raise AssertionError("Encoded multi-track fixture did not contain two audio tracks")
+            audio_tracks = 2
+            # Decode the actual PCM instead of trusting two stream headers. The
+            # tracks carry different fixed pitches, so a later Program artifact
+            # can prove which track reached the mix rather than only that two
+            # tracks exist in the container.
+            measured = [tone_probe(ffmpeg, str(video), index) for index in (0, 1)]
+            if any(item is None for item in measured):
+                raise AssertionError("Fixture audio track produced no decodable one-second window")
+            assert all(item[0] > 200 for item in measured), "decoded fixture audio is silent"
+            if not (400 <= measured[0][1] <= 480 and 820 <= measured[1][1] <= 940):
+                raise AssertionError("Fixture audio tracks are not the two expected distinguishable tones")
+            audio_tones = [item[1] for item in measured]
         pictures, b_pictures = picture_counts(document.get("frames"), requested_b_frames > 0)
         fixtures.append({"channel": channel + 1, "codec": codec, "width": 320, "height": 180,
                          "requestedBFrames": requested_b_frames, "hasBFrames": streams[0]["has_b_frames"],
                          "probedPictureCount": pictures, "probedBPictureCount": b_pictures,
+                         "audioTracks": audio_tracks, "audioTonesHz": audio_tones,
                          "sha256": hashlib.sha256(video.read_bytes()).hexdigest()})
         # Raw targets are exact files just created by this function under the
         # caller's new fixed private directory, never a computed user path.

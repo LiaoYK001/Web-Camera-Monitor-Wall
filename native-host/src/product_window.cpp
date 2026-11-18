@@ -76,6 +76,7 @@ class ProductWindow final : public QWidget {
 	QLineEdit *username_, *password_;
 	QLabel *status_;
 	QLabel *video_health_;
+	QLabel *audio_health_;
 	QLabel *renderer_label_;
 	RendererDevice renderer_device_;
 	QElapsedTimer health_clock_;
@@ -152,8 +153,19 @@ class ProductWindow final : public QWidget {
 	void refresh_video_health()
 	{
 		std::map<std::string, ProductVideoProgress> inputs;
+		bool has_audio = false;
+		int audio_count = 0;
+		float audio_peak = -120.0f;
+		std::set<std::string> audio_seen;
 		auto collect = [&](const std::shared_ptr<ProductSceneGraph> &graph) {
-			if (graph) for (const auto &input : graph->video_progress()) inputs.emplace(input.uuid, input);
+			if (!graph) return;
+			for (const auto &audio : graph->audio_progress()) {
+				if (!audio_seen.insert(audio.source_id).second) continue;
+				has_audio = true;
+				++audio_count;
+				audio_peak = (std::max)(audio_peak, audio.peak_dbfs);
+			}
+			for (const auto &input : graph->video_progress()) inputs.emplace(input.uuid, input);
 		};
 		collect(wall_);
 		collect(program_);
@@ -179,6 +191,13 @@ class ProductWindow final : public QWidget {
 		if (inputs.empty()) video_health_->setText(tr("视频输入：未监看"));
 		else video_health_->setText(tr("视频输入：%1 路，已收帧 %2，近期推进 %3，停滞 %4，状态未知 %5。")
 			.arg(inputs.size()).arg(received).arg(progressing).arg(stalled).arg(unavailable));
+		if (audio_health_) {
+			if (!has_audio) audio_health_->setText(tr("音频混音：无（空选择或未配置）"));
+			else audio_health_->setText(tr("音频混音：%1 源，峰值 %2 dBFS")
+				.arg(audio_count).arg(double(audio_peak), 0, 'f', 1));
+		}
+		if (has_audio && !tearing_down_ && !user_id_.isEmpty())
+			observe_current_media();
 	}
 	int media_source_count() const
 	{
@@ -194,9 +213,14 @@ class ProductWindow final : public QWidget {
 	{
 		std::set<std::string> inputs;
 		if (wall_) inputs.insert(wall_->uuids.begin(), wall_->uuids.end());
+		if (wall_) inputs.insert(wall_->audio_uuids.begin(), wall_->audio_uuids.end());
 		if (program_) inputs.insert(program_->uuids.begin(), program_->uuids.end());
+		if (program_) inputs.insert(program_->audio_uuids.begin(), program_->audio_uuids.end());
 		for (const auto &view : projectors_)
-			if (view && view->window) inputs.insert(view->graph->uuids.begin(), view->graph->uuids.end());
+			if (view && view->window) {
+				inputs.insert(view->graph->uuids.begin(), view->graph->uuids.end());
+				inputs.insert(view->graph->audio_uuids.begin(), view->graph->audio_uuids.end());
+			}
 		return inputs.size();
 	}
 	QJsonObject program_state() const
@@ -264,6 +288,30 @@ class ProductWindow final : public QWidget {
 		state.insert("programApplyState", program_apply_state_);
 		state.insert("programSyncPending", program_sync_pending_);
 		state.insert("program", program_state());
+		QJsonArray audio_sources;
+		std::set<std::string> audio_seen;
+		const auto collect_audio = [&](const std::shared_ptr<ProductSceneGraph> &graph) {
+			if (!graph)
+				return;
+			for (const auto &audio : graph->audio_progress()) {
+				if (!audio_seen.insert(audio.source_id).second)
+					continue;
+				audio_sources.append(QJsonObject{{"sourceId", QString::fromStdString(audio.source_id)},
+					{"available", audio.available}, {"active", audio.source_active},
+					{"showing", audio.source_showing}, {"processExitCode", audio.process_exit_code},
+					{"peakDbfs", double(audio.peak_dbfs)},
+					{"mediaState", audio.media_state}, {"volume", audio.volume},
+					{"muted", audio.muted}, {"mixers", double(audio.mixers)},
+					{"syncOffset", double(audio.sync_offset)},
+					{"mixerLog", QString::fromStdString(audio.mixer_log)}});
+			}
+		};
+		collect_audio(wall_);
+		collect_audio(program_);
+		for (const auto &view : projectors_)
+			if (view && view->window)
+				collect_audio(view->graph);
+		state.insert("audioSources", audio_sources);
 		state.insert("startupStudioDeferred", frontend_->property("webobsStudioDeferredToProduct").toBool());
 		state.insert("restoreGuardHits", frontend_->property("webobsRestoreGuardHits").toInt());
 		state.insert("refusedCollection", frontend_->property("webobsRefusedCollection").toString());
@@ -1547,6 +1595,11 @@ public:
 		video_health_->setWordWrap(true);
 		video_health_->setToolTip(tr("只检查 OBS 媒体源是否交付新视频帧；不代表最终画面、硬解或独显验证。低于每六秒一帧的来源可能显示停滞。"));
 		layout->addWidget(video_health_);
+		audio_health_ = new QLabel(tr("音频混音：无（空选择或未配置）"), this);
+		audio_health_->setObjectName("webobsAudioHealth");
+		audio_health_->setWordWrap(true);
+		audio_health_->setToolTip(tr("显示原生逐轨混音源数量与 OBS 电平峰值；不把静音、无音频轨或监听关闭误报为成功。"));
+		layout->addWidget(audio_health_);
 		renderer_label_ = new QLabel(this);
 		renderer_label_->setObjectName("webobsRendererDevice");
 		renderer_label_->setWordWrap(true);

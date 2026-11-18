@@ -529,8 +529,46 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 ffmpeg, ffprobe = pixel_windows.locked_ffmpeg(private, False)
                 fixtures = pixel_windows.make_fixtures(private, ffmpeg, ffprobe, shutil.which("node"), all_hevc=True)
                 assert all(item["codec"] == "hevc" for item in fixtures)
+                assert fixtures[0]["audioTracks"] == 2, "dual audio-track fixture was not encoded"
                 evidence["fixtures"] = fixtures
                 rtsp = pixel_windows.LoopbackRtsp(private, ffmpeg, ffprobe, fixtures, secrets.token_hex(16), False)
+                audio_streams = []
+                audio_deadline = time.monotonic() + 15
+                while time.monotonic() < audio_deadline:
+                    audio_probe = subprocess.run(
+                        [str(ffprobe), "-v", "error", "-rtsp_transport", "tcp", "-select_streams", "a",
+                         "-show_entries", "stream=codec_name,codec_type", "-of", "json", rtsp.urls[0]],
+                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                    audio_streams = json.loads(audio_probe.stdout).get("streams", []) \
+                        if audio_probe.returncode == 0 else []
+                    if len(audio_streams) == 2:
+                        break
+                    time.sleep(0.5)
+                evidence["rtspAudioTracks"] = len(audio_streams)
+                assert len(audio_streams) == 2, "loopback RTSP did not expose both synthetic audio tracks"
+                # Stream count alone cannot prove the published endpoint kept
+                # both tracks distinct. Decode each stream and measure the two
+                # fixed pitches so a collapsed or mis-mapped publisher fails
+                # here rather than showing up as a silent Program mix later.
+                fixture_tones = fixtures[0].get("audioTonesHz")
+                assert isinstance(fixture_tones, list) and len(fixture_tones) == 2, \
+                    "fixture receipt did not record two decoded audio tones"
+                rtsp_tones = []
+                tone_deadline = time.monotonic() + 60
+                while time.monotonic() < tone_deadline:
+                    try:
+                        decoded = [pixel_windows.tone_probe(ffmpeg, rtsp.urls[0], index)
+                                   for index in (0, 1)]
+                    except ValueError:
+                        decoded = []
+                    if decoded and all(decoded) and all(item[0] > 200 for item in decoded):
+                        rtsp_tones = [item[1] for item in decoded]
+                        break
+                    time.sleep(1)
+                evidence["rtspAudioTonesHz"] = rtsp_tones
+                assert len(rtsp_tones) == 2, "loopback RTSP did not deliver decodable audio on both tracks"
+                assert all(abs(actual - wanted) <= 30 for actual, wanted in zip(rtsp_tones, fixture_tones)), \
+                    "loopback RTSP tracks do not match the two tones encoded in the fixture file"
                 phase = "existing-camera-api"
                 code, issued, _ = request("/api/v1/auth/login", account)
                 assert code == 200 and issued
@@ -920,8 +958,9 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     "canvas": {"width": 1920, "height": 1080, "backgroundColor": "#000000"},
                     "sources": [{"id": "fixture-alt-source", "kind": "camera", "name": "Program alt camera",
                         "cameraId": "fixture-1", "profileId": "main", "hardwareDecode": "auto",
-                        "muted": True, "volume": 1, "syncOffsetMs": 0, "monitoring": "off", "audioTrack": 1,
-                        "audioInputs": []}],
+                        "muted": False, "volume": 0.75, "syncOffsetMs": 0, "monitoring": "off", "audioTrack": 2,
+                        "audioInputs": [{"track": 0, "gain": 1, "muted": False, "syncOffsetMs": 0},
+                            {"track": 1, "gain": 0.5, "muted": False, "syncOffsetMs": 0}]}],
                     "items": [{"id": "fixture-alt-item", "sourceId": "fixture-alt-source", "x": 0, "y": 0,
                         "width": 1920, "height": 1080, "scaleMode": "contain",
                         "crop": {"top": 0, "right": 0, "bottom": 0, "left": 0},
@@ -940,6 +979,16 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     "native Program did not apply the saved scene", timeout=20)
                 check_monitor_program(program_scene="fixture-five", program_media=5)
                 checkpoint("program-five-applied")
+                # Audio configuration matrix, negative controls. Sources that
+                # omit audioInputs keep the legacy single-source path, and the
+                # fifth source's explicit empty audioInputs must silence that
+                # source without starting an audio-only mixer. Neither variant
+                # may create a mix source, so no native mixer entry exists yet
+                # and the identically named TAKE source must not leak forward.
+                wait_for(lambda: state().get("audioSources", []) == [],
+                    "Program Scene without non-empty audioInputs started native audio mixers", timeout=10)
+                evidence["audioMatrix"] = {"silentProgramScene": "fixture-five",
+                    "mixersBeforeTake": len(state().get("audioSources", []))}
                 assert ui("program-projector")
                 wait_for(lambda: any(window.get("role") == "program-projector" for window in state().get("windows", [])),
                     "native Program projector did not open", timeout=8)
@@ -964,11 +1013,77 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 code, _, taken = request("/api/v1/studio/take", cookie=cookie, method="POST", revision=studio["revision"])
                 assert code == 200 and taken["programSceneId"] == "fixture-alt", "Studio TAKE did not commit the preview scene"
                 checkpoint("program-take-committed")
-                wait_for(lambda: state().get("programSceneId") == "fixture-alt" and
-                    state().get("programApplyState") == "applied" and
-                    state().get("program", {}).get("mediaSources") == 1,
-                    "native Program did not switch to the TAKE target", timeout=20)
-                checkpoint("program-take-applied")
+                # The core flattens every runtime source identity into
+                # "<scene>.<source>", and the product reports that full identity.
+                # Comparing the short "fixture-alt-source" suffix would also
+                # accept an identically named source owned by a different Scene
+                # and could hide a cross-Scene audio leak.
+                program_audio_id = "fixture-alt.fixture-alt-source"
+                assert not any(item.get("sourceId") == program_audio_id
+                               for item in state().get("audioSources", [])), \
+                    "Program TAKE audio source leaked before the TAKE was applied"
+
+                def audio_diagnostics(stage, observed):
+                    """Bounded, redacted mixer evidence for one failed stage."""
+                    return {"stage": stage, "expectedSourceId": program_audio_id,
+                        "expectedMonitorMixers": 2,
+                        "programSceneId": state().get("programSceneId"),
+                        "programApplyState": state().get("programApplyState"),
+                        "programMediaSources": state().get("program", {}).get("mediaSources"),
+                        "observed": [{key: item.get(key) for key in ("sourceId", "available", "active",
+                            "showing", "processExitCode", "mediaState", "peakDbfs", "mixers", "muted",
+                            "volume", "syncOffset")} for item in observed],
+                        "mixerLog": [str(item.get("mixerLog", ""))[:160] for item in observed]}
+
+                def wait_program_audio(stage, predicate, timeout=20):
+                    deadline = time.monotonic() + timeout
+                    while time.monotonic() < deadline:
+                        observed = state().get("audioSources", [])
+                        assert len({item.get("sourceId") for item in observed}) == len(observed), \
+                            "duplicate native audio mixers share one Program source identity"
+                        result = predicate(observed)
+                        if result:
+                            return result
+                        time.sleep(.1)
+                    detail = audio_diagnostics(stage, state().get("audioSources", []))
+                    evidence["programAudioFailure"] = detail
+                    raise AssertionError(f"Program TAKE audio gate failed at {stage}: "
+                        + json.dumps(detail, sort_keys=True)[:1500])
+
+                def program_scene_applied():
+                    current = state()
+                    return current if (current.get("programSceneId") == "fixture-alt"
+                        and current.get("programApplyState") == "applied"
+                        and current.get("program", {}).get("mediaSources") == 2) else None
+
+                wait_for(program_scene_applied, "native Program did not switch to the TAKE Scene", timeout=20)
+                checkpoint("program-take-scene-applied")
+
+                def designated_mixer(observed):
+                    matches = [item for item in observed if item.get("sourceId") == program_audio_id]
+                    if len(matches) != 1:
+                        return None
+                    return matches[0] if matches[0].get("available") is True else None
+
+                mixer = wait_program_audio("designated-mixer", designated_mixer)
+                checkpoint("program-take-audio-source")
+
+                def designated_signal(observed):
+                    entry = designated_mixer(observed)
+                    if entry and entry.get("mediaState") == 1 and entry.get("peakDbfs", -120) > -60:
+                        return entry
+                    return None
+
+                mixer = wait_program_audio("designated-mixer-signal", designated_signal)
+                checkpoint("program-take-audio-signal")
+                assert mixer.get("mixers") == 2, \
+                    f"audioTrack 2 did not route to the second OBS monitor bus (mixers={mixer.get('mixers')})"
+                assert mixer.get("volume") == 0.75 and mixer.get("muted") is False, \
+                    "Program mix source did not apply its saved volume and mute settings"
+                evidence["programAudio"] = {key: mixer.get(key) for key in ("sourceId", "available", "active",
+                    "showing", "processExitCode", "mediaState", "peakDbfs", "mixers", "muted", "volume")}
+                evidence["checks"].extend(["nonempty-audio-inputs-native-mix-peak",
+                    "program-take-mixer-identity-and-bus", "explicit-empty-audio-inputs-stay-silent"])
                 after_take = state().get("program", {}).get("sceneUuid")
                 assert isinstance(after_take, str) and after_take != before_take, "TAKE reused the previous Program scene"
                 time.sleep(1)  # Allow the cut TAKE and source retirement to settle.
@@ -979,7 +1094,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     "Program runtime receipt did not match the committed TAKE"
                 checkpoint("program-runtime-receipt")
                 check_pixels("program-after-take", quick_order=[1, 2, 3, 4, 5],
-                    expected_media=6, program_scene="fixture-alt", program_media=1,
+                    expected_media=7, program_scene="fixture-alt", program_media=2,
                     projector_orders={"program-projector": "quick-1"})
                 checkpoint("program-after-pixels")
                 checkpoint("program-projector-close")
@@ -999,6 +1114,9 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     state().get("program", {}).get("mediaSources") == 0,
                     "empty Program scene did not clear the previous protected output", timeout=25)
                 checkpoint("program-cleared-applied")
+                wait_for(lambda: state().get("audioSources", []) == [],
+                    "retired Program Scene retained its native audio mixer process", timeout=10)
+                evidence["programAudioReleasedAfterClear"] = True
                 check_pixels("program-cleared", quick_order=[1, 2, 3, 4, 5])
                 evidence["checks"].extend(["studio-take-applies-real-obs-program-final-pixels",
                     "program-projector-shows-real-program-not-preview",
@@ -1008,6 +1126,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             assert ui("logout")
             wait_for(lambda: state().get("phase") == "locked", "logout did not lock product UI")
             assert state()["mediaSources"] == 0 and state()["sessionBound"] is False
+            assert state().get("audioSources", []) == [], "logout retained native audio mixer processes"
             evidence["logoutRetirementMs"] = state().get("lastRetirementMs")
             assert type(evidence["logoutRetirementMs"]) is int and 0 <= evidence["logoutRetirementMs"] <= 2000, \
                 "native logout did not retire the actual media references within two seconds"
@@ -1216,11 +1335,15 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             evidence["mediaQualified"] = with_media
             evidence["mediaScope"] = "synthetic-five-hevc-final-preview-pixels" if with_media else "not-run"
             evidence["passed"] = True
-        except Exception:
+        except Exception as error:
             gate_failed[0] = True
             # Synthetic logs stay private. Only fixed marker categories, bounded
             # counts and numeric exit status leave this disposable test profile.
             evidence["failurePhase"] = phase
+            detail = f"{type(error).__name__}: {error}"
+            for private_value in (str(private), str(runtime), str(profile)):
+                detail = detail.replace(private_value, "<private>")
+            evidence["failureDetail"] = detail[:300]
             evidence["entryExitCode"] = process.poll() if process is not None else None
             stopped = status()
             if stopped.get("bootId") == active_boot_id or (process is not None and stopped.get("ownerPid") == process.pid):
@@ -1247,6 +1370,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 sorted(preferences) if isinstance(preferences, dict) else [])
             evidence["observedState"]["windowRoles"] = [window.get("role") for window in observed.get("windows", [])
                                                        if isinstance(window, dict)]
+            evidence["observedState"]["audioSources"] = observed.get("audioSources", [])
             # Only fixed categories/counts from this boot's newest OBS log.
             # Never publish its contents, path, exception text or camera URL.
             obs_markers = ("Switched to Preview/Program mode", "Switched to regular Preview mode",
@@ -1261,6 +1385,19 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     log.seek(max(0, newest.stat().st_size - 2 * 1024 * 1024))
                     tail = log.read(2 * 1024 * 1024).decode("utf-8", errors="replace")
                 evidence["currentBootObsMarkers"] = {marker: min(1000, tail.count(marker)) for marker in obs_markers}
+                audio_markers = ("MP: Failed to open media", "MP: Failed to find stream info",
+                    "MP: Could not initialize audio or video", "Disconnected. Reconnecting",
+                    "Reconnected.", "ffmpeg_source", "Error opening input", "frame size not set",
+                    "Stream specifier", "matches no streams", "Could not open", "Audio")
+                diagnostic_lines = []
+                for line in tail.splitlines():
+                    if not any(marker in line for marker in audio_markers):
+                        continue
+                    clean = re.sub(r"(?:rtsp|rtsps|udp|http|https)://\S+", "<url>", line)
+                    for private_value in (str(private), str(runtime), str(profile)):
+                        clean = clean.replace(private_value, "<private>")
+                    diagnostic_lines.append(clean[:200])
+                evidence["obsDiagnosticLines"] = diagnostic_lines[-12:]
             markers = ("ModuleNotFoundError", "ImportError", "PermissionError", "FileNotFoundError",
                        "RuntimeError", "AttributeError", "ValueError", "control exited during startup",
                        "control health deadline exceeded", "a required product service exited", "saved control port is unavailable")

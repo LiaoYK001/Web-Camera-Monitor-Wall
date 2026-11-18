@@ -3,8 +3,21 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <map>
 #include <tuple>
+#include <utility>
+#ifdef WEBOBS_NATIVE_PRODUCT_MODE
+#include <QCoreApplication>
+#include <QDir>
+#include <QFileInfo>
+#include <QProcess>
+#include <QProcessEnvironment>
+#include <QStringList>
+#include <QTcpServer>
+#include <QUrl>
+#include <obs-audio-controls.h>
+#endif
 
 namespace webobs::native_host {
 namespace {
@@ -47,26 +60,113 @@ std::uint32_t audio_mixers(const SceneSource &configuration)
 	return configuration.audio_inputs_explicit && configuration.audio_inputs.empty() ? 0u :
 		(1u << (configuration.audio_track - 1));
 }
+bool mixed_audio(const SceneSource &configuration)
+{
+	if (!configuration.audio_inputs_explicit || configuration.audio_inputs.empty() ||
+	    configuration.muted)
+		return false;
+	return std::any_of(configuration.audio_inputs.begin(), configuration.audio_inputs.end(),
+		[](const SceneAudioInput &input) { return !input.muted && input.gain > 0.0; });
+}
+bool explicit_audio(const SceneSource &configuration)
+{
+	return configuration.audio_inputs_explicit && !configuration.audio_inputs.empty();
+}
+int audio_normalization(const SceneSource &configuration)
+{
+	int normalization = 0;
+	for (const auto &input : configuration.audio_inputs)
+		if (!input.muted && input.gain > 0.0)
+			normalization = (std::max)(normalization, -input.sync_offset_ms);
+	return normalization;
+}
+#ifdef WEBOBS_NATIVE_PRODUCT_MODE
+void audio_meter_callback(void *param, const float magnitude[MAX_AUDIO_CHANNELS],
+	const float peak[MAX_AUDIO_CHANNELS], const float input_peak[MAX_AUDIO_CHANNELS])
+{
+	(void)magnitude;
+	(void)input_peak;
+	float value = -120.0f;
+	for (int channel = 0; channel < MAX_AUDIO_CHANNELS; ++channel)
+		// OBS's volmeter already reports dBFS. The audio may be flowing while
+		// every peak is negative; treating it as a linear multiplier would
+		// discard all real levels and leave the product meter at -120.
+		if (std::isfinite(peak[channel]))
+			value = (std::max)(value, peak[channel]);
+	static_cast<std::atomic<float> *>(param)->store(value);
+}
+#endif
 } // namespace
 
 struct ProductSceneSource {
 	obs_source_t *source = nullptr;
 	SceneSource configuration;
 	ProductCamera camera;
+	std::string document_id;
 	std::string settings;
 	std::vector<FilterState> filters;
+#ifdef WEBOBS_NATIVE_PRODUCT_MODE
+	std::unique_ptr<QProcess> audio_mix_process;
+	obs_source_t *audio_source = nullptr;
+	std::string audio_settings;
+	obs_volmeter_t *audio_volmeter = nullptr;
+	std::atomic<float> audio_peak_db{-120.0f};
+	QByteArray audio_mix_log;
+#endif
 	bool intact() const
 	{
-		return source && !obs_source_removed(source) && settings_json(source) == settings &&
-			filters_state(source) == filters && obs_source_muted(source) == configuration.muted &&
-			obs_source_get_volume(source) == float(configuration.volume) &&
-			obs_source_get_sync_offset(source) == std::int64_t(configuration.sync_offset_ms) * 1000000 &&
-			obs_source_get_audio_mixers(source) == audio_mixers(configuration) &&
-			obs_source_get_monitoring_type(source) == monitoring(configuration);
+		const bool mixed = mixed_audio(configuration);
+		const bool main_silent = explicit_audio(configuration);
+		const auto expected_monitoring = main_silent ? OBS_MONITORING_TYPE_NONE : monitoring(configuration);
+		const auto expected_mixers = main_silent ? 0u : audio_mixers(configuration);
+		const auto expected_volume = main_silent ? 0.0f : float(configuration.volume);
+		const auto expected_sync = main_silent ? 0 : std::int64_t(configuration.sync_offset_ms) * 1000000;
+		if (!(source && !obs_source_removed(source) && settings_json(source) == settings &&
+			filters_state(source) == filters && obs_source_muted(source) == (main_silent || configuration.muted) &&
+			obs_source_get_volume(source) == expected_volume &&
+			obs_source_get_sync_offset(source) == expected_sync &&
+			obs_source_get_audio_mixers(source) == expected_mixers &&
+			obs_source_get_monitoring_type(source) == expected_monitoring))
+			return false;
+#ifdef WEBOBS_NATIVE_PRODUCT_MODE
+		if (!mixed)
+			return true;
+		return audio_source && !obs_source_removed(audio_source) && audio_mix_process &&
+			audio_mix_process->state() == QProcess::Running && settings_json(audio_source) == audio_settings &&
+			obs_source_get_volume(audio_source) == float(configuration.volume) &&
+			obs_source_muted(audio_source) == configuration.muted &&
+			obs_source_get_sync_offset(audio_source) ==
+				std::int64_t(configuration.sync_offset_ms - audio_normalization(configuration)) * 1000000 &&
+			obs_source_get_audio_mixers(audio_source) == audio_mixers(configuration) &&
+			obs_source_get_monitoring_type(audio_source) == monitoring(configuration);
+#else
+		return true;
+#endif
 	}
 	~ProductSceneSource()
 	{
 		if (!source) return;
+#ifdef WEBOBS_NATIVE_PRODUCT_MODE
+		if (audio_volmeter) {
+			obs_volmeter_remove_callback(audio_volmeter, audio_meter_callback, &audio_peak_db);
+			obs_volmeter_detach_source(audio_volmeter);
+			obs_volmeter_destroy(audio_volmeter);
+			audio_volmeter = nullptr;
+		}
+		if (audio_source) {
+			obs_source_remove(audio_source);
+			obs_source_release(audio_source);
+			audio_source = nullptr;
+		}
+		if (audio_mix_process && audio_mix_process->state() != QProcess::NotRunning) {
+			audio_mix_process->write("q\n");
+			if (!audio_mix_process->waitForFinished(1500)) {
+				audio_mix_process->kill();
+				audio_mix_process->waitForFinished(1500);
+			}
+		}
+		audio_mix_process.reset();
+#endif
 		// OBS/frontend can retain deferred references after our last graph. Strip
 		// the private endpoint before removing the owned source in that case too.
 		Data empty(obs_data_create(), &obs_data_release);
@@ -77,6 +177,110 @@ struct ProductSceneSource {
 		obs_source_remove(source);
 		obs_source_release(source);
 	}
+#ifdef WEBOBS_NATIVE_PRODUCT_MODE
+	bool start_audio_mix(const ProductCamera &camera, std::string &error)
+	{
+		QString ffmpeg = qEnvironmentVariable("WEBOBS_FFMPEG_PATH");
+		if (ffmpeg.isEmpty())
+			ffmpeg = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("../../bin/ffmpeg.exe");
+		if (!QFileInfo(ffmpeg).isFile()) {
+			error = "scene-audio-mixer-unavailable";
+			return false;
+		}
+		QTcpServer server;
+		if (!server.listen(QHostAddress::LocalHost, 0)) {
+			error = "scene-audio-mixer-port-failed";
+			return false;
+		}
+		const int port = int(server.serverPort());
+		server.close();
+		QStringList arguments{"-hide_banner", "-loglevel", "error", "-nostats", "-nostdin"};
+		const QUrl url(QString::fromStdString(camera.url));
+		if (url.scheme() == "rtsp" || url.scheme() == "rtsps") {
+			arguments << "-rtsp_transport"
+				  << (camera.transport == "udp" ? "udp" : "tcp") << "-timeout"
+				  << "8000000";
+		}
+		arguments << "-i" << QString::fromStdString(camera.url);
+		const int normalization = audio_normalization(configuration);
+		QString graph;
+		QString labels;
+		for (std::size_t index = 0; index < configuration.audio_inputs.size(); ++index) {
+			const auto &input = configuration.audio_inputs[index];
+			const int delay = (std::max)(0, normalization + input.sync_offset_ms);
+			const double gain = input.muted ? 0.0 : input.gain;
+			graph += QStringLiteral("[0:a:%1]adelay=delays=%2:all=1,volume=%3[m%4];")
+					 .arg(input.track)
+					 .arg(delay)
+					 .arg(gain, 0, 'f', 4)
+					 .arg(index);
+			labels += QStringLiteral("[m%1]").arg(index);
+		}
+		graph += labels + QStringLiteral("amix=inputs=%1:normalize=0[amixed]")
+					 .arg(configuration.audio_inputs.size());
+		arguments << "-filter_complex" << graph << "-map" << "[amixed]" << "-vn" << "-c:a" << "aac"
+			  << "-b:a" << "128k" << "-ar" << "48000" << "-ac" << "2" << "-f" << "mpegts"
+			  << "-flush_packets" << "1"
+			  << QStringLiteral("tcp://127.0.0.1:%1?listen=1").arg(port);
+		auto process = std::make_unique<QProcess>();
+		process->setProcessChannelMode(QProcess::MergedChannels);
+		QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+		for (const auto &key : environment.keys())
+			if (key.startsWith("WEBOBS_"))
+				environment.remove(key);
+		process->setProcessEnvironment(environment);
+		process->start(ffmpeg, arguments);
+		if (!process->waitForStarted(3000) || process->state() != QProcess::Running) {
+			error = "scene-audio-mixer-start-failed";
+			return false;
+		}
+		audio_mix_process = std::move(process);
+		Data settings(obs_data_create(), &obs_data_release);
+		obs_data_set_bool(settings.get(), "is_local_file", false);
+		obs_data_set_string(settings.get(), "input",
+			QStringLiteral("tcp://127.0.0.1:%1").arg(port).toUtf8().constData());
+		obs_data_set_string(settings.get(), "input_format", "mpegts");
+		// Audio-only media sources have no rendered surface and therefore
+		// never acquire OBS's "showing" reference. The upstream ffmpeg_source
+		// restart-on-activate path deliberately refuses to start playback when
+		// the source is not showing, which would leave the local mixer unread.
+		// Start with the owned graph instead: the source lives exactly as long
+		// as this graph and is removed by the destructor.
+		obs_data_set_bool(settings.get(), "restart_on_activate", false);
+		obs_data_set_bool(settings.get(), "close_when_inactive", false);
+		obs_data_set_int(settings.get(), "buffering_mb", 1);
+		obs_data_set_int(settings.get(), "reconnect_delay_sec", 2);
+		const std::string name = "WebOBS audio mix " + camera.id;
+		audio_source = obs_source_create("ffmpeg_source", name.c_str(), settings.get(), nullptr);
+		if (!audio_source) {
+			audio_mix_process.reset();
+			error = "scene-audio-mixer-source-failed";
+			return false;
+		}
+		obs_source_set_volume(audio_source, float(configuration.volume));
+		obs_source_set_muted(audio_source, configuration.muted);
+		obs_source_set_sync_offset(audio_source,
+			std::int64_t(configuration.sync_offset_ms - normalization) * 1000000);
+		obs_source_set_audio_mixers(audio_source, audio_mixers(configuration));
+		obs_source_set_monitoring_type(audio_source, monitoring(configuration));
+		audio_settings = settings_json(audio_source);
+		audio_volmeter = obs_volmeter_create(OBS_FADER_LOG);
+		if (!audio_volmeter || !obs_volmeter_attach_source(audio_volmeter, audio_source)) {
+			if (audio_volmeter) {
+				obs_volmeter_destroy(audio_volmeter);
+				audio_volmeter = nullptr;
+			}
+			obs_source_remove(audio_source);
+			obs_source_release(audio_source);
+			audio_source = nullptr;
+			audio_mix_process.reset();
+			error = "scene-audio-meter-unavailable";
+			return false;
+		}
+		obs_volmeter_add_callback(audio_volmeter, audio_meter_callback, &audio_peak_db);
+		return true;
+	}
+#endif
 };
 
 std::shared_ptr<ProductSceneSource> ProductSourcePool::acquire(const std::string &owner,
@@ -88,6 +292,7 @@ std::shared_ptr<ProductSceneSource> ProductSourcePool::acquire(const std::string
 		return {};
 	}
 	owner_ = owner;
+	const std::string document_id = configuration.id;
 	auto key = configuration;
 	key.id.clear();
 	key.name.clear();
@@ -113,6 +318,7 @@ std::shared_ptr<ProductSceneSource> ProductSourcePool::acquire(const std::string
 				error = "scene-source-modified";
 				return {};
 			}
+			entry->document_id = document_id;
 			return entry;
 		}
 	}
@@ -123,22 +329,30 @@ std::shared_ptr<ProductSceneSource> ProductSourcePool::acquire(const std::string
 	auto entry = std::make_shared<ProductSceneSource>();
 	entry->configuration = key;
 	entry->camera = camera;
+	entry->document_id = document_id;
 	entry->source = create_product_camera_source(camera, key.shutdown_when_hidden, key.restart_when_active);
 	if (!entry->source) {
 		error = "scene-source-create-failed";
 		return {};
 	}
-	obs_source_set_muted(entry->source, key.muted);
-	obs_source_set_volume(entry->source, float(key.volume));
-	obs_source_set_sync_offset(entry->source, std::int64_t(key.sync_offset_ms) * 1000000);
-	obs_source_set_audio_mixers(entry->source, audio_mixers(key));
-	obs_source_set_monitoring_type(entry->source, monitoring(key));
+	const bool main_silent = explicit_audio(key);
+	obs_source_set_muted(entry->source, main_silent || key.muted);
+	obs_source_set_volume(entry->source, main_silent ? 0.0f : float(key.volume));
+	obs_source_set_sync_offset(entry->source,
+		main_silent ? 0 : std::int64_t(key.sync_offset_ms) * 1000000);
+	obs_source_set_audio_mixers(entry->source, main_silent ? 0u : audio_mixers(key));
+	obs_source_set_monitoring_type(entry->source,
+		main_silent ? OBS_MONITORING_TYPE_NONE : monitoring(key));
 	if (!attach_obs_source_filters(entry->source, configuration, camera.name)) {
 		error = "scene-filter-create-failed";
 		return {};
 	}
 	entry->settings = settings_json(entry->source);
 	entry->filters = filters_state(entry->source);
+#ifdef WEBOBS_NATIVE_PRODUCT_MODE
+	if (mixed_audio(key) && !entry->start_audio_mix(camera, error))
+		return {};
+#endif
 	entries_.push_back(entry);
 	return entry;
 }
@@ -178,6 +392,42 @@ std::vector<ProductVideoProgress> ProductSceneGraph::video_progress() const
 	return result;
 }
 
+std::vector<ProductAudioProgress> ProductSceneGraph::audio_progress()
+{
+	std::vector<ProductAudioProgress> result;
+#ifdef WEBOBS_NATIVE_PRODUCT_MODE
+	for (const auto &entry : sources_) {
+		if (!entry || !entry->audio_source || !entry->audio_mix_process)
+			continue;
+		entry->audio_mix_log.append(entry->audio_mix_process->readAll());
+		if (entry->audio_mix_log.size() > 512)
+			entry->audio_mix_log = entry->audio_mix_log.right(512);
+		std::string log = entry->audio_mix_log.toStdString();
+		for (std::size_t at = log.find("://"); at != std::string::npos; at = log.find("://", at)) {
+			const std::size_t begin = log.rfind(' ', at);
+			const std::size_t start = begin == std::string::npos ? 0 : begin + 1;
+			std::size_t end = log.find_first_of(" \r\n\t", at + 3);
+			if (end == std::string::npos) end = log.size();
+			log.replace(start, end - start, "<url>");
+			at = start + 5;
+		}
+		result.push_back({entry->document_id,
+			entry->audio_mix_process->state() == QProcess::Running,
+			obs_source_active(entry->audio_source),
+			obs_source_showing(entry->audio_source),
+			entry->audio_mix_process->state() == QProcess::NotRunning ? entry->audio_mix_process->exitCode() : -1,
+			entry->audio_peak_db.load(std::memory_order_relaxed),
+			int(obs_source_media_get_state(entry->audio_source)),
+			double(obs_source_get_volume(entry->audio_source)),
+			obs_source_muted(entry->audio_source),
+			unsigned(obs_source_get_audio_mixers(entry->audio_source)),
+			std::int64_t(obs_source_get_sync_offset(entry->audio_source)),
+			std::move(log)});
+	}
+#endif
+	return result;
+}
+
 std::unique_ptr<ProductSceneGraph> create_product_scene(ProductSourcePool &pool,
 	const std::string &owner, const SceneDocument &document,
 	const std::vector<ProductCamera> &bindings, std::string &error)
@@ -213,7 +463,12 @@ std::unique_ptr<ProductSceneGraph> create_product_scene(ProductSourcePool &pool,
 			error = "scene-camera-binding-conflict";
 			return {};
 		}
-		if (!source.audio_inputs.empty() ||
+#ifndef WEBOBS_NATIVE_PRODUCT_MODE
+		const bool unresolved_audio = !source.audio_inputs.empty();
+#else
+		const bool unresolved_audio = false;
+#endif
+		if (unresolved_audio ||
 		    std::any_of(source.filters.begin(), source.filters.end(), [](const auto &filter) {
 			return filter.kind == "lut" || filter.kind == "mask-blend";
 		    })) {
@@ -246,6 +501,17 @@ std::unique_ptr<ProductSceneGraph> create_product_scene(ProductSourcePool &pool,
 			return {};
 		}
 	}
+#ifdef WEBOBS_NATIVE_PRODUCT_MODE
+	for (const auto &entry : graph->sources_) {
+		if (!entry || !entry->audio_source)
+			continue;
+		if (!obs_scene_add(graph->scene, entry->audio_source)) {
+			error = "scene-audio-item-create-failed";
+			return {};
+		}
+		graph->audio_uuids.emplace_back(obs_source_get_uuid(entry->audio_source));
+	}
+#endif
 	return graph;
 }
 } // namespace webobs::native_host
