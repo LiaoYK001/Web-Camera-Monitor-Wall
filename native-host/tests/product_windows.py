@@ -268,6 +268,18 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             except (OSError, ValueError):
                 return {}
 
+        def apply_attempt(value):
+            """Bounded snapshot of the Program apply machine when a wait stalls.
+
+            Without this the receipt only says a scene "did not apply"; the
+            frontend's own reason code lives in the product state file.
+            """
+            program = value.get("program")
+            program = program if isinstance(program, dict) else {}
+            return {key: value.get(key) for key in ("programSceneId", "programApplyState",
+                "programApplyError", "programTargetSceneId", "phase")} | {
+                "programMediaSources": program.get("mediaSources")}
+
         def ui(action, **fields):
             owned = state()
             wanted_roles = {"main-preview"}
@@ -1264,10 +1276,28 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 code, _, studio = request("/api/v1/studio", studio, cookie=cookie, method="PUT",
                     revision=studio["revision"])
                 assert code == 200, "Studio did not accept the default-bus Program scene"
-                wait_for(lambda: state().get("programSceneId") == "fixture-audio-default" and
-                    state().get("programApplyState") == "applied" and
-                    state().get("program", {}).get("mediaSources") == 2,
-                    "default-bus Program scene did not apply", timeout=20)
+                # Which half of the chain refused the Scene? The core decides
+                # programSupported/fingerprint; the native host reports the apply
+                # reason. Recording both keeps a product defect from being read as
+                # a timing problem.
+                code, _, native_studio = request("/api/v1/native/studio", cookie=cookie)
+                assert code == 200, "native Studio receipt did not read back the default-bus Program"
+                evidence["programDefaultBusNativeStudio"] = {key: native_studio.get(key)
+                    for key in ("revision", "programSceneId", "programEmpty", "programSupported",
+                                "programFingerprint")}
+
+                def default_bus_applied():
+                    value = state()
+                    evidence["programDefaultBusApplyAttempt"] = apply_attempt(value)
+                    return value if (value.get("programSceneId") == "fixture-audio-default" and
+                        value.get("programApplyState") == "applied" and
+                        isinstance(value.get("program"), dict) and
+                        value["program"].get("mediaSources") == 2) else None
+                wait_for(default_bus_applied,
+                    "default-bus Program scene did not apply: core="
+                    + json.dumps(evidence["programDefaultBusNativeStudio"], sort_keys=True)[:220]
+                    + " host=" + json.dumps(evidence["programDefaultBusApplyAttempt"], sort_keys=True)[:400],
+                    timeout=45)
                 checkpoint("program-default-bus-applied")
                 default_selection = state().get("programOutput", {}).get("selectedAudioTracks")
                 assert default_selection == 1, \
@@ -1367,10 +1397,22 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     code, _, studio = request("/api/v1/studio", studio, cookie=cookie, method="PUT",
                         revision=studio["revision"])
                     assert code == 200, f"Studio did not accept the {scene['id']} Program Scene"
-                    wait_for(lambda: state().get("programSceneId") == scene["id"] and
-                        state().get("programApplyState") == "applied" and
-                        state().get("program", {}).get("mediaSources") == expected_media,
-                        f"native Program did not apply the {scene['id']} Scene", timeout=25)
+                    def scene_applied():
+                        value = state()
+                        evidence["programApplyAttempt"] = apply_attempt(value)
+                        return value if (value.get("programSceneId") == scene["id"] and
+                            value.get("programApplyState") == "applied" and
+                            isinstance(value.get("program"), dict) and
+                            value["program"].get("mediaSources") == expected_media) else None
+                    code, _, native_studio = request("/api/v1/native/studio", cookie=cookie)
+                    assert code == 200
+                    receipt = {key: native_studio.get(key) for key in
+                        ("revision", "programSceneId", "programEmpty", "programSupported")}
+                    wait_for(scene_applied,
+                        f"native Program did not apply the {scene['id']} Scene: core="
+                        + json.dumps(receipt, sort_keys=True)[:200] + " host="
+                        + json.dumps(evidence.get("programApplyAttempt", {}), sort_keys=True)[:400],
+                        timeout=30)
 
                 def record_program_output(label):
                     assert ui("record-program")
@@ -1889,7 +1931,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             evidence["observedState"] = {key: observed[key] for key in (
                 "phase", "mediaSources", "sessionBound", "catalogItems", "selectionIndices", "previewLocked",
                 "lastRetirementMs", "mainGeneration", "studioRevision", "renderer", "program",
-                "programSceneId", "programSceneFingerprint", "programApplyState", "startupStudioDeferred") if key in observed}
+                "programSceneId", "programSceneFingerprint", "programApplyState", "programApplyError",
+                "programTargetSceneId", "startupStudioDeferred") if key in observed}
             evidence["observedState"]["watchingSavedScene"] = bool(observed.get("sceneId"))
             evidence["observedState"]["programOutput"] = observed.get("programOutput", {})
             evidence["observedState"]["supportBundle"] = observed.get("supportBundle", {})

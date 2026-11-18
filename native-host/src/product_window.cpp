@@ -104,6 +104,7 @@ class ProductWindow final : public QWidget {
 	QString program_target_scene_id_;
 	QString program_target_fingerprint_;
 	QString program_apply_state_ = "idle";
+	QString program_apply_error_;
 	bool program_sync_pending_ = false;
 	quint64 program_generation_ = 0;
 	obs_scene_t *blank_scene_ = nullptr;
@@ -361,6 +362,10 @@ class ProductWindow final : public QWidget {
 				{"stalled", video_stalled}, {"unknown", video_unknown}}},
 			{"audioSources", audio_sources},
 			{"programOutput", output},
+			{"programApply", QJsonObject{{"state", program_apply_state_},
+				{"error", program_apply_error_},
+				{"sceneId", program_scene_id_},
+				{"targetSceneId", program_target_scene_id_}}},
 			{"windows", windows},
 			{"obsLogMarkers", marker_counts}};
 		const QByteArray payload = QJsonDocument(bundle).toJson(QJsonDocument::Compact) + '\n';
@@ -497,6 +502,8 @@ class ProductWindow final : public QWidget {
 		state.insert("programSceneFingerprint", program_fingerprint_);
 		state.insert("programStudioRevision", program_studio_revision_);
 		state.insert("programApplyState", program_apply_state_);
+		state.insert("programApplyError", program_apply_error_);
+		state.insert("programTargetSceneId", program_target_scene_id_);
 		state.insert("programSyncPending", program_sync_pending_);
 		state.insert("program", program_state());
 		state.insert("programOutput", program_output_state());
@@ -694,6 +701,7 @@ class ProductWindow final : public QWidget {
 		++program_generation_;
 		program_sync_pending_ = false;
 		program_apply_state_ = "idle";
+		program_apply_error_.clear();
 		program_scene_id_.clear();
 		program_fingerprint_.clear();
 		program_studio_revision_ = -1;
@@ -729,6 +737,9 @@ class ProductWindow final : public QWidget {
 		program_target_scene_id_ = scene_id;
 		program_target_fingerprint_ = fingerprint;
 		program_apply_state_ = "failed";
+		// Gates and the support bundle can only read this state file, so the
+		// concrete bounded reason has to live here as well.
+		program_apply_error_ = error.isEmpty() ? QStringLiteral("program-apply-failed") : error.left(96);
 		report_program("failed", revision, scene_id, fingerprint, error);
 		observe_current_media();
 	}
@@ -782,6 +793,7 @@ class ProductWindow final : public QWidget {
 		program_ = std::move(candidate);
 		program_scene_id_ = scene_id;
 		program_fingerprint_ = fingerprint;
+		program_apply_error_.clear();
 		program_studio_revision_ = studio_revision;
 		program_target_revision_ = studio_revision;
 		program_target_scene_id_ = scene_id;
