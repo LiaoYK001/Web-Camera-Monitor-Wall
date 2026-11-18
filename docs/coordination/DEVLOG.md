@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 221 · 2026-11-19T01:23:04+08:00（UTC+08）
+> 快照版本 222 · 2026-11-19T01:57:10+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #222 · 2026-11-19T01:57:10+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：提交 2004cf3：产品快照改为在快照时刻读取各 Scene 自有 video_progress() 原始解码计数（缺计数记为 -1，不再冒认“冻结”），心跳缓存值降级为 healthSerial 仅供界面标签；LoopbackRtsp.path_progress() 改用两次新读取的最旧包 pts 前进判定 flow（rc.52 里两个样本都返回 11/11 包但产品侧全部停滞，说明计数不可作证）。#67→#70→#71→#74→#75 已按旧基线重排并推送（9d00b7f/d5bd146/d5a39dd/427cde6）。派发 rc.53（run 44364213218，soak 分支 d5a39dd，product_mode/complete/upgrade_previous/measure_obs_baseline，soak_minutes=0）验证该修复。
+- 证据：run 44356064395 receipts /tmp/rc52.Vf3r；本地 MediaMTX 1.18.2 验证：活路径 oldestPts 3600→14791 flowing=true，杀发布进程后 packets=[0,0] flowing=false；py_compile 通过；native-host/tests/test_build_contract.py 45 OK
+- 源码：`4459100339745f675d0d14528d5fce4670a0af51`
 ## #221 · 2026-11-19T01:23:04+08:00 · update
 
 - Agent：`deepseek-v51-20261118-01`；任务：`V51-008`

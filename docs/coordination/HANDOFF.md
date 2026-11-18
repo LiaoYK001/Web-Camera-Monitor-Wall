@@ -1,7 +1,7 @@
 # 当前交接 / Current handoff
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 221 · 2026-11-19T01:23:04+08:00（UTC+08）
+> 快照版本 222 · 2026-11-19T01:57:10+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -21,6 +21,6 @@
 
 ## 最近一次同步
 
-继续 Program 输出验收。
+提交 2004cf3：产品快照改为在快照时刻读取各 Scene 自有 video_progress() 原始解码计数（缺计数记为 -1，不再冒认“冻结”），心跳缓存值降级为 healthSerial 仅供界面标签；LoopbackRtsp.path_progress() 改用两次新读取的最旧包 pts 前进判定 flow（rc.52 里两个样本都返回 11/11 包但产品侧全部停滞，说明计数不可作证）。#67→#70→#71→#74→#75 已按旧基线重排并推送（9d00b7f/d5bd146/d5a39dd/427cde6）。派发 rc.53（run 44364213218，soak 分支 d5a39dd，product_mode/complete/upgrade_previous/measure_obs_baseline，soak_minutes=0）验证该修复。
 
 以任务中的验收条件决定完成；没有 Windows/硬件/发布证据时保持对应事项开放。
