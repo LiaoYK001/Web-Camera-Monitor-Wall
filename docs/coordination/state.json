@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 229,
-  "updated_at": "2026-11-19T02:02:16+08:00",
+  "revision": 232,
+  "updated_at": "2026-11-19T02:07:03+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1218,10 +1218,7 @@
         "native-host/tests/test_native_updater.py",
         "native-host/scripts/product_supervisor.py",
         "native-host/tests/test_complete_supervisor.py",
-        "native-host/tests/backup_restore_windows.py",
-        "desktop/scripts/test-native-product-install.ps1",
-        ".github/workflows/windows-obs-native-host.yaml",
-        "docs/windows-native-feature-parity.md"
+        "native-host/tests/backup_restore_windows.py"
       ],
       "depends_on": [],
       "acceptance": [
@@ -1248,8 +1245,8 @@
       ],
       "blocker": "",
       "next_step": "#67 合入 dev 后把 #70 base 改为 dev 并派发带 backup_restore_windows 门禁的 Windows 运行。",
-      "updated_at": "2026-11-19T02:02:16+08:00",
-      "last_note": "重新认领 V51-007：#70 备份一致性继续由本 Agent 负责，范围与之前一致。"
+      "updated_at": "2026-11-19T02:05:57+08:00",
+      "last_note": "收窄 V51-007 范围：#70 的恢复门禁与其安装脚本/工作流接线均已提交（03f877c、9d00b7f），本任务剩余工作只在备份/恢复模块；把 desktop/scripts/test-native-product-install.ps1、.github/workflows/windows-obs-native-host.yaml 与 docs/windows-native-feature-parity.md 三条路径交还给协调，由 V51-014 在同一 Agent 内做旧数据导入接线，避免同一文件两个进行中声明。"
     },
     {
       "id": "V51-008",
@@ -1455,7 +1452,9 @@
       "owner": "deepseek-v51-20261118-01",
       "scope": [
         "native-host/tests/legacy_import_windows.py",
-        "docs/native-legacy-import.md"
+        "docs/native-legacy-import.md",
+        "desktop/scripts/test-native-product-install.ps1",
+        ".github/workflows/windows-obs-native-host.yaml"
       ],
       "depends_on": [
         "R1-001",
@@ -1469,12 +1468,13 @@
       ],
       "evidence": [
         "test_migrate_legacy.py 本地 PASS；安装包文件清单含 MIGRATE-LEGACY.cmd；尚无安装态导入回执。",
-        "基线 codex/v51-r3-005-devices @ 427cde6；rc.53 run 44364213218 正在验证解码计数修复。"
+        "基线 codex/v51-r3-005-devices @ 427cde6；rc.53 run 44364213218 正在验证解码计数修复。",
+        "本机：python3 -m py_compile 通过；workflow YAML 解析通过且回执清单含 native-product-legacy-import.json；无 pwsh 本机，PowerShell 接线需在 Windows 运行验证；门禁尚未执行，未记为通过。"
       ],
       "blocker": "",
       "next_step": "本机语法与 Linux 契约复跑后，随下一次完整候选在 Windows 安装态产出 native-product-legacy-import.json；用户本人旧档案迁移留待目标机。",
-      "updated_at": "2026-11-19T02:02:16+08:00",
-      "last_note": "重新认领 V51-014（范围已收窄为新增门禁与文档），开始实现。"
+      "updated_at": "2026-11-19T02:07:03+08:00",
+      "last_note": "新增安装态门禁 native-host/tests/legacy_import_windows.py 并接线 NSIS 安装门禁 installed-legacy-import + 回执上传，提交 d9c8c0f 已开 PR #76（基线 #75 427cde6）。门禁把“包内 importer=受审脚本”“MIGRATE-LEGACY.cmd 指向产品数据根”“旧安装→导入→新安装登录/保留/拒绝覆盖/会话失效/进程回收”写成可证伪断言。"
     }
   ],
   "events": [
@@ -4112,6 +4112,38 @@
       "note": "重新认领 V51-014（范围已收窄为新增门禁与文档），开始实现。",
       "evidence": [],
       "git_revision": "57e65dc8e9eddf130f0ee023019d1edee5a62adc"
+    },
+    {
+      "sequence": 230,
+      "at": "2026-11-19T02:05:57+08:00",
+      "agent": "deepseek-v51-20261118-01",
+      "task": "V51-007",
+      "action": "update",
+      "note": "收窄 V51-007 范围：#70 的恢复门禁与其安装脚本/工作流接线均已提交（03f877c、9d00b7f），本任务剩余工作只在备份/恢复模块；把 desktop/scripts/test-native-product-install.ps1、.github/workflows/windows-obs-native-host.yaml 与 docs/windows-native-feature-parity.md 三条路径交还给协调，由 V51-014 在同一 Agent 内做旧数据导入接线，避免同一文件两个进行中声明。",
+      "evidence": [],
+      "git_revision": "85bce74c10bb32c8e6d1ffe7602d9bbc5964005a"
+    },
+    {
+      "sequence": 231,
+      "at": "2026-11-19T02:05:57+08:00",
+      "agent": "deepseek-v51-20261118-01",
+      "task": "V51-014",
+      "action": "update",
+      "note": "V51-014 承接安装脚本与工作流的旧数据导入接线（V51-007 已提交其恢复门禁部分）；门禁脚本与文档同步在本 PR。",
+      "evidence": [],
+      "git_revision": "85bce74c10bb32c8e6d1ffe7602d9bbc5964005a"
+    },
+    {
+      "sequence": 232,
+      "at": "2026-11-19T02:07:03+08:00",
+      "agent": "deepseek-v51-20261118-01",
+      "task": "V51-014",
+      "action": "log",
+      "note": "新增安装态门禁 native-host/tests/legacy_import_windows.py 并接线 NSIS 安装门禁 installed-legacy-import + 回执上传，提交 d9c8c0f 已开 PR #76（基线 #75 427cde6）。门禁把“包内 importer=受审脚本”“MIGRATE-LEGACY.cmd 指向产品数据根”“旧安装→导入→新安装登录/保留/拒绝覆盖/会话失效/进程回收”写成可证伪断言。",
+      "evidence": [
+        "本机：python3 -m py_compile 通过；workflow YAML 解析通过且回执清单含 native-product-legacy-import.json；无 pwsh 本机，PowerShell 接线需在 Windows 运行验证；门禁尚未执行，未记为通过。"
+      ],
+      "git_revision": "85bce74c10bb32c8e6d1ffe7602d9bbc5964005a"
     }
   ]
 }

@@ -1,7 +1,7 @@
 # 当前交接 / Current handoff
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 229 · 2026-11-19T02:02:16+08:00（UTC+08）
+> 快照版本 232 · 2026-11-19T02:07:03+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -22,6 +22,6 @@
 
 ## 最近一次同步
 
-重新认领 V51-014（范围已收窄为新增门禁与文档），开始实现。
+新增安装态门禁 native-host/tests/legacy_import_windows.py 并接线 NSIS 安装门禁 installed-legacy-import + 回执上传，提交 d9c8c0f 已开 PR #76（基线 #75 427cde6）。门禁把“包内 importer=受审脚本”“MIGRATE-LEGACY.cmd 指向产品数据根”“旧安装→导入→新安装登录/保留/拒绝覆盖/会话失效/进程回收”写成可证伪断言。
 
 以任务中的验收条件决定完成；没有 Windows/硬件/发布证据时保持对应事项开放。

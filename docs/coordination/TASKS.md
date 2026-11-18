@@ -1,7 +1,7 @@
 # 任务与认领 / Tasks and ownership
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 229 · 2026-11-19T02:02:16+08:00（UTC+08）
+> 快照版本 232 · 2026-11-19T02:07:03+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -437,13 +437,13 @@
 
 ## V51-007 · 加固双目录加密备份的中间故障一致性与安全重试 / harden dual-directory backup swap consistency and safe retry
 
-- 修改范围：`backup/encrypted_backup.py`, `tests/test_encrypted_backup.py`, `native-host/scripts/native_updater.py`, `native-host/tests/test_native_updater.py`, `native-host/scripts/product_supervisor.py`, `native-host/tests/test_complete_supervisor.py`, `native-host/tests/backup_restore_windows.py`, `desktop/scripts/test-native-product-install.ps1`, `.github/workflows/windows-obs-native-host.yaml`, `docs/windows-native-feature-parity.md`
+- 修改范围：`backup/encrypted_backup.py`, `tests/test_encrypted_backup.py`, `native-host/scripts/native_updater.py`, `native-host/tests/test_native_updater.py`, `native-host/scripts/product_supervisor.py`, `native-host/tests/test_complete_supervisor.py`, `native-host/tests/backup_restore_windows.py`
 - 验收：两目录交换的崩溃/失败后要么完全旧状态要么完全新状态；中断日志可被下次 restore 自动收敛或明确拒绝；失败不残留 activated 目录；native 存档必须成对恢复；config-only 旧存档仍可用；本机 unittest 覆盖中间失败与崩溃恢复。
 - 下一步：#67 合入 dev 后把 #70 base 改为 dev 并派发带 backup_restore_windows 门禁的 Windows 运行。
 - 阻塞：无
 - 证据：分支 codex/v51-r4-backup-consistency 基于 codex/v51-r3-output@ae4fce7；本机 tests/test_encrypted_backup.py 10 tests OK（libsodium 可用）；native-host/tests/test_native_updater.py 与 test_migrate_legacy.py PASS；本机 tests/test_encrypted_backup.py 10 OK；native-host/tests/test_native_updater.py PASS（含新增错误码映射断言）；PR #70 checks 进行中；python3 -B native-host/tests/test_complete_supervisor.py PASS（含中断交换收敛契约）；python3 -B tests/test_encrypted_backup.py 10/10；python3 -B native-host/tests/test_native_updater.py 3 项 PASS；本任务书 Windows 门禁待 CI 回执；.worktrees/v51-backup@7a7d64d；native-host/tests/test_complete_supervisor.py PASS；tests/test_encrypted_backup.py 10/10；native-host/tests/test_native_updater.py 3 PASS；PR #70 checks 将随 force-push 重跑；.worktrees/v51-backup@4664251；test_complete_supervisor PASS、test_encrypted_backup 10/10、test_native_updater 3 PASS；codex/v51-r4-backup-consistency@d0b9506：prepare() 顺序为独占锁 → protect → recover_interrupted_restore() → 目录创建/ini；Linux 侧 test_complete_supervisor.py 中断交换契约 PASS；Windows 安装态门禁（两次目录交换之间终止恢复进程 → 从已安装入口再启动 → 成对恢复/可重试/仅含 config 的旧归档保留原生档案）尚未有 CI 回执，不写成通过；本机 python3 -B tests/test_encrypted_backup.py 10 OK；native-host/tests/test_complete_supervisor.py PASS；test_build_contract.py 44 OK（本工作树已初始化 obs/obs-studio 子模块）；backup_restore_windows.py ast 语法校验通过（需 Windows 已安装运行时才能执行）；.worktrees/v51-combined 试合并后 test_complete_supervisor.py PASS（含 'converged the interrupted restore as completed'）、tests/test_encrypted_backup.py 10 OK、native-host/tests/test_native_updater.py 4 PASS；rebase 后 PR #70 head 4d60479（base #67 535a9af），native-host/tests/backup_restore_windows.py 由 workflow 步骤执行，证据待 rc.41 run 44291812392；git rebase a4d2512 clean；codex/v51-r4-backup-consistency=77958c3；gh pr 70 base=codex/v51-r3-output；PR#70 rebase 到新 #67 head（770b0e1，4 个自有提交无冲突）；tests/test_encrypted_backup.py 10 OK；native-host/tests/test_complete_supervisor.py PASS（含 'converged the interrupted restore as completed' 与二次 prepare 不被中断日志拒绝、无 run/restore-recovery.json）；复核 product_supervisor.prepare() 顺序：独占锁+protect 之后、创建 config/native-profile 目录与读取 user.ini 之前调用 recover_interrupted_restore()；commit be25901 on codex/v51-r4-backup-consistency; python3 tests/test_encrypted_backup.py 12 OK; same file against HEAD~1 service = 2 errors (falsifiable); test_complete_supervisor/test_native_updater/test_build_contract OK; run 44349201714 in_progress；307910f/2560a52/4a487d1 pushed; suites re-run green；#70 head 9d00b7f 已 rebase 到 #67 2004cf3；本机 test_complete_supervisor.py PASS。
-- 最新记录：重新认领 V51-007：#70 备份一致性继续由本 Agent 负责，范围与之前一致。
-- 最近更新：2026-11-19T02:02:16+08:00
+- 最新记录：收窄 V51-007 范围：#70 的恢复门禁与其安装脚本/工作流接线均已提交（03f877c、9d00b7f），本任务剩余工作只在备份/恢复模块；把 desktop/scripts/test-native-product-install.ps1、.github/workflows/windows-obs-native-host.yaml 与 docs/windows-native-feature-parity.md 三条路径交还给协调，由 V51-014 在同一 Agent 内做旧数据导入接线，避免同一文件两个进行中声明。
+- 最近更新：2026-11-19T02:05:57+08:00
 
 ## V51-008 · 把 Program 合成输出验收落到用户实际收到的产物 / accept Program output from the delivered recording and stream
 
@@ -517,10 +517,10 @@
 
 ## V51-014 · 在已安装完整产品上验收旧数据导入入口与保留 / qualify the shipped old-data import path in the installed product
 
-- 修改范围：`native-host/tests/legacy_import_windows.py`, `docs/native-legacy-import.md`
+- 修改范围：`native-host/tests/legacy_import_windows.py`, `docs/native-legacy-import.md`, `desktop/scripts/test-native-product-install.ps1`, `.github/workflows/windows-obs-native-host.yaml`
 - 验收：已安装入口先建立旧账号/设备/事件，再用包内 migrate_legacy.py 导入到新档案；导入后旧账号可登录、首次建档关闭、设备与事件保留、DPAPI 备份密钥可解密、旧会话失效；源目录逐文件哈希不变、重复导入被拒绝、结束后无残留进程；回执区分配置导入合格与 fullFeatureMigrationQualified 仍为 false，不夸大
 - 下一步：本机语法与 Linux 契约复跑后，随下一次完整候选在 Windows 安装态产出 native-product-legacy-import.json；用户本人旧档案迁移留待目标机。
 - 阻塞：无
-- 证据：test_migrate_legacy.py 本地 PASS；安装包文件清单含 MIGRATE-LEGACY.cmd；尚无安装态导入回执。；基线 codex/v51-r3-005-devices @ 427cde6；rc.53 run 44364213218 正在验证解码计数修复。
-- 最新记录：重新认领 V51-014（范围已收窄为新增门禁与文档），开始实现。
-- 最近更新：2026-11-19T02:02:16+08:00
+- 证据：test_migrate_legacy.py 本地 PASS；安装包文件清单含 MIGRATE-LEGACY.cmd；尚无安装态导入回执。；基线 codex/v51-r3-005-devices @ 427cde6；rc.53 run 44364213218 正在验证解码计数修复。；本机：python3 -m py_compile 通过；workflow YAML 解析通过且回执清单含 native-product-legacy-import.json；无 pwsh 本机，PowerShell 接线需在 Windows 运行验证；门禁尚未执行，未记为通过。
+- 最新记录：新增安装态门禁 native-host/tests/legacy_import_windows.py 并接线 NSIS 安装门禁 installed-legacy-import + 回执上传，提交 d9c8c0f 已开 PR #76（基线 #75 427cde6）。门禁把“包内 importer=受审脚本”“MIGRATE-LEGACY.cmd 指向产品数据根”“旧安装→导入→新安装登录/保留/拒绝覆盖/会话失效/进程回收”写成可证伪断言。
+- 最近更新：2026-11-19T02:07:03+08:00

@@ -1,12 +1,30 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 229 · 2026-11-19T02:02:16+08:00（UTC+08）
+> 快照版本 232 · 2026-11-19T02:07:03+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #232 · 2026-11-19T02:07:03+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-014`
+- 记录：新增安装态门禁 native-host/tests/legacy_import_windows.py 并接线 NSIS 安装门禁 installed-legacy-import + 回执上传，提交 d9c8c0f 已开 PR #76（基线 #75 427cde6）。门禁把“包内 importer=受审脚本”“MIGRATE-LEGACY.cmd 指向产品数据根”“旧安装→导入→新安装登录/保留/拒绝覆盖/会话失效/进程回收”写成可证伪断言。
+- 证据：本机：python3 -m py_compile 通过；workflow YAML 解析通过且回执清单含 native-product-legacy-import.json；无 pwsh 本机，PowerShell 接线需在 Windows 运行验证；门禁尚未执行，未记为通过。
+- 源码：`85bce74c10bb32c8e6d1ffe7602d9bbc5964005a`
+## #231 · 2026-11-19T02:05:57+08:00 · update
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-014`
+- 记录：V51-014 承接安装脚本与工作流的旧数据导入接线（V51-007 已提交其恢复门禁部分）；门禁脚本与文档同步在本 PR。
+- 证据：无新增验收证据
+- 源码：`85bce74c10bb32c8e6d1ffe7602d9bbc5964005a`
+## #230 · 2026-11-19T02:05:57+08:00 · update
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-007`
+- 记录：收窄 V51-007 范围：#70 的恢复门禁与其安装脚本/工作流接线均已提交（03f877c、9d00b7f），本任务剩余工作只在备份/恢复模块；把 desktop/scripts/test-native-product-install.ps1、.github/workflows/windows-obs-native-host.yaml 与 docs/windows-native-feature-parity.md 三条路径交还给协调，由 V51-014 在同一 Agent 内做旧数据导入接线，避免同一文件两个进行中声明。
+- 证据：无新增验收证据
+- 源码：`85bce74c10bb32c8e6d1ffe7602d9bbc5964005a`
 ## #229 · 2026-11-19T02:02:16+08:00 · claim
 
 - Agent：`deepseek-v51-20261118-01`；任务：`V51-014`
