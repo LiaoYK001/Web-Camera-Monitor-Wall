@@ -100,14 +100,6 @@ int free_udp_port()
 	return port;
 }
 
-bool port_available(int port)
-{
-	QTcpServer server;
-	if (!server.listen(QHostAddress::LocalHost, quint16(port))) return false;
-	server.close();
-	return true;
-}
-
 void wait_ms(int milliseconds)
 {
 	QThread::msleep(static_cast<unsigned long>(milliseconds));
@@ -161,7 +153,7 @@ QString output_preflight_error(obs_output_t *output, const QString &stage,
 		: stage + QStringLiteral("-encoder-initialize-failed: ") + detail;
 }
 
-QString media_mtx_config(int api_port, int rtsp_port, int udp_port)
+QString media_mtx_config(int api_port, int rtsp_port, int whip_port, int udp_port)
 {
 	return QStringLiteral(
 		"logLevel: warn\n"
@@ -191,11 +183,11 @@ QString media_mtx_config(int api_port, int rtsp_port, int udp_port)
 		"hls: false\n"
 		"srt: false\n"
 		"webrtc: true\n"
-		"webrtcAddress: 127.0.0.1:8889\n"
+		"webrtcAddress: 127.0.0.1:%3\n"
 		"webrtcEncryption: false\n"
 		"webrtcAllowOrigins: ['*']\n"
 		"webrtcTrustedProxies: []\n"
-		"webrtcLocalUDPAddress: 127.0.0.1:%3\n"
+		"webrtcLocalUDPAddress: 127.0.0.1:%4\n"
 		"webrtcLocalTCPAddress: ''\n"
 		"webrtcIPsFromInterfaces: false\n"
 		"webrtcAdditionalHosts: [127.0.0.1]\n"
@@ -205,7 +197,7 @@ QString media_mtx_config(int api_port, int rtsp_port, int udp_port)
 		"  source: publisher\n"
 		"  overridePublisher: false\n"
 		"paths:\n"
-		"  program:\n").arg(api_port).arg(rtsp_port).arg(udp_port);
+		"  program:\n").arg(api_port).arg(rtsp_port).arg(whip_port).arg(udp_port);
 }
 
 } // namespace
@@ -282,39 +274,44 @@ struct ProductProgramOutputImpl {
 		stream_error.clear();
 		const QString binary = QDir(runtime_root()).absoluteFilePath("bin/mediamtx.exe");
 		if (!QFileInfo(binary).isFile()) {
-			error = "mediamtx-unavailable";
+			stream_error = error = "mediamtx-unavailable";
 			return false;
 		}
-		if (!port_available(8889)) {
-			error = "whip-port-unavailable";
-			return false;
-		}
+		// Every listener of this private relay is allocated as a free loopback port,
+		// including the WHIP/WebRTC address. The product's own distribution gateway
+		// MediaMTX binds WebRTC on 8889 (gateway/mediamtx.yml), so a fixed publish
+		// port made the Program output refuse to start, with an empty streamError,
+		// whenever that gateway was running; the WHIP URL the encoder publishes to
+		// is derived from the port actually allocated here.
 		const int api_port = free_tcp_port();
 		int rtsp_port = free_tcp_port();
 		while (rtsp_port && rtsp_port == api_port) rtsp_port = free_tcp_port();
+		int whip_port = free_tcp_port();
+		while (whip_port && (whip_port == api_port || whip_port == rtsp_port))
+			whip_port = free_tcp_port();
 		const int udp_port = free_udp_port();
-		if (!api_port || !rtsp_port || !udp_port) {
-			error = "mediamtx-port-failed";
+		if (!api_port || !rtsp_port || !whip_port || !udp_port) {
+			stream_error = error = "mediamtx-port-failed";
 			return false;
 		}
 		QDir run_dir(QDir(data_root).absoluteFilePath("run/program-output"));
 		if (!run_dir.exists() && !QDir().mkpath(run_dir.absolutePath())) {
-			error = "mediamtx-directory-failed";
+			stream_error = error = "mediamtx-directory-failed";
 			return false;
 		}
 		const QString config_path = run_dir.absoluteFilePath("mediamtx.yml");
 		QSaveFile config(config_path);
 		if (!config.open(QIODevice::WriteOnly) ||
-		    config.write(media_mtx_config(api_port, rtsp_port, udp_port).toUtf8()) < 0 ||
+		    config.write(media_mtx_config(api_port, rtsp_port, whip_port, udp_port).toUtf8()) < 0 ||
 		    !config.commit()) {
-			error = "mediamtx-config-failed";
+			stream_error = error = "mediamtx-config-failed";
 			return false;
 		}
 		media_mtx.setProcessChannelMode(QProcess::MergedChannels);
 		media_mtx.setProcessEnvironment(child_environment());
 		media_mtx.start(binary, {config_path});
 		if (!media_mtx.waitForStarted(5000)) {
-			error = "mediamtx-start-failed";
+			stream_error = error = "mediamtx-start-failed";
 			return false;
 		}
 		QElapsedTimer readiness;
@@ -331,7 +328,7 @@ struct ProductProgramOutputImpl {
 			if (probe.waitForConnected(200)) {
 				probe.disconnectFromHost();
 				stream_publish_url =
-					QStringLiteral("http://127.0.0.1:8889/program/whip");
+					QStringLiteral("http://127.0.0.1:%1/program/whip").arg(whip_port);
 				stream_playback_url =
 					QStringLiteral("rtsp://127.0.0.1:%1/program").arg(rtsp_port);
 				return true;
@@ -339,7 +336,7 @@ struct ProductProgramOutputImpl {
 			wait_ms(100);
 		}
 		stop_media_mtx();
-		error = "mediamtx-timeout";
+		stream_error = error = "mediamtx-timeout";
 		return false;
 	}
 	bool start_recording(QString &error, quint32 audio_tracks)
@@ -568,7 +565,7 @@ struct ProductProgramOutputImpl {
 		obs_data_release(service_settings);
 		if (!service) {
 			stop_media_mtx();
-			error = "stream-service-unavailable";
+			stream_error = error = "stream-service-unavailable";
 			return false;
 		}
 		whip_service.reset(service);
@@ -621,7 +618,7 @@ struct ProductProgramOutputImpl {
 		if (!output) {
 			release_streaming();
 			stop_media_mtx();
-			error = "stream-output-unavailable";
+			stream_error = error = "stream-output-unavailable";
 			return false;
 		}
 		whip_output.reset(output);
