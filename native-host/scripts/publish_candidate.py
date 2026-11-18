@@ -78,7 +78,7 @@ def release_tag(policy, version: str, *, final: bool, acceptance: Path | None,
                 "stable publication requires --acceptance with recorded Windows acceptance")
         identity = {"version": version}
         try:
-            applied = policy.apply_acceptance(identity, acceptance.resolve(strict=True),
+            applied = policy.apply_acceptance(identity, acceptance.resolve(strict=False),
                                              repository=repository, source_revision=source_revision)
             return applied["releaseTag"], applied["qualificationReceipt"]
         except ValueError as error:

@@ -227,6 +227,73 @@ def exercise():
                                        runner=Runner(existing_tag=True)),
                 "tag already exists")
 
+        # Update metadata is verified against the frozen bytes field by field, so a
+        # truncated package, a substituted package and a mismatched version all fail.
+        def metadata_variant(label: str, *, version=None, size=None, sha512=None,
+                             omit_size=False) -> tuple[Path, Path]:
+            variant = directory / f"metadata-{label}"
+            variant.mkdir(parents=True, exist_ok=True)
+            copy = variant / installer.name
+            copy.write_bytes(installer.read_bytes())
+            digest = sha512 if sha512 is not None else module.sha512_base64(copy)
+            written = size if size is not None else copy.stat().st_size
+            manifest_path = variant / "latest.yml"
+            manifest_path.write_text(
+                f"version: {version or candidate_version}\nfiles:\n  path: {copy.name}\n"
+                f"  sha512: {digest}\n", encoding="utf-8")
+            if not omit_size:
+                manifest_path.write_text(manifest_path.read_text(encoding="utf-8") +
+                                         f"  size: {written}\n", encoding="utf-8")
+            return copy, manifest_path
+
+        publish_candidate = lambda inst, meta, version, **extra: module.publish(  # noqa: E731
+            inst, meta, version, "LiaoYK001/Web-Camera-Monitor-Wall", REVISION, notes,
+            confirm=True, final=False, runner=Runner(), **extra)
+        refuses(lambda: publish_candidate(*(metadata_variant("size",
+                                        size=installer.stat().st_size + 1)), candidate_version),
+                "does not match the frozen installer bytes")
+        refuses(lambda: publish_candidate(*(metadata_variant("sha512",
+                                        sha512=base64.b64encode(hashlib.sha512(b"substituted package").digest()).decode("ascii"))),
+                                        candidate_version),
+                "does not match the frozen installer bytes")
+        refuses(lambda: publish_candidate(*(metadata_variant("version",
+                                        version="5.1.0-rc.99")), candidate_version),
+                "does not match the frozen installer bytes")
+        refuses(lambda: publish_candidate(*(metadata_variant("no-size", omit_size=True)),
+                                        candidate_version),
+                "missing version, size or sha512")
+        renamed_metadata = installer.parent / "latest.yaml"
+        renamed_metadata.write_text(manifest.read_text(encoding="utf-8"), encoding="utf-8")
+        refuses(lambda: publish_candidate(installer, renamed_metadata, candidate_version),
+                "update metadata must be latest.yml")
+
+        # A stable release only accepts a readable acceptance receipt that names
+        # this version, repository and source revision with every gate recorded.
+        stable_publish = lambda receipt: module.publish(  # noqa: E731
+            stable_installer, stable_manifest, stable_version,
+            "LiaoYK001/Web-Camera-Monitor-Wall", REVISION, notes, confirm=True, final=True,
+            acceptance=receipt, runner=Runner(compare="ahead"))
+        refuses(lambda: stable_publish(directory / "acceptance-absent" / "acceptance.json"),
+                "acceptance receipt is unreadable")
+        unreadable = directory / "acceptance-unreadable"
+        unreadable.mkdir(parents=True, exist_ok=True)
+        (unreadable / "acceptance.json").write_text("{ not json", encoding="utf-8")
+        refuses(lambda: stable_publish(unreadable / "acceptance.json"),
+                "acceptance receipt is unreadable")
+        not_object = directory / "acceptance-array"
+        not_object.mkdir(parents=True, exist_ok=True)
+        (not_object / "acceptance.json").write_text(json.dumps([True]), encoding="utf-8")
+        refuses(lambda: stable_publish(not_object / "acceptance.json"),
+                "acceptance receipt must be a JSON object")
+        other_repository = acceptance_file(directory, stable_version, label="other-repository",
+                                           repository="someone-else/repository")
+        refuses(lambda: stable_publish(other_repository), "acceptance receipt belongs to "
+                "another repository")
+        empty_revision = acceptance_file(directory, stable_version, label="revision-unrecorded",
+                                         sourceRevision=None)
+        refuses(lambda: stable_publish(empty_revision),
+                "does not record its source revision")
+
         policy = policy_module
         assert policy.tag_for_version(stable_version) == "v5.1"
         assert policy.tag_for_version("5.1.2") == "v5.1.2"

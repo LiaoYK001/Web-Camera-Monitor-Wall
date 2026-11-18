@@ -138,8 +138,11 @@ def read_acceptance(path, *, version, repository=None, source_revision=None):
     if repository is not None and payload.get("repository") != repository:
         raise ValueError("acceptance receipt belongs to another repository")
     recorded = str(payload.get("sourceRevision") or "").lower()
-    if source_revision is not None and recorded and recorded != source_revision:
-        raise ValueError("acceptance receipt belongs to another source revision")
+    if source_revision is not None:
+        if not recorded:
+            raise ValueError("acceptance receipt does not record its source revision")
+        if recorded != source_revision:
+            raise ValueError("acceptance receipt belongs to another source revision")
     missing = [key for key in ACCEPTANCE_KEYS if payload.get(key) is not True]
     if missing:
         raise ValueError("acceptance receipt is missing recorded gates: " + ", ".join(missing))
