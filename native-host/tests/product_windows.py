@@ -1830,6 +1830,26 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
                 assert stream_frames.returncode == 0 and len(json.loads(stream_frames.stdout).get("frames", [])) >= 10, \
                     "published Program did not deliver enough video frames"
+                # The relay also republishes the same path for browsers. This gate
+                # does not perform a WebRTC handshake; it requires the WHEP endpoint
+                # to answer at all, and records that plainly rather than claiming a
+                # browser played the mix.
+                whep_url = streamed.get("streamPlaybackWhep")
+                assert isinstance(whep_url, str) and re.fullmatch(
+                    r"http://127\.0\.0\.1:[0-9]{2,5}/program/whep", whep_url), \
+                    f"Program publisher exposed an unexpected WHEP playback URL {whep_url!r}"
+                assert streamed.get("streamTransport") == "rtmp", \
+                    f"Program publish transport {streamed.get('streamTransport')!r}; expected rtmp"
+                whep_status = None
+                try:
+                    with urllib.request.urlopen(whep_url, timeout=5) as response:
+                        whep_status = response.status
+                except urllib.error.HTTPError as error:
+                    whep_status = error.code
+                evidence["programWhepEndpoint"] = {"status": whep_status,
+                    "note": "relay endpoint reachable; no browser WebRTC handshake is gated"}
+                assert whep_status is not None, "the relay WHEP endpoint did not answer"
+                evidence["checks"].append("program-publish-transport-is-rtmp-with-a-whep-endpoint")
                 assert ui("stream-program")
                 wait_for(lambda: state().get("programOutput", {}).get("streaming") is False and
                     state().get("programOutput", {}).get("mediaMtxRunning") is False,
