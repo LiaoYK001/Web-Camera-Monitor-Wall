@@ -7,8 +7,10 @@ claim installed-product, real-camera, performance or hardware-decode acceptance.
 from __future__ import annotations
 
 import argparse
+import base64
 import configparser
 import contextlib
+import hashlib
 import ctypes
 import hashlib
 import json
@@ -34,6 +36,26 @@ HERE = Path(__file__).resolve().parent
 # The shipped embedded interpreter intentionally excludes the working directory
 # and script directory. Only this test process imports the adjacent test tools.
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(ROOT / "tests"))
+from onvif_device_emulator import start as start_onvif_device
+
+
+def load_packaged_service(name, path):
+    """Load one packaged service module so a test-side fixture shares its guards.
+
+    The synthetic ONVIF device must reject requests with the installed registry's
+    own XML limits and parser instead of a second, more permissive parser.
+    """
+    import importlib.util
+    if not path.is_file() or path.is_symlink():
+        raise ValueError(f"packaged service is missing: {path.name}")
+    specification = importlib.util.spec_from_file_location(name, str(path))
+    if specification is None or specification.loader is None:
+        raise ValueError(f"packaged service is not importable: {path.name}")
+    module = importlib.util.module_from_spec(specification)
+    sys.modules[name] = module
+    specification.loader.exec_module(module)
+    return module
 
 
 def read_json(path):
@@ -1870,6 +1892,136 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 assert outbox.get("kind") == "webhook" and outbox.get("destination_ref") == "fixture", \
                     "notification outbox lost the configured destination"
                 evidence["checks"].append("events-persist-dedupe-and-route-to-durable-outbox")
+                phase = "complete-business-device-operations"
+                # A synthetic ONVIF device on loopback, driven through the installed
+                # product's own authenticated API. Real cameras, speakers and vendor
+                # behaviour are still open; this proves the installed chain.
+                packaged_registry = load_packaged_service("installed_camera_registry",
+                    runtime / "services/camera/camera_registry.py")
+                device_credentials = {"username": "native-gate-operator",
+                    "password": secrets.token_urlsafe(18)}
+                device_server, device_worker, device_handler, device_url = start_onvif_device(
+                    packaged_registry, action_log=[], ptz_moves=[],
+                    ptz_configuration_token="fixture-ptz-config",
+                    users={device_credentials["username"]: "Administrator"}, **device_credentials)
+                try:
+                    code, _, probe = request("/api/v1/onvif/probe",
+                        {"address": device_url, **device_credentials}, cookie=cookie, method="POST")
+                    assert code == 200 and probe.get("probe") == "onvif-authenticated", \
+                        "installed product could not probe the synthetic ONVIF device"
+                    assert probe.get("credentialsExtracted") is True, \
+                        "probe did not extract the supplied credentials into a private reference"
+                    probed_capabilities = probe.get("capabilities", {}).get("onvif", {})
+                    assert probed_capabilities.get("ptz") is True and \
+                        probed_capabilities.get("snapshot") is True, \
+                        "probe lost the advertised PTZ or snapshot capability"
+                    probed_profiles = probe.get("profiles", [])
+                    assert len(probed_profiles) >= 2 and any(
+                        item.get("role") == "snapshot" for item in probed_profiles), \
+                        "probe did not return media plus snapshot profiles"
+                    media_profile_id = probed_profiles[0]["id"]
+                    code, _, onvif_camera = request("/api/v1/cameras", {
+                        "id": "fixture-onvif", "name": "Fixture ONVIF device",
+                        "address": device_url, "adapter": "onvif", **device_credentials,
+                        "hardwareDecode": "off", "profiles": probed_profiles,
+                        "capabilities": probe.get("capabilities", {})}, cookie=cookie, method="POST")
+                    assert code == 201 and onvif_camera.get("adapter") == "onvif", \
+                        "installed product could not save the probed ONVIF camera"
+                    assert "password" not in json.dumps(onvif_camera), \
+                        "device credentials leaked into the camera document"
+                    code, _, synced = request("/api/v1/cameras/fixture-onvif/onvif/sync", {},
+                        cookie=cookie, method="POST")
+                    assert code == 200 and synced.get("adapter") == "onvif", \
+                        "installed product could not resync the ONVIF camera"
+                    code, _, listed_presets = request("/api/v1/cameras/fixture-onvif/onvif/presets",
+                        cookie=cookie)
+                    assert code == 200 and [item.get("token") for item in listed_presets.get("presets", [])] \
+                        == ["preset-1"], "device presets were not read through the installed product"
+                    time.sleep(0.2)
+                    code, _, moved = request("/api/v1/cameras/fixture-onvif/onvif/ptz",
+                        {"operation": "continuous", "profileId": media_profile_id, "x": 0.4, "y": 0.2,
+                         "zoom": 0.0, "durationMs": 350}, cookie=cookie, method="POST")
+                    assert code == 200 and moved.get("state") == "accepted" and \
+                        moved.get("autoStopMs") == 350 and moved.get("deviceTimeoutMs") == 350, \
+                        "installed product did not accept the movement with its stop budget"
+                    assert any('/ContinuousMove"' in action for action in device_handler.action_log), \
+                        "the movement never reached the device"
+                    assert device_handler.ptz_moves == ["PT0.350S"], \
+                        "the negotiated device-side PTZ Timeout did not travel with the movement"
+                    assert wait_for(lambda: any('/Stop"' in action for action in device_handler.action_log),
+                        "the scheduled backend stop never reached the device", timeout=10), \
+                        "automatic stop never reached the device"
+                    time.sleep(0.2)
+                    code, _, created_preset = request("/api/v1/cameras/fixture-onvif/onvif/presets",
+                        {"operation": "set", "name": "Gate preset", "profileId": media_profile_id},
+                        cookie=cookie, method="POST")
+                    assert code == 200 and created_preset.get("presetToken") == "preset-created", \
+                        "creating a device preset failed through the installed product"
+                    assert any('/SetPreset"' in action for action in device_handler.action_log), \
+                        "the preset mutation never reached the device"
+                    time.sleep(0.2)
+                    code, _, goto = request("/api/v1/cameras/fixture-onvif/onvif/ptz",
+                        {"operation": "gotoPreset", "presetToken": "preset-1",
+                         "profileId": media_profile_id}, cookie=cookie, method="POST")
+                    assert code == 200 and goto.get("state") == "accepted", \
+                        "recalling a device preset failed through the installed product"
+                    assert any('/GotoPreset"' in action for action in device_handler.action_log), \
+                        "the preset recall never reached the device"
+                    code, _, snapshot = request("/api/v1/cameras/fixture-onvif/onvif/snapshot",
+                        cookie=cookie, method="POST")
+                    assert code == 200 and snapshot.get("contentType") == "image/jpeg", \
+                        "device snapshot was not readable through the installed product"
+                    assert snapshot.get("sha256") == hashlib.sha256(
+                        base64.b64decode(snapshot.get("data", ""))).hexdigest(), \
+                        "device snapshot bytes do not match the returned digest"
+                    evidence["deviceOperations"] = {"probe": probe.get("profileVersion"),
+                        "capabilities": {key: probed_capabilities.get(key)
+                                         for key in ("ptz", "snapshot", "mediaProfile")},
+                        "profile": media_profile_id,
+                        "deviceActions": sorted({action.split(" ")[0].strip()
+                                                 for action in device_handler.action_log})[:12],
+                        "snapshotReads": device_handler.snapshot_reads}
+                    viewer_credentials = {"username": "native-device-viewer",
+                        "password": secrets.token_urlsafe(24)}
+                    code, _, device_viewer = request("/api/v2/users", {**viewer_credentials,
+                        "roles": ["viewer"], "scopes": [{"kind": "camera", "id": "fixture-onvif"}]}, cookie)
+                    assert code == 201, "could not create a viewer scoped to the ONVIF camera"
+                    code, issued, _ = request("/api/v1/auth/login", viewer_credentials)
+                    assert code == 200 and issued, "viewer could not sign in for the device check"
+                    viewer_cookie = issued.split(";", 1)[0]
+                    # The installed Camera Registry polls device events in the
+                    # background, so the denial window is measured from a marker and
+                    # only control-plane actions count as a leaked command.
+                    denial_marker = len(device_handler.action_log)
+                    snapshot_reads_before = device_handler.snapshot_reads
+                    code, _, _ = request("/api/v1/cameras/fixture-onvif/onvif/ptz",
+                        {"operation": "stop", "profileId": media_profile_id},
+                        cookie=viewer_cookie, method="POST")
+                    assert code == 403, "a viewer account was allowed to control the device"
+                    code, _, _ = request("/api/v1/cameras/fixture-onvif/onvif/snapshot",
+                        cookie=viewer_cookie, method="POST")
+                    assert code == 403, "a viewer account was allowed to read device snapshots"
+                    # Permission is rejected before the device is contacted, so the
+                    # synthetic device must not have seen either denied command.
+                    leaked = [action for action in device_handler.action_log[denial_marker:]
+                              if any(name in action for name in ('/ContinuousMove"', '/RelativeMove"',
+                                                                  '/AbsoluteMove"', '/Stop"', '/GotoPreset"',
+                                                                  '/SetPreset"', '/RemovePreset"',
+                                                                  '/GetSnapshotUri"'))]
+                    assert not leaked, f"a denied device command still reached the device: {leaked}"
+                    assert device_handler.snapshot_reads == snapshot_reads_before, \
+                        "a denied snapshot request still fetched image bytes from the device"
+                    evidence["checks"].append("denied-device-commands-never-reach-the-device")
+                    code, _, _ = request("/api/v1/cameras/fixture-onvif", cookie=cookie, method="DELETE")
+                    assert code == 200, "could not remove the synthetic ONVIF camera"
+                    assert wait_for(lambda: ui("refresh") and state().get("catalogItems") == 5,
+                        "camera catalog did not return to the five fixture cameras", timeout=20)
+                    evidence["checks"].append(
+                        "device-probe-sync-preset-move-autostop-snapshot-and-rbac-installed")
+                finally:
+                    device_server.shutdown()
+                    device_worker.join(timeout=5)
+                    device_server.server_close()
                 assert ui("save")
                 paths = wait_for(lambda: list((profile / "native-profile").rglob("workspace-*.json")),
                     "product save button did not persist the bound workspace")
