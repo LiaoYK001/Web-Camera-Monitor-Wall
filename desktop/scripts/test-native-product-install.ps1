@@ -141,6 +141,27 @@ try {
     $before = Get-ProfileFingerprint
     if ($complete) {
         $phase = 'installed-legacy-import'
+        # A migration script inside the install folder is not an entry the user can find.
+        # The complete installer creates three Start Menu links; read their real targets
+        # with the same Unicode-safe IShellLinkW probe instead of trusting the file name.
+        $helperEntries = [ordered]@{
+            'WebOBS Wall - Import old data.lnk' = 'MIGRATE-LEGACY.cmd'
+            'WebOBS Wall - Check for updates.lnk' = 'CHECK-UPDATES.cmd'
+            'WebOBS Wall - Restore backup.lnk' = 'RESTORE-BACKUP.cmd'}
+        $programsRoot = [Environment]::GetFolderPath('Programs')
+        foreach ($entry in $helperEntries.GetEnumerator()) {
+            $linkPath = Join-Path $programsRoot $entry.Key
+            if (-not (Test-Path -LiteralPath $linkPath -PathType Leaf)) {
+                throw "Installed helper shortcut missing: $($entry.Key)"
+            }
+            $expectedHelper = [IO.Path]::GetFullPath((Join-Path $installed $entry.Value))
+            $observedHelper = & $probe $linkPath $expectedHelper | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0 -or -not $observedHelper.canonicalTargetMatches -or
+                -not $observedHelper.nativeTargetExists) {
+                throw "Installed helper shortcut does not target the shipped $($entry.Value): $($entry.Key)"
+            }
+        }
+        $report.helperEntryShortcutsQualified = $true
         # The old-data import path the user actually has: MIGRATE-LEGACY.cmd ships the
         # packaged importer, so this gate fills a disposable install through the real
         # installed entry, imports it with that shipped importer, and proves the imported
