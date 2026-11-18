@@ -1,5 +1,14 @@
 # Repository guidance
 
+## Multi-agent coordination / 多 Agent 进度同步
+
+- Before editing, read `docs/coordination/STATUS.md`, `TASKS.md`, `HANDOFF.md` and `DECISIONS.md`, then inspect the actual branch/worktree. Follow `docs/coordination/PLAYBOOK.md`; claim a task with a unique client/session Agent ID through `python3 scripts/agent-sync.py claim ...` before modifying its declared scope.
+- 开始前读取上述当前进度、任务、交接和决定，重新检查实际分支/未提交修改；先认领再改动。不删除、重置或覆盖其他 Agent 的工作，不擅自切换共用 checkout 的分支。
+- `docs/coordination/state.json` is the canonical task/progress/new-log source. The five status/roadmap/task/log/handoff Markdown views are generated: update through `scripts/agent-sync.py` at meaningful checkpoints, after tests, on blockers and before handoff. Do not edit generated views separately or infer progress from chat memory.
+- 同一 checkout 的更新由脚本加锁；跨 worktree 指定一个共享账本入口，跨机器按正常 Git 流程同步，不能声称本地文件锁提供分布式实时同步。详细规则见 PLAYBOOK。
+- Close tasks only with current evidence and satisfied dependencies. Preserve historical product evidence in `docs/windows-obs-parity-execution.md` and update the feature matrix when behavior/qualification changes. Run `python3 scripts/agent-sync.py check` and `git diff --check` before handoff; never equate a scoped preview/fixture with complete R0–R7 qualification.
+- 本机提权仍只限用户已授权任务：先 `sudo -n true`，有效期内使用 `sudo -n`；不得自行 grant/延长租期/创建永久免密规则，不索要或记录密码。协作任务登记本身不扩大系统或发布授权。
+
 ## Architecture
 
 - `web/`: React/TypeScript/Vite local-first PWA, account workspace and monitor wall.
@@ -14,6 +23,10 @@
 
 ## Working rules
 
+- User decision 2026-11-17: continue the audited integration under **v5.1**, fix the rc.1 migration/updater defects and outstanding full-product gaps, and prepare an official Windows x64 GitHub Release. The user will use v5.1 for their main Windows validation. Preserve published v4.5/v5.0.0-rc.1 bytes; report unperformed target-device/OBS-parity checks honestly. Continue implementation and CI rather than asking the user to test intermediate builds. / 用户最新要求：以v5.1正式交付为目标修复已指出问题及完整功能缺口，本人Windows主要验证放在v5.1；不覆盖历史附件，不把未实现或未实测项写成通过。
+
+- User decision 2026-11-16 (after v4.5 preview): continue the complete Windows fusion product under **v5.0 and later complete releases**. Keep v4.5 and its tested preview assets immutable. Internal v5.0 development builds remain non-publishing until full feature, migration, update, installation and qualification gates pass; a new version number alone never opens the stable feed or resumes paused platforms. / 用户最新决定：继续开发，后续完整版本从 v5.0 开始；v4.5 保留为历史预览，不改已发布附件。v5.0 开发构建不代表完整版本合格，版本号不自动授权稳定发布或恢复暂停平台。
+
 - User decision 2026-11-16: publish **v4.5 Windows x64 native monitor preview first**. Scope is authenticated RTSP/Profile monitoring, supported saved camera scenes, layouts and fixed Scene projectors. The user explicitly accepts a usable preview before complete migration. Keep its installation/data separate from legacy WebOBS and internal/prototype builds; disclose unavailable business features, migration, automatic updates and unqualified OBS parity. GitHub Release is a **prerelease**, never Latest or a stable updater feed. This scoped delivery does not qualify the full R0–R7 product. Android/container publication remains paused. / 用户 2026-11-16 明确选择先发布 v4.5 Windows x64 原生监看预览版，接受完整融合前先用；必须独立安装/数据、明确缺项，不伪称完整成品或 OBS 性能达标，不进入 Latest/稳定更新源，其他端继续暂停。
 
 - Primary delivery targets are the Docker/Podman container, native Windows x64 desktop and independent Android client. From v4.0, they follow `vA.B` feature releases and `vA.B.C` bug/security patches, especially timely Windows/Android fixes. Native Linux x86/ARM, Windows ARM and Windows 32-bit remain expansion targets normally qualified/published at major `vA.0` milestones such as v5.0/v6.0/v7.0 rather than every minor/patch release. Source support is not platform qualification. See `docs/patch-releases-v4.md`.
@@ -26,6 +39,12 @@
 - Write commit messages, PR titles/descriptions and merge messages in both Chinese and English. Use a concise bilingual subject such as `fix: 修复更新检查 / fix update checking`; include both languages in any substantive body. Override GitHub's English-only default merge message when merging.
 - 提交信息、PR 标题/说明及合并信息必须包含中英文双语。标题简洁，正文有实质说明时也提供双语；合并时显式设置双语信息，不沿用 GitHub 的纯英文默认标题。
 - Inspect related code and documentation before changing behavior. Keep unrelated working-tree edits.
+- CI downloads on Bash: create a fresh directory with `mktemp -d` for each attempt and pass the quoted path to `gh run download --dir` or `gh release download --dir`. Use a new directory for retries. Keep existing downloads intact and leave command approval settings in place. / 在 Bash 中下载 CI 产物或 Release 附件时，每次用 `mktemp -d` 新建空目录，把加引号的路径传给下载命令的 `--dir`。重试也新建目录，避免用 `rm -rf` 清空旧目录或为此放宽 Codex 审批规则。
+
+  ```bash
+  ci_download_dir=$(mktemp -d) && gh run download "$run_id" --name "$artifact_name" --dir "$ci_download_dir"
+  ```
+
 - Preserve Direct-only operation: enabling go2rtc does not require OBS composition or continuous transcoding.
 - All go2rtc UI/API/media requests use `/api/v1/go2rtc/`, the product authentication gate and `settings.manage`. Its complete configuration and diagnostics belong to administrators and can contain credentials.
 - Keep service/API/RTSP listeners on loopback by default; do not expose upstream management ports in base Compose. Keep secrets, camera URLs, logs, recordings and runtime configuration out of Git and public outputs.

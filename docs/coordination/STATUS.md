@@ -1,7 +1,7 @@
 # 当前进度 / Current status
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 166 · 2026-11-18T15:44:56+08:00（UTC+08）
+> 快照版本 211 · 2026-11-19T00:37:12+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -29,11 +29,11 @@
 | R0 冻结基线与差距清单 | 4/4 | 完成 |
 | PREVIEW v4.5 Windows x64 原生监看预览交付 | 4/4 | 完成 |
 | R1 原生产品闭环与授权 | 2/2 | 完成 |
-| R2 完整 Studio、监控墙和声音 | 2/5 | 未关闭 |
-| R3 业务能力回接和按需组件 | 0/5 | 未关闭 |
+| R2 完整 Studio、监控墙和声音 | 3/5 | 未关闭 |
+| R3 业务能力回接和按需组件 | 0/7 | 未关闭 |
 | R4 旧数据迁移、更新与生命周期 | 2/5 | 未关闭 |
-| R5 性能、体积与稳定性 | 0/1 | 未关闭 |
-| R6 冻结完整 Release 候选 | 1/4 | 未关闭 |
+| R5 性能、体积与稳定性 | 0/2 | 未关闭 |
+| R6 冻结完整 Release 候选 | 1/5 | 未关闭 |
 | R7 集中实机验收与稳定交付 | 0/2 | 未关闭 |
 | HOLD 暂停平台 | 0/1 | 暂停 |
 
@@ -42,9 +42,10 @@
 - `R2-002` P1 · 补齐多场景嵌套、编辑和不限五路布局。下一步：依据 STUDIO/LAYOUT 矩阵逐项接线，保留既有五路回归。
 - `R2-004` P1 · 完成 Program 投影、多屏 DPI 和恢复。下一步：串行释放范围回到实际Windows管线和更新故障；之后认领继续固定场景媒体恢复与DPI目标验证
 - `R3-001` P2 · 回接设备控制 PTZ、快照与对讲。下一步：复用已有 camera 服务协议，不旁路 camera scope。
+- `R3-002` P2 · 回接输出、NVR、回放和证据。下一步：目标机多卷/掉盘/配额、seek/导出 hash 和大文件回放。
 - `R3-003` P2 · 回接事件、检测、go2rtc 与网站来源可选组件。下一步：真实网站/直播、检测 provider/叠层最终像素、MQTT/HA 通知与重启恢复。
 - `R3-004` P2 · 回接远端、离线同步、问题中心和诊断。下一步：逐项关闭 REMOTE/OFFLINE/OPS，远端兼容不等于恢复 Android 发版。
 - `V51-006` P1 · 接通稳定打包身份与验收文件单一契约 / wire stable packaging identity with one acceptance-file contract。下一步：合入 #67/#68 后 rebase 本分支并转正式审查；真实 latest.yml 上传与集中验收回执仍待执行
-- `V51-008` P1 · 把 Program 合成输出验收落到用户实际收到的产物 / accept Program output from the delivered recording and stream。下一步：读 rc.27（旁证）与 rc.29/rc.30 结果；rc.29 预期会在偏移门禁因空引用失败，只取此前门禁的旁证。
+- `V51-009` P0 · 接通原生产品真实 LAN/Web HTTPS 入口 / wire the real LAN HTTPS entry into the native product。下一步：#67 合入后 rebase 到 dev 并补原生窗口开关；随后随完整候选派发一次带该门禁的 Windows 运行
 
 原始依据：[完整任务书](../windows-webobs-wall-release-plan-2026-11-11.md)、[功能矩阵](../windows-native-feature-parity.md)、[逐轮执行记录](../windows-obs-parity-execution.md)、[v4.5 范围](../release-notes-v4.5.md)。

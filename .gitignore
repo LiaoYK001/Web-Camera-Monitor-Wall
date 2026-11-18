@@ -1,4 +1,5 @@
 /document/plan
+/docs/coordination/.sync.lock
 /.env*
 !/.env.example
 /secrets/

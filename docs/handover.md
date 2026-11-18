@@ -1,6 +1,10 @@
 # 当前开发交接 / Current development handover
 
-更新：2026-10-06。本文面向 v4.0 基线及后续 `dev` 开发；发行状态以 [v4.0 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v4.0) 为准。
+当前入口更新：2026-11-16。新 Agent 从[当前交接](coordination/HANDOFF.md)、[任务台账](coordination/TASKS.md)、[详细路线图](coordination/ROADMAP.md)及[协作规则](coordination/PLAYBOOK.md)接手；当前产品范围见[决定索引](coordination/DECISIONS.md)。先认领任务，每个实质检查点/测试/阻塞更新统一账本，交接前运行 `python3 scripts/agent-sync.py check`。
+
+The current handoff is maintained in the linked generated views. The remaining sections below retain the 2026-10-06 v4.0 baseline as historical/reference guidance and do not supersede current Windows-preview scope or platform pauses.
+
+以下保留 2026-10-06 v4.0 基线及后续 `dev` 开发参考；历史发行状态以 [v4.0 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v4.0) 为准。
 
 ## 1. 当前状态 / Status
 

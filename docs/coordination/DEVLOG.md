@@ -1,12 +1,283 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 166 · 2026-11-18T15:44:56+08:00（UTC+08）
+> 快照版本 211 · 2026-11-19T00:37:12+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #211 · 2026-11-19T00:37:12+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：rc.50(run 44339344891)在 pixels-program-before-take-observed 失败：点名一个 OBS 报告 showing/active/PLAYING(mediaState=1) 但 serial 始终为 0 的输入(stalledMs=1370)。宿主每 2s 刷新一次逐输入健康，stalledMs 只能按 2s 刻度变化，且刚创建的 Program 专用源在媒体打开前 serial 必为 0，两者都不是画面冻结，旧计数器门无法判定。已提交 a92d11b(#67 codex/v51-r3-output)：等待改为实测推进(两次≥2.5s 快照必须出现更新的帧计数，仅覆盖已真正计过帧的输入)，零帧/仍在打开的输入改为记录并命名；状态快照新增 name/removed；回执新增 inputWaitLogLines(点名该输入的 OBS 日志行/MP: 行)、fixtureServerLogTail(脱敏 MediaMTX 推流日志尾部)与更多 media_playback 标记。已按顺序 rebase #70(78e8b60)→#71(3147f40)→#74(2e7695d) 并推送，从栈顶 codex/v51-r5-soak 派发 rc.51 run 44349201714(product_mode=true,complete=true,measure_obs_baseline=true,upgrade_previous=true,soak_minutes=0)。本地 test_build_contract 45 项、test_product_lan 24 项、test_encrypted_backup 10 项通过；本机无 Qt6/MSVC，C++ 仍以 Windows CI 编译为准。剩余：读 rc.51 回执判定零帧输入到底是哪一层；若仍是产品侧的“打开但静默”，需在宿主加有界重开并如实登记。
+- 证据：run 44339344891 receipt native-product-entry-ui.json; commit a92d11b; run 44349201714
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #210 · 2026-11-18T23:46:22+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：定位并修掉 Program 前置等待的自身缺陷：rc.48(run 44332713711 @9a694ce) 与 rc.47(run 44332749108 @447dbba) 都在 program-before-take 等待 20s 超时，回执里可见条目全部 showing/active/mediaState=1、stalledMs 315–1217、serial 980–1028，说明超时来自刚创建、尚未收到第一帧的 Program 自有输入（serial 仍为 0，宿主 2s 心跳才刷新健康计数），不是画面停滞。现在等待只覆盖 OBS 自己报告为 showing/active/PLAYING 的输入，未开播输入只记录；失败消息改为给出原因与被卡条目而非截断原始列表；每个出现的 OBS 启动日志标记另存一行脱敏样例（含 Failed to initialize 究竟指向谁）。同时把栈重基到 dev@4b4e512：#67=6286fd4、#70=c56c9cf、#71=b13deb9、#74=4f38150，并派发覆盖全栈的 rc.50 完整运行。
+- 证据：rc.48 receipt artifact(sha 9a694ce,version 5.1.0-rc.46): lastCheckpoint=pixels-program-before-take-observed, programPixelInputWait=null；rc.47(447dbba) 同阶段同症状；重基后本机 test_build_contract/test_product_lan/test_encrypted_backup/test_complete_supervisor/test_native_updater/test_compare_runtime_sizes/test_complete_release_policy 全部 OK；新 run 44339344891 @4f38150 product_mode+complete+measure_obs_baseline+upgrade_previous, soak_minutes=0
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #209 · 2026-11-18T23:21:25+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-005`
+- 记录：#69 分支本地复跑发布链：候选 Tag 取自共享策略、稳定发布需验收 JSON 与 main 祖先、pending/verify-only 不写任何内容；安装包与 latest.yml 大小/SHA-512 一致。待 #67 合入 dev 后 rebase（publish_candidate.py add/add，保留 #69 超集）。
+- 证据：python3 native-host/tests/test_candidate_publish.py PASS；test_stable_packaging.py PASS(5.1.0→v5.1 / rc 候选独立)；test_update_manifest.py PASS；tests/test_release_identity.py 8 OK(4 skip)
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #208 · 2026-11-18T23:21:25+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：接续会话核对 rc.46/rc.47 回执后确认：Program 像素停滞发生在捕获窗口内，媒体侧 serial 在窗口内确实推进（+840 帧），因此需要 rc.48(9a694ce) 的 SerialWatch renderFramesPerSecond/renderFramesMaxStallMs 才能区分图形线程停滞与槽位未重绘；同时 rc.47 在 program-before-take 的逐输入推进等待上超时 20s，与 rc.44 的 serial 走平误判同源，若 rc.48 再超时将撤销该前置等待、只保留捕获窗口内证据。
+- 证据：rc.46 artifact receipt(run 44323126258): lastCheckpoint=pixels-program-after-take-captured, progressError=Frozen final pixels on slot 2, inputSerialDelta 6/6 advanced, stalledMsAfterCapture 0, publishers alive, stalledPaths empty
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #207 · 2026-11-18T22:20:43+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：e23b8ed：Program 像素阶段捕获前先用宿主自身逐输入健康计数（serial>0 且距上次变化 ≤2s，输入数量取自状态而非写死5）有界 20s 等待并记录 programPixelInputWait；分析失败时新增跨捕获窗口的 inputSerialDelta 与 stalledMsAfterCapture，把‘媒体侧停止供帧’与‘帧已到达但未重绘’分开。不放宽像素断言。重基 #70=7344250/#71=f34c592/#74=7901bc7；重派 rc.46=run 44323126258 @e23b8ed、rc.47=run 44323161102 @f34c592
+- 证据：rc.46(5dfcde8,run 44314586162)失败在 program-after-take：Frozen final pixels on slot 5（8 个样本槽位5计数恒为1，temporalProgress=false）；诊断显示 5 个推流全 alive、5 条 RTSP 路径全部 flowing、stalledPaths 为空、宿主对 6 个输入全部 stalledMs=0、wallItems=5/programItems=2、fixture-5 槽位 uuid serial=1037 而同批其他输入 1140-1148。同一 head 的上一次运行(23886e4)同一阶段通过（slot5 计数 5,5,16,16,16,27,27,1），因此这是间歇性且当时无法判定成因
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #206 · 2026-11-18T21:32:22+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：修复 5dfcde8：四个中继监听器全部按空闲回环端口分配、WHIP URL 由分配端口推导、每条拒绝路径都写入 stream_error；移除未使用 port_available；门禁失败信息带宿主 programOutput；test_build_contract.py 新增禁止固定发布端口并要求记录拒绝（45 OK）；product_output.cpp 在固定 libobs 头+Qt6.11 下 g++ -fsyntax-only 通过。已取消旧头 rc.47(44307757343)，重基 #70=2add0cc/#71=8cb5070/#74=88b4e6f 并推送；重派 rc.46=run 44314586162 @5dfcde8、rc.47=run 44314611367 @8cb5070
+- 证据：rc.46(23886e4,run 44308229704)两个 Program 像素阶段首次通过、两次录像首次解出双音调（programRecordingBandRms 1387.9/912.4 mask2；programRecordingDefaultBus 1381.6/910.1 mask1；programMixLeadIn 47ms/7328ms/15ms 已披露）；随后停在 program-streaming：programOutput streaming=false、mediaMtxRunning=false、streamPublishUrl 与 streamError 同时为空。定位为私有中继把 WHIP/WebRTC 写死 8889（产品分发网关 MediaMTX 也绑 8889，且 Windows 预留动态端口段可使固定端口在无人监听时不可绑定），拒绝只回给按钮文案，可观察状态看起来像空闲且无失败
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #205 · 2026-11-18T20:54:19+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-005`
+- 记录：发布链验证到待发布状态：Tag v5.1↔版本 5.1.0 单一映射、验收 JSON 缺失/无效拒绝、源码未进 main 拒绝、安装器与 latest.yml 名称/size/sha512 一致；未写入任何 Tag/Release
+- 证据：#69 head 21b0d00 已含 dev tip 4b4e512（#68 已合并）且 origin/dev 为其祖先；OBS 子模块固定 fb4d98bf(32.1.2)、go2rtc b5948cfb(v1.9.14) 已初始化；补跑 native-host/tests/test_build_contract.py 44 OK、test_complete_release_policy.py PASS、test_stable_release_identity.py PASS、test_preview_release.py 4 OK、test_component_size_report.py PASS、test_compare_runtime_sizes.py OK、tests/test-immutable-release-assets.sh PASS、test_candidate_publish.py/test_stable_packaging.py/test_update_manifest.py/test_release_identity.py(8, skip4) 全绿
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #204 · 2026-11-18T20:54:19+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-010`
+- 记录：rebase 时误用 --onto <upstream>=自身导致分支短暂指向父 head，已用 77958c3..15b1fd1 的 11 个提交恢复完整历史
+- 证据：PR#71 rebase 至 3161e9a（11 个自有提交）；python3 -B native-host/tests/test_product_lan.py 24 OK；rc.47 run 44307757343 在旧 head fabec5d 上仍在跑（同一 product_mode+complete 门禁），最终 dev 候选会再次覆盖
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #203 · 2026-11-18T20:54:19+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-007`
+- 记录：已确认普通产品启动接线满足要求；安装态门禁 backup_restore_windows.py 改为直接启动 bin/webobs-wall.exe 收敛，需 Windows 完整候选运行验证
+- 证据：PR#70 rebase 到新 #67 head（770b0e1，4 个自有提交无冲突）；tests/test_encrypted_backup.py 10 OK；native-host/tests/test_complete_supervisor.py PASS（含 'converged the interrupted restore as completed' 与二次 prepare 不被中断日志拒绝、无 run/restore-recovery.json）；复核 product_supervisor.prepare() 顺序：独占锁+protect 之后、创建 config/native-profile 目录与读取 user.ini 之前调用 recover_interrupted_restore()
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #202 · 2026-11-18T20:54:11+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：保留 a864c25 诊断与 cd94df9/4746e0c 混音修复；#70/#71/#74 已 rebase 到新 #67 head 并 force-with-lease 推送
+- 证据：revert a4d2512（videoInputs.serial 帧计数门槛在 Windows 上 30s 全部走平而像素阶段本身通过，rc.44 因此误判停滞；像素内容仍是连续性证据）b447c48；23886e4 首次录像与 WHIP 开播前也调用 wait_program_mix_audible；python3 -B 语法 AST OK；rc.46 run 44308229704 @23886e4 product_mode=true complete=true 已派发，旧 head 的 44307720185 已取消以保证被测头与合并头一致
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #201 · 2026-11-18T20:18:16+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-007`
+- 记录：#70 双目录配对恢复分支无代码改动，仅重排到 #67 新头 a4d2512（新头 77958c3）；其安装态门禁 backup_restore_windows.py 与备份恢复回执将在 rc.45 的完整融合运行中一并验证。
+- 证据：git rebase a4d2512 clean；codex/v51-r4-backup-consistency=77958c3；gh pr 70 base=codex/v51-r3-output
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #200 · 2026-11-18T20:18:08+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-005`
+- 记录：#69 发布链分支已 rebase 到 dev 尖端 4b4e512（含 #72 组件体积拆分），新头 21b0d00；本地 test_candidate_publish、test_stable_packaging、test_update_manifest、tests/test_release_identity 全部通过，发布链仍只验证到待发布状态、不写任何 Tag/Release。待 #67 合入后再 rebase 到 dev 并转入正式审查。
+- 证据：native-host/tests/test_candidate_publish.py PASS；test_stable_packaging.py PASS（v5.1↔5.1.0 与 rc Tag 映射）；gh pr 69 head=codex/v51-publish-chain@21b0d00
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #199 · 2026-11-18T20:18:08+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-010`
+- 记录：rc.43(44296848704)在编译步骤的 CTest 中失败于 native-product-lan-switch（“the LAN switch never answered”）。原因不是回环不可达：测试用 3 秒事件循环等待，而 ProductLanSwitch 自身 4 秒期限会中止回复，负载高的 runner 上一次交换可超过 3 秒。修复 a25f44d：先用原始 socket 加事件循环证明 fixture 可达（阻塞式 waitForReadyRead 无法证明，fixture 在 readyRead 中回答）、给每次交换命名并记录 connections/responses、等待预算延长到 6 秒；未削弱任何 fail-closed 断言。Windows 验证 run 44300526460(5.1.0-dev.lanswitch, product_mode=false) 全绿：CTest 11/11 含 native-product-lan-switch。栈已重排 #67 a4d2512 → #70 77958c3 → #71 15b1fd1，并派发 rc.45=44302553239 跑完整融合门禁。
+- 证据：gh run 44300526460 conclusion=success；podman v51qt 容器内 Qt6.11 offscreen 运行 product_lan_switch_test 通过；g++ -fsyntax-only -DWEBOBS_NATIVE_PRODUCT_MODE product_window.cpp 无错误
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #198 · 2026-11-18T20:18:00+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：rc.42(44296843744)程序合成阶段首次通过逐输入像素连续性：TAKE 前后五路槽位均推进、sessionBound=true、mediaSources=7、无撤权。新缺口为节目混音建立间隔：混音进程只有在 ffmpeg 打开相机输入后才绑定本地 TCP 端点，媒体源首次打开失败，rc.42 在重连完成前结束默认总线录制，导致唯一音轨两个音调皆缺失（band RMS 0/0）。修复：混音源 reconnect_delay_sec 2→1(4746e0c)；每次 Program 录制前先确认每个可用混音源 mediaState=1 且声明了未静音非零增益输入时峰值高于 -60dBFS，并把实测间隔写入 programMixLeadIn(cd94df9)。另把像素失败诊断并入分支：回环路径包流采样 pathProgress/stalledPaths(a864c25) 与 Program 捕获前逐输入帧计数推进等待(a4d2512)。已派发 rc.44=44302537880 于 codex/v51-r3-output@a4d2512。
+- 证据：gh run 44296843744 回执 native-product-entry-ui.json：failurePhase=program-recording-default-bus、programRecordingDefaultBus={below600Hz:0,above660Hz:0,audioTrackMask:1}、obsDiagnosticLines 显示 12:00:14.215 开始写文件、12:00:17.321 MP: Failed to open media、12:00:19.594 Reconnected
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #197 · 2026-11-18T19:18:30+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-005`
+- 记录：#69 发布链分支已 rebase 到 dev 现 tip 并推送；发布链可在不写入任何内容的前提下验证到待发布状态
+- 证据：codex/v51-publish-chain head 0b0c7cc；test_candidate_publish/test_stable_packaging/test_update_manifest 本机全部 PASS（Tag v5.1 ↔ 版本 5.1.0 映射由共享策略给出）
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #196 · 2026-11-18T19:17:40+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-012`
+- 记录：#72 组件体积拆分已合入 dev（tip 4b4e512），发布说明与矩阵将引用同一次候选运行的 native-product-size-split.json；#73 文档分支已 rebase 到新 dev tip 以免显示为删除 #72 文件
+- 证据：docs/release-notes-v5.1.md 候选身份表仍标记待绑定，绑定值将在最终候选 run 与安装包校验后写入
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #195 · 2026-11-18T19:17:39+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-011`
+- 记录：#74 长稳分支已同步到 #67 的 535a9af 并推送；R5-001 认领被依赖未完成阻挡，本轮先在自有任务记录进度
+- 证据：codex/v51-r5-soak head f741497（3 个提交 rebase 无冲突）；native-host/tests 全部本机可跑项通过，仅两个需要 --probe 的 Windows 探针脚本按要求跳过
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #194 · 2026-11-18T19:08:19+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-010`
+- 记录：LAN 开关回归两处修正：Qt 把原始头名规范化为 X-Webobs-Native-Token（HTTP 头名不区分大小写，接收侧 Python/beast 本就不区分），改为整体小写比较并校验自身 Origin 与无 Cookie；不可读 2xx 仍返回 0 保留上次回执，真实 HTTP 错误（含 HTML 500、401）如实上报，使界面能区分拒绝与无响应
+- 证据：02b3ff2；容器内 Qt 6.11 下 native-product-lan-switch-test PASS；test_product_lan.py 24 项 OK
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #193 · 2026-11-18T19:08:19+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-007`
+- 记录：#70 已复核：prepare() 先取 run/native-owner.lock、保护目录、收敛恢复日志，之后才创建 config/native-profile 与 user.ini；Windows 安装态回归覆盖两次目录交换之间 kill、真实已安装入口首次启动收敛成对、可重试、回滚对保留、仅含配置的旧归档保留原生档案
+- 证据：rebase 后 PR #70 head 4d60479（base #67 535a9af），native-host/tests/backup_restore_windows.py 由 workflow 步骤执行，证据待 rc.41 run 44291812392
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #192 · 2026-11-18T19:08:19+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：定位 rc.36/rc.37 在 native-program-take 失败的真实原因：2 秒授权续期在最忙时被中止，产品把任何非 200 当作会话撤销并拆掉预览与投影，导致 window-identity/冻结像素；已改为繁忙/超时（0/408/429/500/502/503）最多重试两次后失效关闭，401/403、设备版本或场景指纹变化仍立即锁，续期超时提到 6 秒对齐服务端 10 秒预算
+- 证据：535a9af（PR #67）新增 lastLock/lockCode/renewTransient 分类，门禁在像素采集前直接报告撤销类别；Windows rc.40 run 44291675017 已派发在 codex/v51-r3-output 验证
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #191 · 2026-11-18T18:27:25+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：rc.36(run 44280347568) 失败点已定位：native-program-take 的 program-after-take 最终像素 8 帧里 slot 4 计数器 38 冻结、temporalProgress=false、progressError=Frozen final pixels on slot 4，同时宿主 verify-video-input-progress 也报停滞；该槽位由合成回环 RTSP 推流提供（带 B 帧 HEVC、-c copy、-stream_loop -1），ffmpeg 会在循环中因时间戳问题自行退出，因此不能判定为产品解码缺陷。已提交 c250c85：像素门禁采集前先检查五个推流进程状态并重启已退出者、重新要求五路全部推进后再采集，事件写入 fixturePublisherWatch；像素分析仍失败时记录 pixelFailureDiagnostics(阶段/角色/progressError/进程状态/五个回环路径可读性)，仅在确有死进程或不可读路径时重启并重跑同一像素阶段一次；夹具健康而像素停滞仍判失败。并行派发 rc.37(run 44285491534, c250c85, #67 单独) 与 rc.38(run 44285510872, 65cddb9, #67+#70+#71 组合，product_mode+complete+pixel_test=false)。#70 rebase 到 c250c85 干净；#71 rebase 需手工并集解决 product_window.cpp 支持包字段(programApply 与 lan 同时保留)，本机 test_product_lan/test_build_contract 通过。长稳门禁分支 codex/v51-r5-soak 已 rebase 并推为 PR #74。
+- 证据：run 44280347568 failed; commit c250c85; runs 44285491534/44285510872
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #190 · 2026-11-18T18:04:24+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：rc.36(1be9c2f, run 44280347568) 仍在执行，等待结果后再合并 #67。已核对 #70 head 296f2bc：prepare() 在取得 run/native-owner.lock 并 protect(root) 之后、创建 config/native-profile 与读 user.ini 之前调用 recover_interrupted_restore()，满足“普通产品启动即收敛中断恢复”。修正派发口径：build-obs-native.ps1 规定 ProductMode 与 PixelTest/SmokeTest 互斥，完整候选必须 pixel_test=false（先前计划的 pixel_test=true 会在编译步骤直接抛错）；measure_obs_baseline/upgrade_previous 仅非 product 路径生效，同机 OBS 体积对照由 #72 存储参考与 size-split 回执承担。docs 分支 codex/v51-docs(f967634) 写了候选发布说明与矩阵 AUDIO/OUTPUT/REMOTE/OPS/BACKUP/LIFE 更新，其中托盘后台输出标为源码接线但 CI 无系统托盘未自动化。
+- 证据：run 44280347568; branch codex/v51-docs@f967634; commit 296f2bc
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #189 · 2026-11-18T17:59:39+08:00 · claim
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-012`
+- 记录：接手撰写 v5.1 候选发布说明与矩阵更新 / take over the v5.1 candidate notes and matrix update
+- 证据：无新增验收证据
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #188 · 2026-11-18T17:59:32+08:00 · add
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-012`
+- 记录：先写内容框架，实机与候选回执数字在候选冻结后绑定 / draft content now, bind candidate receipts at freeze
+- 证据：无新增验收证据
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #187 · 2026-11-18T17:59:03+08:00 · claim
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-011`
+- 记录：安装态长稳门禁已实现于组合预览树 f0eb858，待 #67 合入后转 PR / installed soak gate implemented in the preview tree, PR after #67 merges
+- 证据：无新增验收证据
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #186 · 2026-11-18T17:55:04+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：定位 rc.34 的真实失败：门禁在 wait_for 调用点立即格式化失败信息，而 programDefaultBusApplyAttempt 只在第一次探测写入，导致 KeyError 在进入等待前崩溃，完全掩盖 apply 结果；wait_for 现接受可调用 message 并在超时时组装，默认总线信息改用 .get 保留 core/host 两侧证据
+- 证据：rc.34 run 44275460558 failurePhase=program-recording-default-bus, failureDetail=KeyError: 'programDefaultBusApplyAttempt'（lastCheckpoint=program-recording-audio-decoded，说明双音轨录像解码已通过）；修复提交 1be9c2f 已推送，rc.36 run 44280347568 在其上派发
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #185 · 2026-11-18T17:49:13+08:00 · add
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-011`
+- 记录：工作流开关与安装脚本参数已在 codex/v51-r5-soak；本任务补上门禁本体，避免把工作流参数当成已完成长稳
+- 证据：试合并工作树 .worktrees/v51-combined 提交 f0eb858：py_compile 通过、test_build_contract.py 44 OK
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #184 · 2026-11-18T17:45:12+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-007`
+- 记录：审阅 #70：recover_interrupted_restore() 确实在 prepare() 内、run/native-owner.lock 独占加锁与 protect 之后、创建 config/native-profile 与读取 user.ini 之前调用；restore 成对交换的日志恢复(rolled-back/completed)与不可读日志 fail-closed 均属实
+- 证据：.worktrees/v51-combined 试合并后 test_complete_supervisor.py PASS（含 'converged the interrupted restore as completed'）、tests/test_encrypted_backup.py 10 OK、native-host/tests/test_native_updater.py 4 PASS
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #183 · 2026-11-18T17:37:31+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：接续同一会话继续（模型切换，沿用原认领）：rc.35 run 44276526382 正在编译 OBS 前端/插件，作为 #67 head 867c11b 的权威完整运行；rc.34 run 44275460558 为上一提交 a16f1f9 的对照运行
+- 证据：rc.33 失败断言 program-recording-default-bus 已由 a16f1f9（读 GET /api/v1/studio/runtime 回执）与 867c11b（瞬时 apply 有限重试 4 次）覆盖；两个运行均为 product_mode/complete
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #182 · 2026-11-18T17:32:25+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-005`
+- 记录：codex/v51-publish-chain@c1e1018：publish_candidate.py 增加 --verify-only，可把发布链验证到‘待发布状态’（全部拒绝逻辑照跑，不写文件、不上传）
+- 证据：本机 release 测试全 PASS：test_candidate_publish、test_stable_packaging、test_update_manifest、test_stable_release_identity、test_complete_release_policy、test_preview_release；test_build_contract 44 OK；control-auth CTest 18/18；native-host graph CTest 8/8；固定 OBS 32.1.2 libobs 构建 98/98 + real-loader CTest 1/1
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #181 · 2026-11-18T17:30:34+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：已定位 rc.33 失败是门禁自身缺陷（用了宿主令牌专用的 /api/v1/native/*），改为读 GET /api/v1/studio/runtime 的核心侧宿主 apply 回执；另修 Program apply 一次失败即永久锁死的缺陷（瞬时原因有限重试 4 次，结构性原因仍永久）
+- 证据：codex/v51-r3-output@a16f1f9 = run 44275460558 (rc.34)；@867c11b = run 44276526382 (rc.35)；Qt6 + libobs 32.1.2 SDK -fsyntax-only product_window.cpp exit=0；test_build_contract.py 44 OK
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #180 · 2026-11-18T17:27:35+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-010`
+- 记录：codex/v51-r3-004-lan@b274bb7：端口占用不再拒绝整个产品启动，改为入口关闭 + 有界原因；本机 24 项契约与 44 项构建契约复跑通过
+- 证据：test_product_lan.py 24 OK（含新的 busy-port 用例断言本机回环 Origin 保持、不写 Caddy 文档、failure_reason 仍为空）；test_complete_supervisor.py PASS
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #179 · 2026-11-18T17:26:02+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-007`
+- 记录：codex/v51-r4-backup-consistency@296f2bc：中断交换后改为启动已安装入口（开始菜单目标）自行收敛；并修门禁把成对归档误当仅配置归档的错误，先断言拒绝再验证真正旧版仅配置备份保留现有原生档案
+- 证据：本机 python3 -B tests/test_encrypted_backup.py 10 OK；native-host/tests/test_complete_supervisor.py PASS；test_build_contract.py 44 OK（本工作树已初始化 obs/obs-studio 子模块）；backup_restore_windows.py ast 语法校验通过（需 Windows 已安装运行时才能执行）
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #178 · 2026-11-18T17:21:35+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-007`
+- 记录：复核 #70：recover_interrupted() 已在 supervisor.prepare() 内、持有 run/native-owner.lock 之后、创建任何产品目录与读取 config/native-profile 之前调用；backup_restore_windows.py 已存在并接入 NSIS 安装验收与工作流上传
+- 证据：codex/v51-r4-backup-consistency@d0b9506：prepare() 顺序为独占锁 → protect → recover_interrupted_restore() → 目录创建/ini；Linux 侧 test_complete_supervisor.py 中断交换契约 PASS；Windows 安装态门禁（两次目录交换之间终止恢复进程 → 从已安装入口再启动 → 成对恢复/可重试/仅含 config 的旧归档保留原生档案）尚未有 CI 回执，不写成通过
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #177 · 2026-11-18T17:21:35+08:00 · update
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-005`
+- 记录：在 codex/v51-publish-chain@a39b2c5 上补跑此前缺失的构建检查（该树已初始化 obs/go2rtc 子模块）
+- 证据：cmake -S native-host/tests/control-auth + ctest：18/18 通过（Linux, Ninja, Release）；cmake -S native-host -DWEBOBS_NATIVE_BUILD_TESTS=ON + ctest：8/8 通过；固定 OBS 32.1.2 构建 libobs（98/98）并导出 SDK，native-host/tests/real-loader ctest 1/1 通过（本机无 Xvfb 也能跑，标签 no-gpu/no-media）
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #176 · 2026-11-18T17:21:29+08:00 · claim
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-010`
+- 记录：已修并推送 codex/v51-r3-004-lan@34a8297：门禁先在回环创建首账号（201/409），再用同一账号做 LAN HTTPS 与回环独立会话；无私网地址时诚实降级并通过
+- 证据：PR #71 描述已更新；desktop/scripts/test-native-product-install.ps1 改为 report.lanEntryQualified/lanEntrySkipReason 取自回执真实值（该文件在 V51-007 声明范围内，一并在此记录）
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #175 · 2026-11-18T17:21:26+08:00 · add
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-010`
+- 记录：V51-009 声明的 native-host/scripts 与 native-host/tests 范围与在办的 V51-005/007/008 冲突，无法认领；本任务只登记本次实际修改的门禁文件，监督器/窗口实现与打包证据仍记在 V51-009 的历史证据中
+- 证据：python3 -B native-host/tests/test_product_lan.py 24 OK；test_build_contract.py 44 OK；lan_entry_windows.py 本机仅 ast 语法校验（需 Windows 已安装运行时）
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #174 · 2026-11-18T17:21:15+08:00 · update
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：读 rc.33 回执的 programDefaultBusNativeStudio 与 programDefaultBusApplyAttempt，区分 core programSupported 判定与宿主 apply 拒绝原因
+- 证据：无新增验收证据
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #173 · 2026-11-18T17:21:15+08:00 · claim
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：PR #67（codex/v51-r3-output）Program 合成输出：AAC/Opus 用具名 QByteArray 传编码器标签、按场景实际总线录像/推流、解码实际产物；rc.32 在 program-recording-default-bus 失败，已补 programApplyError 与 core/host 双侧证据（0b6edc2）并派发 rc.33
+- 证据：rc.32 run 44266163975 failurePhase=program-recording-default-bus；此前 program-recording-decodes-both-fixture-pitches 通过（below600=1380.5/above660=908.8, mask=2）；本机 Qt6 + 固定 libobs 32.1.2 SDK + 固定 obs-frontend-api.h：product_window/product_output/product_scene/product_media -fsyntax-only 全部 exit=0；run 44271844168 = 5.1.0-rc.33 @ 0b6edc2 in_progress（product_mode/complete）
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #172 · 2026-11-18T17:20:59+08:00 · update
+
+- Agent：`deepseek-v51-20261118-01`；任务：`R2-003`
+- 记录：多轨音频已双语合并进 dev（PR #66），本机与 Windows 门禁证据已在案
+- 证据：PR #66 merged into dev (merge commit be9c231 'merge: 合并v5.1原生多轨音频混音与电平')；Windows run 44224335029 之后的 rc.32 run 44266163975 门禁内 programAudio mixers=2、peakDbfs=-20.02、programRecordingBandRms below600=1380.5/above660=908.8（多轨总线证据）
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #171 · 2026-11-18T16:21:53+08:00 · update
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-005`
+- 记录：更正上一条日志断字：被拒绝的场景为 缺少 --confirm、缺少 --acceptance、验收文件缺失、验收门禁未记录(fullFeatureMigrationQualified=false)、latest.yml 与安装包字节不一致、稳定发布源码不在 main 可达(compare=behind)。
+- 证据：同一 /tmp/v51chain 场景 A-H、F1/F2 的实际命令输出
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #170 · 2026-11-18T16:21:46+08:00 · update
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-005`
+- 记录：在已初始化 OBS/go2rtc 子模块的 codex/v51-publish-chain 工作树补跑缺失构建检查并用一次性 gh 替身把发布链验证到“待发布”状态（不写真实 Release）：候选发布成功且 prerelease=true、Tag v5.1.0-rc.32；缺 -
+confirm、缺 --acceptance、验收文件缺失/门禁未记录(fullFeatureMigrationQualified)、latest.yml 与安装包字节不一致均被拒绝；5.1.0 稳定映射为 Tag v5.1 且要求源码在 main 可达（compare=behind 被拒，ahead 才允许 --latest）。
+- 证据：native-host/tests/test_candidate_publish、test_stable_packaging、test_update_manifest、test_stable_release_identity、test_build_contract(44)、test_complete_release_policy 全 PASS；/tmp/v51chain 场景 A-H、F1/F2 实际输出
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #169 · 2026-11-18T16:02:14+08:00 · update
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-009`
+- 记录：新增已安装态局域网入口门禁 lan_entry_windows.py 并接入 NSIS 完整候选验收与内部回执上传：已验证 TLS 健康检查、外来 Origin 拒绝、LAN 与回环两客户端独立会话/退出、禁用后重启不再监听、退出无残留进程。本机全部相关测试再次通过。
+- 证据：codex/v51-r3-004-lan@97b4efe 已推送；test_product_lan 24 PASS、test_product_package OK、test_build_contract 44 OK、test_complete_supervisor PASS、test_native_updater/test_migrate_legacy PASS
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #168 · 2026-11-18T15:59:16+08:00 · update
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-009`
+- 记录：完成 supervisor 侧局域网 HTTPS 入口（上一会话未提交的 WIP 已接续并实现）：prepare_lan 读取持久化设置并把 HTTPS 源写入 WEBOBS_CONTROL_ALLOWED_ORIGINS/WEBOBS_PWA_MEDIA_ALLOWED_ORIGINS，占用端口或非法设置失败关闭；打包 Caddy 反代到回环控制端口并实测本地可连；仅回环开关端口供原生窗口用宿主令牌读写；打包与校验强制 services/product/product_lan.py。
+- 证据：codex/v51-r3-004-lan@13bc640 已推送；native-host/tests/test_product_lan.py 24 项通过；test_build_contract.py 44 项通过（已在该工作树初始化 obs/obs-studio 与 go2rtc/go2rtc 子模块）；test_complete_supervisor.py PASS；git diff --check 通过
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
+## #167 · 2026-11-18T15:46:27+08:00 · add
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-009`
+- 记录：复用 desktop/src/lan.mjs 既有实现语义，不引入 Electron 宿主
+- 证据：无新增验收证据
+- 源码：`b7ab83060ca6f955cee461a2a3e17e2109b5ef63`
 ## #166 · 2026-11-18T15:44:56+08:00 · log
 
 - Agent：`deepseek-v51-20261118-01`；任务：`R2-003`

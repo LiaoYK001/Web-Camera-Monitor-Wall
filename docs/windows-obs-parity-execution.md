@@ -1392,3 +1392,23 @@ Run 43742420132 compiled/staged the host, control and UI, then failed because th
 run 43744978600：便携及真实 NSIS 安装各 40 项通过，包含实际管理界面 HTTP 字节、五路 H.265 画面、共享、投影、权限、重启和生命周期；NSIS 安装/卸载/数据保留通过。整轮仍因恢复测试失败未导出发布：恢复夹具依赖内部 `WEBOBS_PRODUCT_TEST_ROOT`，而公开预览正确忽略它，夹具未放在真实 `NativePreview` 目录。现将受保护夹具放入隔离 LOCALAPPDATA 下实际公开目录，仍故意给无效内部覆盖值，保持未保护正对照、零认证前 RTSP、原集合保留和正常回收要求。恢复回执使用实际构建的 publicationForbidden 标志。未发布失败候选；从修复提交重新构建/检查全部门禁。
 
 Run 43744978600 passed 40 checks each for portable and actual NSIS entries plus installation/uninstall/data retention. The remaining restore probe incorrectly seeded an internal override ignored by the public preview, so the overall run exported nothing. It now seeds the actual NativePreview root under a disposable LOCALAPPDATA while retaining a deliberately invalid internal override. Unguarded positive control, zero pre-authentication RTSP, collection preservation and cleanup requirements remain intact. Restore metadata follows the actual delivery policy. Rebuild all gates from the corrected source; no failed candidate was published.
+
+## 2026-11-16 多 Agent 协作入口 / Multi-agent coordination entry
+
+用户指定为 `monitor_wall_czl` 建立多 Agent 开发日志、详细路线图和同步交接机制。建账基线为 `codex/windows-native-monitor@24fd012ea8ee130ffb9d42473c489d708c9326c3`；本轮不改变产品行为或发行状态。
+
+新增 [统一状态](coordination/STATUS.md)、[详细路线图](coordination/ROADMAP.md)、[任务与认领](coordination/TASKS.md)、[开发日志](coordination/DEVLOG.md)、[当前交接](coordination/HANDOFF.md)、[决定索引](coordination/DECISIONS.md)及[协作规则](coordination/PLAYBOOK.md)。当前任务/进展/新日志只写 `docs/coordination/state.json`，由 `scripts/agent-sync.py` 加锁并生成五个视图；本执行记录与功能矩阵继续保留原始产品证据。当前 23 项任务包含独立 v4.5 预览线、完整融合 R0–R7 和暂停平台，不按登记任务计数宣称完整产品完成比例。
+
+认领校验负责人、依赖与重叠修改范围；完成要求本轮证据。新增独立路径限定的 CI 检查同步状态及并发认领。适用范围是同一 checkout 的本机文件同步；不同 clone/机器仍需正常 Git 协作，没有后台监视器自动理解聊天或 CI 结果。
+
+本轮验证入口为 `python3 -B tests/test_agent_sync.py`、`python3 -B scripts/agent-sync.py check`、本地新增文档链接检查和 `git diff --check`，具体通过/失败记录写统一任务日志。只验证协作机制，不重跑 Windows/摄像机/产品性能门禁；修复后最终 v4.5 运行和发布身份继续列为待复核，不用本文补造通过或发布声明。
+
+The user selected this project for shared agent progress, roadmap and handoff files. One canonical task/event ledger generates five views under a local lock, with ownership, overlapping-scope, dependency and current-evidence checks. Original product execution history remains intact. Focused consistency/concurrency checks qualify only the coordination tooling; this documentation work does not run or qualify Windows builds, cameras, hardware performance or publication. Cross-clone synchronization still requires the existing reviewed Git workflow.
+
+### 2026-11-16 用户实机反馈与交接 / User feedback and handoff
+
+用户本轮明确反馈：v4.5测试可以、性能占用不错，要求换Agent继续。原生监看路线已获得用户可用性/资源表现的正向定性认可；未提供新的CPU/GPU/内存值、流规格或OBS同口径量化结果，不计为≤OBS、NVDEC或完整v5验收。v4.5实际已发布，最终source24fd012/run43783406841成功；勿把历史失败43744978600当最终状态。完整版本从v5.0起。
+
+v5实际代码已通过PR57合入dev e8e60e2，工作树`/home/czl/projects/monitor_wall_v5`；运行时代码4291556的run43816563388为43便携/43安装/9恢复通过，后续38f99b5仅补3个docs。R2-005与R1-002具体子任务完成，完整R1/Studio/声音/业务迁移/更新/性能仍开放。共享账本继续放主checkout，现有未提交协作修改保留；具体接续命令和边界见`docs/coordination/NEXT-AGENT-HANDOFF-2026-11-16.md`。本轮只整理交接，不发布或修改产品代码。
+
+The user confirms usable v4.5 with good resource usage and requests a new agent. This is positive qualitative physical-use feedback, not a quantitative OBS/NVDEC or complete-v5 pass. Continue from the clean v5 worktree and shared ledger; preserve the integration checkout changes and claim R1-001 next.

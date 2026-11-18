@@ -1,7 +1,7 @@
 # 详细执行路线图 / Execution roadmap
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 166 · 2026-11-18T15:44:56+08:00（UTC+08）
+> 快照版本 211 · 2026-11-19T00:37:12+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -61,7 +61,7 @@
 
 - **R2-001 · 完成**：连接完整 Studio 原子控制、TAKE 和转场；依赖：R1-001。验收：产品文档 revision 与 OBS frontend 执行一致；Preview 不隐式改变 Program；TAKE/转场实际最终像素通过
 - **R2-002 · 待开始**：补齐多场景嵌套、编辑和不限五路布局；依赖：R2-001。验收：层级/裁剪/锁定/嵌套/来源标识保留；保存/重开/冲突和远端一致；不同布局来源共享可解释
-- **R2-003 · 进行中**：完成多轨音频适配、监听和电平；依赖：R1-001。验收：空选择/缺失轨/非空逐轨语义正确；账号监听偏好与输出轨道分开；实际音频无重复输出
+- **R2-003 · 完成**：完成多轨音频适配、监听和电平；依赖：R1-001。验收：空选择/缺失轨/非空逐轨语义正确；账号监听偏好与输出轨道分开；实际音频无重复输出
 - **R2-004 · 待开始**：完成 Program 投影、多屏 DPI 和恢复；依赖：R2-001。验收：Program 与固定 Scene 角色不混淆；多屏/DPI/全屏/重开和撤权覆盖；持久恢复不重复创建来源
 - **R2-005 · 完成**：将原生快捷监看从固定五路扩展为有界可变路数；依赖：PRE-003。验收：1至64路快捷布局，默认五路兼容已发布预览的持久选择；同源复用、授权前置、注销退休及Preview/Program分离保留；真实布局与产品验证区分本地和Windows结果
 
@@ -75,7 +75,9 @@
 - **R3-002 · 待开始**：回接输出、NVR、回放和证据；依赖：R2-001, R2-003。验收：单一媒体/输出所有者；计划/配额/掉盘/seek/导出可验；历史录像、权限和审计保留
 - **R3-003 · 待开始**：回接事件、检测、go2rtc 与网站来源可选组件；依赖：R1-001。验收：按需进程与版本/摘要验证；事件/规则/通知实际接线；网站提取和媒体实播独立证明
 - **R3-004 · 待开始**：回接远端、离线同步、问题中心和诊断；依赖：R2-001。验收：远端输出 adapter 与权限一致；离线冲突不覆盖 Program；有界脱敏支持包可用
-- **V51-008 · 待开始**：把 Program 合成输出验收落到用户实际收到的产物 / accept Program output from the delivered recording and stream；依赖：无。验收：安装后应用里两路不同频率音调在录制文件与回环 WHIP 流中可解码：选中总线有预期音调、未选总线无串音、视频帧持续推进；逐轨静音/增益/偏移生效并如实区分配置到达与声学实测；录像目录失败与 WHIP 断线给出有界错误并回收编码器、服务与 MediaMTX；纯 RTSP 监看时不启动 Program 输出子进程；回执绑定源码 SHA 与安装包。
+- **V51-008 · 进行中**：把 Program 合成输出验收落到用户实际收到的产物 / accept Program output from the delivered recording and stream；依赖：无。验收：安装后应用里两路不同频率音调在录制文件与回环 WHIP 流中可解码：选中总线有预期音调、未选总线无串音、视频帧持续推进；逐轨静音/增益/偏移生效并如实区分配置到达与声学实测；录像目录失败与 WHIP 断线给出有界错误并回收编码器、服务与 MediaMTX；纯 RTSP 监看时不启动 Program 输出子进程；回执绑定源码 SHA 与安装包。
+- **V51-009 · 待开始**：接通原生产品真实 LAN/Web HTTPS 入口 / wire the real LAN HTTPS entry into the native product；依赖：无。验收：supervisor 读取持久化 LAN 开关、私有 IPv4 与端口，生成来源允许列表与 Caddy 配置并作为受管子进程运行；状态回执给出 https URL、证书路径与仅展示的防火墙命令；Linux 单元校验配置/来源/JSON，Windows 安装态验证真实局域网访问
+- **V51-010 · 进行中**：修已安装 LAN 门禁的首账号流程与无私网地址诚实降级 / fix installed LAN gate first-account flow and honest no-private-address degradation；依赖：无。验收：门禁按真实产品流程先经回环 /api/v1/auth/setup 创建首账号（201）并证明重复注册 409，之后 LAN 与回环用同一账号建立独立会话；无私有 IPv4 的运行器记录 lanHttpsQualified=false + skipReason，且仍证明不启动监听、无 URL、本机消费端可用；安装脚本复制回执真实值而非写死 true；不把未实测的第二设备/交换机/Caddy 目标机安装写成通过
 
 ## R4 · 旧数据迁移、更新与生命周期
 
@@ -96,6 +98,7 @@
 完成条件：自动化长稳和进程成本可追溯；真实设备/逐路硬解/完整性能保持独立待验。
 
 - **R5-001 · 待开始**：完成完整功能进程/安装成本与自动化长稳；依赖：R2-002, R2-003, R2-004, R3-001, R3-002, R3-003, R3-004, R4-002。验收：区分 setup、logical、allocated 和用户数据；统计所有产品所属进程及功能增量；合成媒体长稳/故障注入有同源码证据
+- **V51-011 · 进行中**：实现安装态长稳门禁并接入 soak_minutes / implement the installed soak gate behind soak_minutes；依赖：无。验收：已安装产品在五路监看持续期间每分钟重新询问逐路停滞检测；进程树 CPU/私有内存/句柄/子进程集合有同源码回执；停滞、进程增减、内存或句柄增长超限即失败
 
 ## R6 · 冻结完整 Release 候选
 
@@ -107,6 +110,7 @@
 - **V51-004 · 完成**：补齐 v5.1 稳定发布身份与 Tag／版本映射 / add v5.1 stable release identity and tag mapping；依赖：V51-002。验收：release_policy 能区分 rc 候选与稳定成品身份，稳定身份只有在升级与迁移合格并有回执引用时成立；tag_for_version 按仓库规则映射（5.1.0→v5.1、5.1.2→v5.1.2、5.1.0-rc.N→v5.1.0-rc.N、dev 不可发布），本机测试通过并更新发布文档；不创建 Tag/Release/feed 变更。
 - **V51-005 · 进行中**：候选发布脚本改用统一 Tag 映射与 main 祖先校验 / use shared Tag mapping and main ancestry check in candidate publisher；依赖：无。验收：候选与正式版 Tag 一律来自 release_policy.tag_for_version；--final 必须提供已登记验收并从已审查 main 可达的提交，否则拒绝；不覆盖已存在 Tag/Release；本机测试覆盖正反对照，不发生真实网络调用。
 - **V51-006 · 待开始**：接通稳定打包身份与验收文件单一契约 / wire stable packaging identity with one acceptance-file contract；依赖：V51-004。验收：stage --stable 与 update_manifest 稳定版本都要求仓库外验收 JSON（四项验收为 true 且有界回执位置），Tag 一律来自 tag_for_version；候选路径行为不变；本机正反对照测试通过。
+- **V51-012 · 进行中**：编写 v5.1 候选发布说明并更新功能矩阵证据 / write the v5.1 candidate release notes and update the parity matrix；依赖：无。验收：发布说明绑定实际候选版本、源码 SHA、安装器字节与摘要；矩阵按实际合入更新 OUTPUT/REMOTE/AUDIO/BACKUP/OPS 行，并把未接线与未实测项写具体缺口 / notes bind the real candidate identity and matrix rows state concrete gaps
 
 ## R7 · 集中实机验收与稳定交付
 

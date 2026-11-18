@@ -1,6 +1,12 @@
 # Roadmap / 项目路线图
 
-> Last updated / 最后更新：2026-10-06
+> Current coordination entry updated / 当前协作入口更新：2026-11-16；下方历史里程碑记录保留原日期。
+
+## 当前执行入口 / Current execution entry
+
+多 Agent 共用的[当前进度](docs/coordination/STATUS.md)、[详细任务路线图](docs/coordination/ROADMAP.md)、[认领台账](docs/coordination/TASKS.md)和[开发日志](docs/coordination/DEVLOG.md)由同一 `state.json` 快照生成；按[协作规则](docs/coordination/PLAYBOOK.md)更新。当前优先 v4.5 Windows x64 原生监看预览，完整融合 R0–R7 仍开放；Android/容器交付继续暂停。源码修复、历史 CI、最终资格和公开发布分别记录。
+
+The linked generated views are the current shared execution record. The historical milestone narrative below does not override the latest explicit user scope or establish a new release/qualification result.
 
 This roadmap describes milestone order and acceptance gates, not promised release dates. Priorities may change based on validation results and maintainer capacity.
 

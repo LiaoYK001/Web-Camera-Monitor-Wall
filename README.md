@@ -1,5 +1,7 @@
 # Web Camera Monitor Wall
 
+**多 Agent 开发入口 / Multi-agent development:** [当前进度](docs/coordination/STATUS.md) · [详细路线图](docs/coordination/ROADMAP.md) · [任务认领](docs/coordination/TASKS.md) · [开发日志](docs/coordination/DEVLOG.md) · [接手与同步规则](docs/coordination/PLAYBOOK.md)。当前 Windows 原生预览与完整融合的状态从这里接续；下文旧版发行介绍保留其历史范围。
+
 Windows 10/11 x64 Electron 完整客户端的实现、构建、自动更新与验收要求见 [Windows 桌面客户端](docs/windows-desktop.md)。当前发行版暂不签名；未来可选签名步骤见 [Windows 代码签名](docs/windows-signing.md)。容器部署继续保留；Windows 安装与实际媒体验收状态在该文档中单独记录。
 
 独立 Android 客户端位于 `android/`，复用 WebUI 并连接 Windows／容器后端；v4.0 引入正式自签 APK 与确认安装的应用内更新。安装、MuMu/ADB 实测及签名兼容边界见 [Android 客户端](docs/android-client.md)与[Android 更新](docs/android-updates.md)。The independent Android client connects to existing product backends; v4.0 adds a stable self-signed APK and confirmed in-app updating. It remains separate from the Qt client.

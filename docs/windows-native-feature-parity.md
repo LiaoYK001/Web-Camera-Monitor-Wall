@@ -1,5 +1,7 @@
 # Windows WebOBS Wall 功能迁移矩阵 / Feature parity matrix
 
+当前多 Agent 进展和认领见[统一台账](coordination/STATUS.md)及 [R0-002](coordination/TASKS.md)。本矩阵继续保存每项入口/验证证据；行内旧候选日期不自动代表最新源码或完整迁移已验收。Current task ownership and handoff live in the shared ledger; candidate-specific evidence below keeps its original scope.
+
 2026-11-11。基线 `codex/windows-native-monitor@4678f3a`，PR #53 面向 `dev`。旧完整 Windows 产品与已发布原型分别核对，用户反馈 dev.53 原生画面正常，最终完整产品的性能和个人数据升级待集中验收。
 
 执行依据为 [完整任务书](windows-webobs-wall-release-plan-2026-11-11.md)。状态按“旧实现可用、原生未接线”“接线开发中”“自动化通过”“最终设备待验收”记录，每项保留实际入口和证据。

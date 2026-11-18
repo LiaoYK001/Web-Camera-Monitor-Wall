@@ -1,7 +1,7 @@
 # 任务与认领 / Tasks and ownership
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 166 · 2026-11-18T15:44:56+08:00（UTC+08）
+> 快照版本 211 · 2026-11-19T00:37:12+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -17,7 +17,7 @@
 | R1-001 | P1 | 完成 | — | 完成全入口认证、恢复与执行时权限审计 | R0-002 |
 | R2-001 | P1 | 完成 | — | 连接完整 Studio 原子控制、TAKE 和转场 | R1-001 |
 | R2-002 | P1 | 待开始 | — | 补齐多场景嵌套、编辑和不限五路布局 | R2-001 |
-| R2-003 | P1 | 进行中 | deepseek-v51-20261118-01 | 完成多轨音频适配、监听和电平 | R1-001 |
+| R2-003 | P1 | 完成 | — | 完成多轨音频适配、监听和电平 | R1-001 |
 | R2-004 | P1 | 待开始 | — | 完成 Program 投影、多屏 DPI 和恢复 | R2-001 |
 | R3-001 | P2 | 待开始 | — | 回接设备控制 PTZ、快照与对讲 | R1-001 |
 | R3-002 | P2 | 待开始 | — | 回接输出、NVR、回放和证据 | R2-001, R2-003 |
@@ -46,8 +46,12 @@
 | V51-005 | P1 | 进行中 | deepseek-v51-20261118-01 | 候选发布脚本改用统一 Tag 映射与 main 祖先校验 / use shared Tag mapping and main ancestry check in candidate publisher | — |
 | V51-006 | P1 | 待开始 | — | 接通稳定打包身份与验收文件单一契约 / wire stable packaging identity with one acceptance-file contract | V51-004 |
 | V51-007 | P1 | 进行中 | deepseek-v51-20261118-01 | 加固双目录加密备份的中间故障一致性与安全重试 / harden dual-directory backup swap consistency and safe retry | — |
-| V51-008 | P1 | 待开始 | — | 把 Program 合成输出验收落到用户实际收到的产物 / accept Program output from the delivered recording and stream | — |
+| V51-008 | P1 | 进行中 | deepseek-v51-20261118-01 | 把 Program 合成输出验收落到用户实际收到的产物 / accept Program output from the delivered recording and stream | — |
 | COORD-008 | P1 | 完成 | — | 记录 CI 下载临时目录约定 / document temporary directories for CI downloads | — |
+| V51-009 | P0 | 待开始 | — | 接通原生产品真实 LAN/Web HTTPS 入口 / wire the real LAN HTTPS entry into the native product | — |
+| V51-010 | P1 | 进行中 | deepseek-v51-20261118-01 | 修已安装 LAN 门禁的首账号流程与无私网地址诚实降级 / fix installed LAN gate first-account flow and honest no-private-address degradation | — |
+| V51-011 | P1 | 进行中 | deepseek-v51-20261118-01 | 实现安装态长稳门禁并接入 soak_minutes / implement the installed soak gate behind soak_minutes | — |
+| V51-012 | P1 | 进行中 | deepseek-v51-20261118-01 | 编写 v5.1 候选发布说明并更新功能矩阵证据 / write the v5.1 candidate release notes and update the parity matrix | — |
 
 ## COORD-001 · 建立统一任务账本、开发日志、认领和交接机制
 
@@ -153,11 +157,11 @@
 
 - 修改范围：`native-host/src`, `web/src`
 - 验收：空选择/缺失轨/非空逐轨语义正确；账号监听偏好与输出轨道分开；实际音频无重复输出
-- 下一步：读取 rc.31 门禁回执；通过后双语合并 #67 并把 #70/#69 转 dev
+- 下一步：已由 #67 承接 Program 输出验收
 - 阻塞：无
-- 证据：https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44211809863；gh run view 44224335029 --log-failed：failurePhase=native-program-take，programApplyState=applied，programSceneId=fixture-alt，audioSources[0].sourceId=fixture-alt.fixture-alt-source，peakDbfs=-20.866，mixers=2，available=true；obs 日志显示 WebOBS audio mix fixture-1 断开后 2.3s 重连。；本机 python3 -B native-host/tests/test_build_contract.py 44/44 OK（两树）；native-host/tests/test_complete_supervisor.py PASS；test_product_package.py 6/6 OK；pixel_windows.tone_probe 实测 /tmp 合成双音轨文件返回 (2895.2,439.8)/(2887.5,879.8)，band_rms 混合样本 2620/1727、带外高通 20.9；py_compile 两个测试文件通过；git diff --check 通过。Windows rc.25 run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44236342016（head 98e1e99，当前步骤 11 编译 OBS 前端/插件）。；https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44236342016 steps 13-14 success；codex/v51-r3-output e20dd28 已推送；rc.31 run 44261174753 派发（rc.31 未被 Tag/Release 占用）；rc.27/rc.30 回执 recordingError=recording-start-failed 且 last_error 为空；rc.29 在 program-after-take 出现 window-identity 失效
-- 最新记录：rc.31 派发：#67 head e20dd28（掩码修复+启动预检+selectedAudioTracks+采集身份重试）；rc.27/rc.30 录像启动失败与 rc.29 投影窗口身份失效均已定位到具体阶段
-- 最近更新：2026-11-18T15:44:56+08:00
+- 证据：https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44211809863；gh run view 44224335029 --log-failed：failurePhase=native-program-take，programApplyState=applied，programSceneId=fixture-alt，audioSources[0].sourceId=fixture-alt.fixture-alt-source，peakDbfs=-20.866，mixers=2，available=true；obs 日志显示 WebOBS audio mix fixture-1 断开后 2.3s 重连。；本机 python3 -B native-host/tests/test_build_contract.py 44/44 OK（两树）；native-host/tests/test_complete_supervisor.py PASS；test_product_package.py 6/6 OK；pixel_windows.tone_probe 实测 /tmp 合成双音轨文件返回 (2895.2,439.8)/(2887.5,879.8)，band_rms 混合样本 2620/1727、带外高通 20.9；py_compile 两个测试文件通过；git diff --check 通过。Windows rc.25 run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44236342016（head 98e1e99，当前步骤 11 编译 OBS 前端/插件）。；https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44236342016 steps 13-14 success；codex/v51-r3-output e20dd28 已推送；rc.31 run 44261174753 派发（rc.31 未被 Tag/Release 占用）；rc.27/rc.30 回执 recordingError=recording-start-failed 且 last_error 为空；rc.29 在 program-after-take 出现 window-identity 失效；PR #66 merged into dev (merge commit be9c231 'merge: 合并v5.1原生多轨音频混音与电平')；Windows run 44224335029 之后的 rc.32 run 44266163975 门禁内 programAudio mixers=2、peakDbfs=-20.02、programRecordingBandRms below600=1380.5/above660=908.8（多轨总线证据）
+- 最新记录：多轨音频已双语合并进 dev（PR #66），本机与 Windows 门禁证据已在案
+- 最近更新：2026-11-18T17:20:59+08:00
 
 ## R2-004 · 完成 Program 投影、多屏 DPI 和恢复
 
@@ -413,11 +417,11 @@
 
 - 修改范围：`native-host/scripts/publish_candidate.py`, `native-host/tests/test_candidate_publish.py`, `native-host/scripts/release_policy.py`, `native-host/scripts/stage.py`, `native-host/scripts/update_manifest.py`, `native-host/tests/test_stable_packaging.py`, `native-host/tests/test_update_manifest.py`
 - 验收：候选与正式版 Tag 一律来自 release_policy.tag_for_version；--final 必须提供已登记验收并从已审查 main 可达的提交，否则拒绝；不覆盖已存在 Tag/Release；本机测试覆盖正反对照，不发生真实网络调用。
-- 下一步：#67 合入 dev 后 rebase codex/v51-publish-chain 到新 dev 并复跑本机发布链测试；正式稳定链仍需真实验收 JSON 才可用。
+- 下一步：#67 合入 dev 后 rebase 到 dev（publish_candidate.py 为 add/add，保留 #69 的超集实现），再复跑发布链测试；发布链先验证到待发布状态，不自动发布
 - 阻塞：无
-- 证据：分支 codex/v51-publish-chain 基于 codex/v51-release-identity@f176fba；PR #69 (draft); .worktrees/v51-publish@6301ae7; test_candidate_publish.py PASS; test_stable_release_identity/test_complete_release_policy/test_preview_release PASS; test_build_contract 43/44（本树未初始化 obs 子模块）；本机 PASS：test_stable_packaging/test_candidate_publish/test_update_manifest/test_stable_release_identity/test_complete_release_policy/test_preview_release；test_build_contract 43/44（本树未初始化 obs 子模块）；PR #69 head a0a6ae6; 本机 release-chain 测试 6 个 PASS；test_build_contract 43/44（本树未初始化 obs 子模块）；https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44240683072；.worktrees/v51-publish@99f8f30；本机 test_candidate_publish/test_stable_packaging PASS；.worktrees/v51-publish@dc6d1b4；native-host/tests/test_build_contract.py 44 tests OK；test_candidate_publish/test_stable_packaging/test_update_manifest/test_stable_release_identity PASS；PR #69 全部 checks SUCCESS（含 windows-native-control-contracts、windows-update-contracts、offline staging）
-- 最新记录：补齐 #69 的本机重验：初始化固定的 OBS 子模块后 test_build_contract 44/44；发布链否定用例补全（验收 JSON 缺失/非法/非对象/其他仓库/未写 sourceRevision；latest.yml 单独 size 不符、单独 sha512 不符、version 不符、缺 size、文件名非 latest.yml），并把未绑定源码版本的验收回执改为失败关闭。发布链只验证到待发布，未创建 Tag/Release/稳定 feed。
-- 最近更新：2026-11-18T14:58:48+08:00
+- 证据：分支 codex/v51-publish-chain 基于 codex/v51-release-identity@f176fba；PR #69 (draft); .worktrees/v51-publish@6301ae7; test_candidate_publish.py PASS; test_stable_release_identity/test_complete_release_policy/test_preview_release PASS; test_build_contract 43/44（本树未初始化 obs 子模块）；本机 PASS：test_stable_packaging/test_candidate_publish/test_update_manifest/test_stable_release_identity/test_complete_release_policy/test_preview_release；test_build_contract 43/44（本树未初始化 obs 子模块）；PR #69 head a0a6ae6; 本机 release-chain 测试 6 个 PASS；test_build_contract 43/44（本树未初始化 obs 子模块）；https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44240683072；.worktrees/v51-publish@99f8f30；本机 test_candidate_publish/test_stable_packaging PASS；.worktrees/v51-publish@dc6d1b4；native-host/tests/test_build_contract.py 44 tests OK；test_candidate_publish/test_stable_packaging/test_update_manifest/test_stable_release_identity PASS；PR #69 全部 checks SUCCESS（含 windows-native-control-contracts、windows-update-contracts、offline staging）；native-host/tests/test_candidate_publish、test_stable_packaging、test_update_manifest、test_stable_release_identity、test_build_contract(44)、test_complete_release_policy 全 PASS；/tmp/v51chain 场景 A-H、F1/F2 实际输出；同一 /tmp/v51chain 场景 A-H、F1/F2 的实际命令输出；cmake -S native-host/tests/control-auth + ctest：18/18 通过（Linux, Ninja, Release）；cmake -S native-host -DWEBOBS_NATIVE_BUILD_TESTS=ON + ctest：8/8 通过；固定 OBS 32.1.2 构建 libobs（98/98）并导出 SDK，native-host/tests/real-loader ctest 1/1 通过（本机无 Xvfb 也能跑，标签 no-gpu/no-media）；本机 release 测试全 PASS：test_candidate_publish、test_stable_packaging、test_update_manifest、test_stable_release_identity、test_complete_release_policy、test_preview_release；test_build_contract 44 OK；control-auth CTest 18/18；native-host graph CTest 8/8；固定 OBS 32.1.2 libobs 构建 98/98 + real-loader CTest 1/1；codex/v51-publish-chain head 0b0c7cc；test_candidate_publish/test_stable_packaging/test_update_manifest 本机全部 PASS（Tag v5.1 ↔ 版本 5.1.0 映射由共享策略给出）；native-host/tests/test_candidate_publish.py PASS；test_stable_packaging.py PASS（v5.1↔5.1.0 与 rc Tag 映射）；gh pr 69 head=codex/v51-publish-chain@21b0d00；#69 head 21b0d00 已含 dev tip 4b4e512（#68 已合并）且 origin/dev 为其祖先；OBS 子模块固定 fb4d98bf(32.1.2)、go2rtc b5948cfb(v1.9.14) 已初始化；补跑 native-host/tests/test_build_contract.py 44 OK、test_complete_release_policy.py PASS、test_stable_release_identity.py PASS、test_preview_release.py 4 OK、test_component_size_report.py PASS、test_compare_runtime_sizes.py OK、tests/test-immutable-release-assets.sh PASS、test_candidate_publish.py/test_stable_packaging.py/test_update_manifest.py/test_release_identity.py(8, skip4) 全绿；python3 native-host/tests/test_candidate_publish.py PASS；test_stable_packaging.py PASS(5.1.0→v5.1 / rc 候选独立)；test_update_manifest.py PASS；tests/test_release_identity.py 8 OK(4 skip)
+- 最新记录：#69 分支本地复跑发布链：候选 Tag 取自共享策略、稳定发布需验收 JSON 与 main 祖先、pending/verify-only 不写任何内容；安装包与 latest.yml 大小/SHA-512 一致。待 #67 合入 dev 后 rebase（publish_candidate.py add/add，保留 #69 超集）。
+- 最近更新：2026-11-18T23:21:25+08:00
 
 ## V51-006 · 接通稳定打包身份与验收文件单一契约 / wire stable packaging identity with one acceptance-file contract
 
@@ -435,19 +439,19 @@
 - 验收：两目录交换的崩溃/失败后要么完全旧状态要么完全新状态；中断日志可被下次 restore 自动收敛或明确拒绝；失败不残留 activated 目录；native 存档必须成对恢复；config-only 旧存档仍可用；本机 unittest 覆盖中间失败与崩溃恢复。
 - 下一步：#67 合入 dev 后把 #70 base 改为 dev 并派发带 backup_restore_windows 门禁的 Windows 运行。
 - 阻塞：无
-- 证据：分支 codex/v51-r4-backup-consistency 基于 codex/v51-r3-output@ae4fce7；本机 tests/test_encrypted_backup.py 10 tests OK（libsodium 可用）；native-host/tests/test_native_updater.py 与 test_migrate_legacy.py PASS；本机 tests/test_encrypted_backup.py 10 OK；native-host/tests/test_native_updater.py PASS（含新增错误码映射断言）；PR #70 checks 进行中；python3 -B native-host/tests/test_complete_supervisor.py PASS（含中断交换收敛契约）；python3 -B tests/test_encrypted_backup.py 10/10；python3 -B native-host/tests/test_native_updater.py 3 项 PASS；本任务书 Windows 门禁待 CI 回执；.worktrees/v51-backup@7a7d64d；native-host/tests/test_complete_supervisor.py PASS；tests/test_encrypted_backup.py 10/10；native-host/tests/test_native_updater.py 3 PASS；PR #70 checks 将随 force-push 重跑；.worktrees/v51-backup@4664251；test_complete_supervisor PASS、test_encrypted_backup 10/10、test_native_updater 3 PASS
-- 最新记录：#70 再次同步到 #67 最新 head（32e8d18），远端 head 现为 4664251；本机契约测试仍全通过。
-- 最近更新：2026-11-18T15:03:17+08:00
+- 证据：分支 codex/v51-r4-backup-consistency 基于 codex/v51-r3-output@ae4fce7；本机 tests/test_encrypted_backup.py 10 tests OK（libsodium 可用）；native-host/tests/test_native_updater.py 与 test_migrate_legacy.py PASS；本机 tests/test_encrypted_backup.py 10 OK；native-host/tests/test_native_updater.py PASS（含新增错误码映射断言）；PR #70 checks 进行中；python3 -B native-host/tests/test_complete_supervisor.py PASS（含中断交换收敛契约）；python3 -B tests/test_encrypted_backup.py 10/10；python3 -B native-host/tests/test_native_updater.py 3 项 PASS；本任务书 Windows 门禁待 CI 回执；.worktrees/v51-backup@7a7d64d；native-host/tests/test_complete_supervisor.py PASS；tests/test_encrypted_backup.py 10/10；native-host/tests/test_native_updater.py 3 PASS；PR #70 checks 将随 force-push 重跑；.worktrees/v51-backup@4664251；test_complete_supervisor PASS、test_encrypted_backup 10/10、test_native_updater 3 PASS；codex/v51-r4-backup-consistency@d0b9506：prepare() 顺序为独占锁 → protect → recover_interrupted_restore() → 目录创建/ini；Linux 侧 test_complete_supervisor.py 中断交换契约 PASS；Windows 安装态门禁（两次目录交换之间终止恢复进程 → 从已安装入口再启动 → 成对恢复/可重试/仅含 config 的旧归档保留原生档案）尚未有 CI 回执，不写成通过；本机 python3 -B tests/test_encrypted_backup.py 10 OK；native-host/tests/test_complete_supervisor.py PASS；test_build_contract.py 44 OK（本工作树已初始化 obs/obs-studio 子模块）；backup_restore_windows.py ast 语法校验通过（需 Windows 已安装运行时才能执行）；.worktrees/v51-combined 试合并后 test_complete_supervisor.py PASS（含 'converged the interrupted restore as completed'）、tests/test_encrypted_backup.py 10 OK、native-host/tests/test_native_updater.py 4 PASS；rebase 后 PR #70 head 4d60479（base #67 535a9af），native-host/tests/backup_restore_windows.py 由 workflow 步骤执行，证据待 rc.41 run 44291812392；git rebase a4d2512 clean；codex/v51-r4-backup-consistency=77958c3；gh pr 70 base=codex/v51-r3-output；PR#70 rebase 到新 #67 head（770b0e1，4 个自有提交无冲突）；tests/test_encrypted_backup.py 10 OK；native-host/tests/test_complete_supervisor.py PASS（含 'converged the interrupted restore as completed' 与二次 prepare 不被中断日志拒绝、无 run/restore-recovery.json）；复核 product_supervisor.prepare() 顺序：独占锁+protect 之后、创建 config/native-profile 目录与读取 user.ini 之前调用 recover_interrupted_restore()
+- 最新记录：已确认普通产品启动接线满足要求；安装态门禁 backup_restore_windows.py 改为直接启动 bin/webobs-wall.exe 收敛，需 Windows 完整候选运行验证
+- 最近更新：2026-11-18T20:54:19+08:00
 
 ## V51-008 · 把 Program 合成输出验收落到用户实际收到的产物 / accept Program output from the delivered recording and stream
 
 - 修改范围：`native-host/src/product_output.cpp`, `native-host/src/product_window.cpp`, `native-host/src/product_scene.hpp`, `native-host/tests/product_windows.py`, `native-host/tests/pixel_windows.py`
 - 验收：安装后应用里两路不同频率音调在录制文件与回环 WHIP 流中可解码：选中总线有预期音调、未选总线无串音、视频帧持续推进；逐轨静音/增益/偏移生效并如实区分配置到达与声学实测；录像目录失败与 WHIP 断线给出有界错误并回收编码器、服务与 MediaMTX；纯 RTSP 监看时不启动 Program 输出子进程；回执绑定源码 SHA 与安装包。
-- 下一步：读 rc.27（旁证）与 rc.29/rc.30 结果；rc.29 预期会在偏移门禁因空引用失败，只取此前门禁的旁证。
+- 下一步：rc.33 绿后双语合并 #67 进 dev；#71/#70 base 改 dev；目标机声学/串音与安装包绑定仍在用户集中验收，不得写成通过
 - 阻塞：无
-- 证据：PR #67 head de8eebe（base dev）；rc.26 失败原因 MSVC C2664（QString→const char*）已用具名 QByteArray 修复；rc.28 失败原因 product_output.cpp(412) C2664（三目临时量绑到 QString&）已修复；https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44255084712；head 32e8d18；rc.30 run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44255867749；本机 /tmp/tonecheck 双轨与单轨文件解码对照
-- 最新记录：静态复核发现并修好两处门禁缺陷：逐轨偏移等待条件对可能缺失的 audioSources 条目直接 .get 会抛 AttributeError（改为显式探针重试）；停止后资源对照把场景逐轨混音 ffmpeg.exe 也断言为空（改为 MediaMTX 必须为 0 且场景混音进程集合与推流前一致）。另在 Linux 用 ffmpeg 实解码复现 tone_amplitude：存在≈4095、不存在≈0、gain 0.2 比 0.200。
-- 最近更新：2026-11-18T15:03:17+08:00
+- 证据：PR #67 head de8eebe（base dev）；rc.26 失败原因 MSVC C2664（QString→const char*）已用具名 QByteArray 修复；rc.28 失败原因 product_output.cpp(412) C2664（三目临时量绑到 QString&）已修复；https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44255084712；head 32e8d18；rc.30 run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44255867749；本机 /tmp/tonecheck 双轨与单轨文件解码对照；rc.32 run 44266163975 failurePhase=program-recording-default-bus；此前 program-recording-decodes-both-fixture-pitches 通过（below600=1380.5/above660=908.8, mask=2）；本机 Qt6 + 固定 libobs 32.1.2 SDK + 固定 obs-frontend-api.h：product_window/product_output/product_scene/product_media -fsyntax-only 全部 exit=0；run 44271844168 = 5.1.0-rc.33 @ 0b6edc2 in_progress（product_mode/complete）；codex/v51-r3-output@a16f1f9 = run 44275460558 (rc.34)；@867c11b = run 44276526382 (rc.35)；Qt6 + libobs 32.1.2 SDK -fsyntax-only product_window.cpp exit=0；test_build_contract.py 44 OK；rc.33 失败断言 program-recording-default-bus 已由 a16f1f9（读 GET /api/v1/studio/runtime 回执）与 867c11b（瞬时 apply 有限重试 4 次）覆盖；两个运行均为 product_mode/complete；rc.34 run 44275460558 failurePhase=program-recording-default-bus, failureDetail=KeyError: 'programDefaultBusApplyAttempt'（lastCheckpoint=program-recording-audio-decoded，说明双音轨录像解码已通过）；修复提交 1be9c2f 已推送，rc.36 run 44280347568 在其上派发；run 44280347568; branch codex/v51-docs@f967634; commit 296f2bc；run 44280347568 failed; commit c250c85; runs 44285491534/44285510872；535a9af（PR #67）新增 lastLock/lockCode/renewTransient 分类，门禁在像素采集前直接报告撤销类别；Windows rc.40 run 44291675017 已派发在 codex/v51-r3-output 验证；gh run 44296843744 回执 native-product-entry-ui.json：failurePhase=program-recording-default-bus、programRecordingDefaultBus={below600Hz:0,above660Hz:0,audioTrackMask:1}、obsDiagnosticLines 显示 12:00:14.215 开始写文件、12:00:17.321 MP: Failed to open media、12:00:19.594 Reconnected；revert a4d2512（videoInputs.serial 帧计数门槛在 Windows 上 30s 全部走平而像素阶段本身通过，rc.44 因此误判停滞；像素内容仍是连续性证据）b447c48；23886e4 首次录像与 WHIP 开播前也调用 wait_program_mix_audible；python3 -B 语法 AST OK；rc.46 run 44308229704 @23886e4 product_mode=true complete=true 已派发，旧 head 的 44307720185 已取消以保证被测头与合并头一致；rc.46(23886e4,run 44308229704)两个 Program 像素阶段首次通过、两次录像首次解出双音调（programRecordingBandRms 1387.9/912.4 mask2；programRecordingDefaultBus 1381.6/910.1 mask1；programMixLeadIn 47ms/7328ms/15ms 已披露）；随后停在 program-streaming：programOutput streaming=false、mediaMtxRunning=false、streamPublishUrl 与 streamError 同时为空。定位为私有中继把 WHIP/WebRTC 写死 8889（产品分发网关 MediaMTX 也绑 8889，且 Windows 预留动态端口段可使固定端口在无人监听时不可绑定），拒绝只回给按钮文案，可观察状态看起来像空闲且无失败；rc.46(5dfcde8,run 44314586162)失败在 program-after-take：Frozen final pixels on slot 5（8 个样本槽位5计数恒为1，temporalProgress=false）；诊断显示 5 个推流全 alive、5 条 RTSP 路径全部 flowing、stalledPaths 为空、宿主对 6 个输入全部 stalledMs=0、wallItems=5/programItems=2、fixture-5 槽位 uuid serial=1037 而同批其他输入 1140-1148。同一 head 的上一次运行(23886e4)同一阶段通过（slot5 计数 5,5,16,16,16,27,27,1），因此这是间歇性且当时无法判定成因；rc.46 artifact receipt(run 44323126258): lastCheckpoint=pixels-program-after-take-captured, progressError=Frozen final pixels on slot 2, inputSerialDelta 6/6 advanced, stalledMsAfterCapture 0, publishers alive, stalledPaths empty；rc.48 receipt artifact(sha 9a694ce,version 5.1.0-rc.46): lastCheckpoint=pixels-program-before-take-observed, programPixelInputWait=null；rc.47(447dbba) 同阶段同症状；重基后本机 test_build_contract/test_product_lan/test_encrypted_backup/test_complete_supervisor/test_native_updater/test_compare_runtime_sizes/test_complete_release_policy 全部 OK；新 run 44339344891 @4f38150 product_mode+complete+measure_obs_baseline+upgrade_previous, soak_minutes=0；run 44339344891 receipt native-product-entry-ui.json; commit a92d11b; run 44349201714
+- 最新记录：rc.50(run 44339344891)在 pixels-program-before-take-observed 失败：点名一个 OBS 报告 showing/active/PLAYING(mediaState=1) 但 serial 始终为 0 的输入(stalledMs=1370)。宿主每 2s 刷新一次逐输入健康，stalledMs 只能按 2s 刻度变化，且刚创建的 Program 专用源在媒体打开前 serial 必为 0，两者都不是画面冻结，旧计数器门无法判定。已提交 a92d11b(#67 codex/v51-r3-output)：等待改为实测推进(两次≥2.5s 快照必须出现更新的帧计数，仅覆盖已真正计过帧的输入)，零帧/仍在打开的输入改为记录并命名；状态快照新增 name/removed；回执新增 inputWaitLogLines(点名该输入的 OBS 日志行/MP: 行)、fixtureServerLogTail(脱敏 MediaMTX 推流日志尾部)与更多 media_playback 标记。已按顺序 rebase #70(78e8b60)→#71(3147f40)→#74(2e7695d) 并推送，从栈顶 codex/v51-r5-soak 派发 rc.51 run 44349201714(product_mode=true,complete=true,measure_obs_baseline=true,upgrade_previous=true,soak_minutes=0)。本地 test_build_contract 45 项、test_product_lan 24 项、test_encrypted_backup 10 项通过；本机无 Qt6/MSVC，C++ 仍以 Windows CI 编译为准。剩余：读 rc.51 回执判定零帧输入到底是哪一层；若仍是产品侧的“打开但静默”，需在宿主加有界重开并如实登记。
+- 最近更新：2026-11-19T00:37:12+08:00
 
 ## COORD-008 · 记录 CI 下载临时目录约定 / document temporary directories for CI downloads
 
@@ -458,3 +462,43 @@
 - 证据：AGENTS.md:42；Bash 使用 gh 替身验证两次执行得到不同空目录，带空格的产物名和目录值保持为独立参数；git diff --check 通过
 - 最新记录：已在 AGENTS.md 写入中英双语 CI 下载目录规则和 Bash 示例
 - 最近更新：2026-11-18T15:41:30+08:00
+
+## V51-009 · 接通原生产品真实 LAN/Web HTTPS 入口 / wire the real LAN HTTPS entry into the native product
+
+- 修改范围：`native-host/scripts`, `native-host/tests`
+- 验收：supervisor 读取持久化 LAN 开关、私有 IPv4 与端口，生成来源允许列表与 Caddy 配置并作为受管子进程运行；状态回执给出 https URL、证书路径与仅展示的防火墙命令；Linux 单元校验配置/来源/JSON，Windows 安装态验证真实局域网访问
+- 下一步：#67 合入后 rebase 到 dev 并补原生窗口开关；随后随完整候选派发一次带该门禁的 Windows 运行
+- 阻塞：无
+- 证据：codex/v51-r3-004-lan@13bc640 已推送；native-host/tests/test_product_lan.py 24 项通过；test_build_contract.py 44 项通过（已在该工作树初始化 obs/obs-studio 与 go2rtc/go2rtc 子模块）；test_complete_supervisor.py PASS；git diff --check 通过；codex/v51-r3-004-lan@97b4efe 已推送；test_product_lan 24 PASS、test_product_package OK、test_build_contract 44 OK、test_complete_supervisor PASS、test_native_updater/test_migrate_legacy PASS
+- 最新记录：新增已安装态局域网入口门禁 lan_entry_windows.py 并接入 NSIS 完整候选验收与内部回执上传：已验证 TLS 健康检查、外来 Origin 拒绝、LAN 与回环两客户端独立会话/退出、禁用后重启不再监听、退出无残留进程。本机全部相关测试再次通过。
+- 最近更新：2026-11-18T16:02:14+08:00
+
+## V51-010 · 修已安装 LAN 门禁的首账号流程与无私网地址诚实降级 / fix installed LAN gate first-account flow and honest no-private-address degradation
+
+- 修改范围：`native-host/tests/lan_entry_windows.py`
+- 验收：门禁按真实产品流程先经回环 /api/v1/auth/setup 创建首账号（201）并证明重复注册 409，之后 LAN 与回环用同一账号建立独立会话；无私有 IPv4 的运行器记录 lanHttpsQualified=false + skipReason，且仍证明不启动监听、无 URL、本机消费端可用；安装脚本复制回执真实值而非写死 true；不把未实测的第二设备/交换机/Caddy 目标机安装写成通过
+- 下一步：随完整候选（含 #71）派发带 native-product-lan.json 的 Windows 运行；真实第二台设备验收仍待用户目标机
+- 阻塞：无
+- 证据：python3 -B native-host/tests/test_product_lan.py 24 OK；test_build_contract.py 44 OK；lan_entry_windows.py 本机仅 ast 语法校验（需 Windows 已安装运行时）；PR #71 描述已更新；desktop/scripts/test-native-product-install.ps1 改为 report.lanEntryQualified/lanEntrySkipReason 取自回执真实值（该文件在 V51-007 声明范围内，一并在此记录）；test_product_lan.py 24 OK（含新的 busy-port 用例断言本机回环 Origin 保持、不写 Caddy 文档、failure_reason 仍为空）；test_complete_supervisor.py PASS；02b3ff2；容器内 Qt 6.11 下 native-product-lan-switch-test PASS；test_product_lan.py 24 项 OK；gh run 44300526460 conclusion=success；podman v51qt 容器内 Qt6.11 offscreen 运行 product_lan_switch_test 通过；g++ -fsyntax-only -DWEBOBS_NATIVE_PRODUCT_MODE product_window.cpp 无错误；PR#71 rebase 至 3161e9a（11 个自有提交）；python3 -B native-host/tests/test_product_lan.py 24 OK；rc.47 run 44307757343 在旧 head fabec5d 上仍在跑（同一 product_mode+complete 门禁），最终 dev 候选会再次覆盖
+- 最新记录：rebase 时误用 --onto <upstream>=自身导致分支短暂指向父 head，已用 77958c3..15b1fd1 的 11 个提交恢复完整历史
+- 最近更新：2026-11-18T20:54:19+08:00
+
+## V51-011 · 实现安装态长稳门禁并接入 soak_minutes / implement the installed soak gate behind soak_minutes
+
+- 修改范围：`native-host/tests,desktop/scripts`
+- 验收：已安装产品在五路监看持续期间每分钟重新询问逐路停滞检测；进程树 CPU/私有内存/句柄/子进程集合有同源码回执；停滞、进程增减、内存或句柄增长超限即失败
+- 下一步：等 #67 合入 dev 后把 f0eb858 迁到 codex/v51-r5-soak 并转 dev 开 PR，随后随完整候选派发 soak_minutes=120 的运行
+- 阻塞：无
+- 证据：试合并工作树 .worktrees/v51-combined 提交 f0eb858：py_compile 通过、test_build_contract.py 44 OK；codex/v51-r5-soak head f741497（3 个提交 rebase 无冲突）；native-host/tests 全部本机可跑项通过，仅两个需要 --probe 的 Windows 探针脚本按要求跳过
+- 最新记录：#74 长稳分支已同步到 #67 的 535a9af 并推送；R5-001 认领被依赖未完成阻挡，本轮先在自有任务记录进度
+- 最近更新：2026-11-18T19:17:39+08:00
+
+## V51-012 · 编写 v5.1 候选发布说明并更新功能矩阵证据 / write the v5.1 candidate release notes and update the parity matrix
+
+- 修改范围：`docs/release-notes-v5.1.md、docs/windows-native-feature-parity.md、docs/windows-component-size-split.md 的证据与缺口陈述 / release notes, parity matrix and size-split evidence statements`
+- 验收：发布说明绑定实际候选版本、源码 SHA、安装器字节与摘要；矩阵按实际合入更新 OUTPUT/REMOTE/AUDIO/BACKUP/OPS 行，并把未接线与未实测项写具体缺口 / notes bind the real candidate identity and matrix rows state concrete gaps
+- 下一步：候选 run 结束后填入实际摘要并开 docs PR / fill real receipts after the candidate run and open the docs PR
+- 阻塞：无
+- 证据：docs/release-notes-v5.1.md 候选身份表仍标记待绑定，绑定值将在最终候选 run 与安装包校验后写入
+- 最新记录：#72 组件体积拆分已合入 dev（tip 4b4e512），发布说明与矩阵将引用同一次候选运行的 native-product-size-split.json；#73 文档分支已 rebase 到新 dev tip 以免显示为删除 #72 文件
+- 最近更新：2026-11-18T19:17:40+08:00
