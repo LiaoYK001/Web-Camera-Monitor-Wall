@@ -1222,6 +1222,43 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     raise AssertionError(f"Program TAKE audio gate failed at {stage}: "
                         + json.dumps(detail, sort_keys=True)[:1500])
 
+                def wait_program_mix_audible(label, timeout=60):
+                    """Wait until every Program mix that should carry sound is delivering it.
+
+                    The mixer process only binds its local endpoint after ffmpeg has opened the
+                    camera input, so the media source's first open can fail and OBS reconnects a
+                    second later. Starting a recording inside that lead-in encodes silence, which
+                    is what the rc.42 default-bus MP4 showed. A mix whose declared inputs are all
+                    muted or zero-gain is intentionally silent and is not waited on. The measured
+                    wait is recorded instead of hidden.
+                    """
+                    started = time.monotonic()
+
+                    def ready(observed):
+                        entries = [item for item in observed if item.get("available") is True]
+                        for item in entries:
+                            wants_audio = any(entry.get("muted") is False and float(entry.get("gain", 0)) > 0
+                                              for entry in item.get("audioInputs", []) if isinstance(entry, dict))
+                            if item.get("mediaState") != 1:
+                                return None
+                            if wants_audio and item.get("peakDbfs", -120) <= -60:
+                                return None
+                        return {"sources": entries}
+
+                    def detail():
+                        return json.dumps([{key: item.get(key) for key in
+                            ("sourceId", "mediaState", "peakDbfs", "mixers", "muted", "volume",
+                             "processExitCode")} for item in state().get("audioSources", [])],
+                            sort_keys=True)[:700]
+
+                    result = wait_for(lambda: ready(state().get("audioSources", [])),
+                        lambda: f"{label} Program mix was not delivering audio: " + detail(), timeout=timeout)
+                    evidence.setdefault("programMixLeadIn", []).append({
+                        "label": label, "waitedMs": int((time.monotonic() - started) * 1000),
+                        "mixers": sorted(int(item.get("mixers") or 0) for item in result["sources"])})
+                    checkpoint("program-mix-audible-" + label)
+                    return result["sources"]
+
                 def program_scene_applied():
                     current = state()
                     return current if (current.get("programSceneId") == "fixture-alt"
@@ -1405,6 +1442,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 assert default_selection == 1, \
                     f"default-bus Program Scene reported audio track mask {default_selection}; expected 1"
                 evidence["programDefaultBusSelectedMask"] = default_selection
+                wait_program_mix_audible("default-bus")
                 assert ui("record-program")
                 wait_for(lambda: state().get("programOutput", {}).get("recording") is True,
                     "default-bus Program recording did not start", timeout=20)
@@ -1517,6 +1555,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                         timeout=30)
 
                 def record_program_output(label):
+                    wait_program_mix_audible(label)
                     assert ui("record-program")
                     wait_for(lambda: state().get("programOutput", {}).get("recording") is True,
                         f"{label} Program recording did not start", timeout=20)
