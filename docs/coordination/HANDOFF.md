@@ -1,7 +1,7 @@
 # 当前交接 / Current handoff
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 234 · 2026-11-19T02:12:46+08:00（UTC+08）
+> 快照版本 241 · 2026-11-19T02:55:31+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -22,6 +22,6 @@
 
 ## 最近一次同步
 
-补充 f2df106/2512b58：NSIS 安装门禁现在用同一个 IShellLinkW Unicode 读取器逐一验证三个辅助入口快捷方式（导入旧数据、检查更新、恢复备份）存在、目标真实存在且指向本次安装目录内的 MIGRATE-LEGACY.cmd / CHECK-UPDATES.cmd / RESTORE-BACKUP.cmd，并把 helperEntryShortcutsQualified 写入 NSIS 回执。
+共用停机助手 window_close 由本任务维护，供安装态门禁复用
 
 以任务中的验收条件决定完成；没有 Windows/硬件/发布证据时保持对应事项开放。

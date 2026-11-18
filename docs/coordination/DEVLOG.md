@@ -1,12 +1,54 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 234 · 2026-11-19T02:12:46+08:00（UTC+08）
+> 快照版本 241 · 2026-11-19T02:55:31+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #241 · 2026-11-19T02:55:31+08:00 · update
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-010`
+- 记录：共用停机助手 window_close 由本任务维护，供安装态门禁复用
+- 证据：无新增验收证据
+- 源码：`544bb39a11b49eba982d5cbb6f7e18dc60773fba`
+## #240 · 2026-11-19T02:55:24+08:00 · update
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-014`
+- 记录：window_close 助手归属 V51-010，本任务只复用
+- 证据：无新增验收证据
+- 源码：`544bb39a11b49eba982d5cbb6f7e18dc60773fba`
+## #239 · 2026-11-19T02:55:12+08:00 · update
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-014`
+- 记录：门禁实跑前的两处停机/Origin 修正
+- 证据：无新增验收证据
+- 源码：`544bb39a11b49eba982d5cbb6f7e18dc60773fba`
+## #238 · 2026-11-19T02:55:12+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-014`
+- 记录：旧数据导入门禁两处会在首次实跑即失败的写法已修正：停机改为 WM_CLOSE 正常退出；认证后的每个请求都带产品自身 Origin（控制服务校验携带的 Origin，浏览器/产品 UI 都带）。同时确认导入器/DB 清单与 API 形状一致：accounts 在 cluster.sqlite3、cameras.db/events.db/nvr.json 在迁移清单内，auth-sessions.db 故意不迁移。
+- 证据：提交 e547301→rebase 后 817ee88（PR #76）；py_compile 通过；门禁尚未实跑
+- 源码：`544bb39a11b49eba982d5cbb6f7e18dc60773fba`
+## #237 · 2026-11-19T02:55:12+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-010`
+- 记录：安装态 LAN 门禁的停机方式修正：webobs-wall.exe 的 Job 是 KILL_ON_JOB_CLOSE，terminate 启动器会连带杀 supervisor，有序停机与 phase stopped 回执不会发生；改为向产品主窗口投递 WM_CLOSE（新增共用 native-host/tests/window_close.py），仍断言 phase stopped 与进程回收。
+- 证据：提交 1136cdf（PR #71），py_compile 通过；门禁仍只在 Windows 安装态实跑
+- 源码：`544bb39a11b49eba982d5cbb6f7e18dc60773fba`
+## #236 · 2026-11-19T02:55:12+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：rc.56（run 44373450534）派发后在下线前取消：其树仍含旧的启动器硬杀停机代码，安装门禁必然在 installed-legacy-import/installed-lan-entry 失败。改从含修复的 #74 头 738a62a 派发 rc.57。
+- 证据：run 44373450534 conclusion=cancelled；run 44374662264 in_progress sha 738a62a
+- 源码：`544bb39a11b49eba982d5cbb6f7e18dc60773fba`
+## #235 · 2026-11-19T02:55:12+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：program-streaming 的 mediamtx-timeout 根因确认并修复：私有中继配置写了 logDestinations: [stderr]，固定 MediaMTX v1.18.2 只接受 stdout/file/syslog，启动即 ERR: invalid log destination: stderr 退出；等待循环用 QProcess::state() 判退出，而该状态只在事件循环更新，UI 动作内的阻塞等待看不到，于是只报 timeout 且丢掉中继日志。
+- 证据：本机用同一 v1.18.2 二进制复现：改前 ERR+exit1，改后 API/RTSP/WHIP 就绪且 WHIP 返回真实握手错误；test_build_contract.py 46 项通过；提交 ea2d704（PR #67）
+- 源码：`544bb39a11b49eba982d5cbb6f7e18dc60773fba`
 ## #234 · 2026-11-19T02:12:46+08:00 · log
 
 - Agent：`deepseek-v51-20261118-01`；任务：`V51-014`
