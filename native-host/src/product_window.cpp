@@ -30,6 +30,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QKeyEvent>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPointer>
 #include <QPushButton>
@@ -41,6 +42,7 @@
 #include <QStandardItemModel>
 #include <QScrollArea>
 #include <QStringList>
+#include <QSystemTrayIcon>
 #include <QThread>
 #include <QTimer>
 #include <QUrl>
@@ -130,6 +132,8 @@ class ProductWindow final : public QWidget {
 	QPushButton *support_bundle_ = nullptr;
 	QString last_support_bundle_;
 	QString support_bundle_error_;
+	QSystemTrayIcon *tray_ = nullptr;
+	bool quitting_ = false;
 	QPushButton *stats_button_ = nullptr;
 	QPointer<QWidget> stats_window_;
 	std::array<bool, 2> projector_pending_{};
@@ -1676,6 +1680,17 @@ class ProductWindow final : public QWidget {
 
 	void closeEvent(QCloseEvent *event) override
 	{
+		if (!quitting_ && tray_ && program_output_) {
+			const auto value = program_output_->status();
+			if (value.recording || value.streaming) {
+				hide();
+				tray_->showMessage(tr("WebOBS Wall"),
+					tr("Program 录像或推流仍在运行。使用托盘图标恢复窗口或停止输出后退出。"),
+					QSystemTrayIcon::Information, 5000);
+				event->ignore();
+				return;
+			}
+		}
 		locked(tr("正在退出…"));
 		frontend_->close();
 		event->accept();
@@ -1908,6 +1923,34 @@ public:
 			support_bundle_->setToolTip(tr("导出有界脱敏状态、计数和 OBS 标记统计；不包含摄像机地址、令牌、日志正文或媒体。"));
 			layout->addWidget(support_bundle_);
 			connect(support_bundle_, &QPushButton::clicked, this, [this] { generate_support_bundle(); });
+			if (QSystemTrayIcon::isSystemTrayAvailable()) {
+				tray_ = new QSystemTrayIcon(windowIcon(), this);
+				auto *menu = new QMenu(this);
+				auto *show = menu->addAction(tr("显示 WebOBS Wall"));
+				connect(show, &QAction::triggered, this, [this] {
+					showNormal();
+					raise();
+					activateWindow();
+				});
+				auto *quit = menu->addAction(tr("停止 Program 输出并退出"));
+				connect(quit, &QAction::triggered, this, [this] {
+					quitting_ = true;
+					if (program_output_) program_output_->shutdown();
+					locked(tr("正在退出…"));
+					frontend_->close();
+				});
+				tray_->setContextMenu(menu);
+				tray_->setToolTip(tr("WebOBS Wall：Program 输出在后台运行"));
+				connect(tray_, &QSystemTrayIcon::activated, this,
+					[this](QSystemTrayIcon::ActivationReason reason) {
+						if (reason == QSystemTrayIcon::Trigger) {
+							showNormal();
+							raise();
+							activateWindow();
+						}
+					});
+				tray_->show();
+			}
 		}
 		auto *manage = new QPushButton(tr("设备与来源管理"), this);
 		manage->setObjectName("webobsManageDevices");
@@ -2084,6 +2127,10 @@ public:
 		settlement_.stop();
 		retirement_.stop();
 		client_.reset();
+		if (tray_) {
+			tray_->hide();
+			tray_ = nullptr;
+		}
 		if (program_output_) {
 			program_output_->shutdown();
 			program_output_.reset();
