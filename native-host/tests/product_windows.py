@@ -20,6 +20,7 @@ import sqlite3
 import socket
 import subprocess
 import sys
+import threading
 import tempfile
 import time
 import urllib.error
@@ -453,6 +454,95 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     readable.append(False)
             return {"publishers": publishers, "readable": readable, "pathProgress": rtsp.path_progress()}
 
+        class SerialWatch:
+            """Sample the host's per-input frame counters inside the capture window.
+
+            The frozen-slot receipts only had counters read before the capture and after
+            the analysis, so a plateau that happened *between* them was invisible and a
+            frozen tile had no cause. Polling the product's own snapshot during the
+            capture separates "this media input stopped feeding frames" (a serial plateau
+            inside the window) from "frames kept arriving but the item did not repaint"
+            (no plateau while the pixel digests stay identical).
+            """
+
+            def __init__(self):
+                self.samples = []
+                self.stop = threading.Event()
+                self.started = time.monotonic()
+                self.thread = threading.Thread(target=self.poll, daemon=True)
+
+            def start(self):
+                self.thread.start()
+
+            def poll(self):
+                while not self.stop.is_set():
+                    snapshot = state()
+                    entries = snapshot.get("videoInputs", [])
+                    if isinstance(entries, list) and entries:
+                        self.samples.append((int((time.monotonic() - self.started) * 1000),
+                            {str(entry.get("uuid") or "")[:8]: entry.get("serial")
+                             for entry in entries if isinstance(entry, dict)},
+                            snapshot.get("renderFrames"),
+                            [entry for entry in entries if isinstance(entry, dict)
+                             and type(entry.get("serial")) is int and int(entry["serial"]) > 0]))
+                    self.stop.wait(0.2)
+
+            def report(self):
+                self.stop.set()
+                self.thread.join(timeout=3)
+                tracked = {}
+                render_stall_ms, render_from, render_before, render_after, unhealthy = 0, None, None, None, 0
+                for elapsed_ms, serials, frames, live in self.samples:
+                    if any(entry.get("showing") is not True or entry.get("mediaState") != 1 for entry in live):
+                        unhealthy += 1
+                    if type(frames) is int:
+                        if render_before is None:
+                            render_before, render_from = frames, elapsed_ms
+                        if frames != render_after and render_from is not None:
+                            stalled = elapsed_ms - render_from
+                            if stalled > render_stall_ms:
+                                render_stall_ms = stalled
+                            render_from = elapsed_ms
+                        render_after = frames
+                    for uuid, serial in serials.items():
+                        entry = tracked.setdefault(uuid, {"before": serial, "after": serial,
+                            "maxStallMs": 0, "stallFromMs": None, "stallToMs": None})
+                        if type(serial) is not int or type(entry["before"]) is not int:
+                            continue
+                        if serial != entry["after"] or entry["stallFromMs"] is None:
+                            if entry["stallFromMs"] is not None:
+                                stalled = elapsed_ms - entry["stallFromMs"]
+                                if stalled > entry["maxStallMs"]:
+                                    entry["maxStallMs"] = stalled
+                                    entry["stallToMs"] = elapsed_ms
+                            entry["stallFromMs"] = elapsed_ms
+                        entry["after"] = serial
+                window_ms = self.samples[-1][0] if self.samples else 0
+                inputs = []
+                for uuid in sorted(tracked)[:16]:
+                    entry = tracked[uuid]
+                    if entry["stallFromMs"] is not None:
+                        stalled = window_ms - entry["stallFromMs"]
+                        if stalled > entry["maxStallMs"]:
+                            entry["maxStallMs"] = stalled
+                            entry["stallToMs"] = window_ms
+                    inputs.append({"uuid": uuid, "before": entry["before"], "after": entry["after"],
+                        "advanced": type(entry["before"]) is int and type(entry["after"]) is int
+                                    and entry["after"] > entry["before"],
+                        "maxStallMs": entry["maxStallMs"],
+                        "stallMs": [entry["stallFromMs"], entry["stallToMs"]]
+                                   if entry["maxStallMs"] >= 900 else []})
+                rendered = 0 if render_before is None or render_after is None else max(
+                    0, render_after - render_before)
+                return {"samples": len(self.samples), "windowMs": window_ms,
+                    "renderFramesBefore": render_before, "renderFramesAfter": render_after,
+                    "renderFramesPerSecond": (round(rendered * 1000 / window_ms, 1) if window_ms else 0),
+                    "renderFramesMaxStallMs": render_stall_ms,
+                    # Any sample where an owned media input was not showing or not in
+                    # OBS's PLAYING state: a reopen/reconnect shows up here directly.
+                    "inputNotPlayingSamples": unhealthy,
+                    "inputs": inputs}
+
         def check_pixels(label, *, blank=False, repeat_first=False, reverse=False, expected_media=None,
                 projector_orders=None, quick_order=None, program_scene=None, program_media=None,
                 fixture_retry=True):
@@ -536,6 +626,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 "pid": str(frontend_pid), "windows": observed["windows"]}), encoding="utf-8")
             checkpoint("pixels-" + label + "-capture-setup")
             window_roles = {window["role"] for window in observed["windows"]}
+            serial_watch = SerialWatch()
+            serial_watch.start()
             for attempt in range(2):
                 checkpoint("pixels-" + label + "-capture-start")
                 try:
@@ -597,7 +689,9 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                         "pid": str(frontend_pid), "windows": observed["windows"]}), encoding="utf-8")
                     continue
                 break
-            evidence.setdefault("captures", []).append({"phase": label, **capture})
+            serials_during_capture = serial_watch.report()
+            evidence.setdefault("captures", []).append({"phase": label, "serialsDuringCapture":
+                serials_during_capture, **capture})
             if not blank:
                 # Renewal health at capture time: a tolerated busy authority is recorded,
                 # while any lock category makes the receipt explicit.
@@ -647,7 +741,14 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                         # the capture window separates "media side stopped feeding frames"
                         # from "frames arrived but the item did not repaint"; without this
                         # a frozen slot has no cause at all.
-                        "inputSerialDelta": None}
+                        "inputSerialDelta": None,
+                        # Content digests from the analysis say which region stopped
+                        # repainting; the in-window counters say whether its media input
+                        # stopped feeding frames during exactly that window.
+                        "serialsDuringCapture": serials_during_capture,
+                        "distinctClientCount": result.get("distinctClientCount"),
+                        "distinctTileCounts": result.get("distinctTileCounts"),
+                        "staleTiles": result.get("staleTiles")}
                     later = state()
                     def serials(snapshot):
                         return {str(entry.get("uuid") or ""): entry.get("serial")
