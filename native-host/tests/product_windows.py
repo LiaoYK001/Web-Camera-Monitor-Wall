@@ -1796,10 +1796,14 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 assert re.fullmatch(r"rtsp://127\.0\.0\.1:[0-9]{2,5}/program", playback_url), \
                     "native Program publisher exposed an unexpected playback URL"
                 checkpoint("program-streaming-started")
-                def readable_stream():
+                def readable_stream(url=None):
+                    # A relay path is only readable once the publisher has delivered a
+                    # keyframe, so every read of a playback URL is retried within a
+                    # bounded window instead of probing once.
+                    target = playback_url if url is None else url
                     probe = subprocess.run([str(runtime / "bin/ffprobe.exe"), "-v", "error",
                         "-rtsp_transport", "tcp", "-show_entries", "stream=codec_name,codec_type", "-of", "json",
-                        playback_url], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20)
+                        target], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20)
                     return json.loads(probe.stdout).get("streams", []) if probe.returncode == 0 else []
                 stream_streams = []
                 deadline = time.monotonic() + 30
@@ -2104,13 +2108,29 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     "restarted publisher never delivered frames again"
                 assert restarted_stream.get("streamPlaybackUrl") != disconnected_url, \
                     "recovered publisher reused the relay endpoint of the killed process"
-                replay = subprocess.run([str(runtime / "bin/ffprobe.exe"), "-v", "error",
-                    "-rtsp_transport", "tcp", "-show_entries", "stream=codec_name,codec_type", "-of", "json",
-                    restarted_stream["streamPlaybackUrl"]], capture_output=True, text=True,
-                    encoding="utf-8", errors="replace", timeout=30)
-                assert replay.returncode == 0 and any(item.get("codec_type") == "video"
-                    for item in json.loads(replay.stdout).get("streams", [])), \
-                    "recovered publisher is not readable by a real consumer"
+                replay_url = restarted_stream["streamPlaybackUrl"]
+                replay_streams = []
+                replay_deadline = time.monotonic() + 40
+                while time.monotonic() < replay_deadline:
+                    replay_streams = readable_stream(replay_url)
+                    if replay_streams:
+                        break
+                    time.sleep(0.5)
+                assert any(item.get("codec_type") == "video" for item in replay_streams), \
+                    f"recovered publisher is not readable by a real consumer: {replay_streams}"
+                # Recovered publishing must still deliver frames, not only a stream
+                # header, so the same bounded frame window as the first publisher runs
+                # against the recovered playback URL.
+                replay_frames = subprocess.run([str(runtime / "bin/ffprobe.exe"), "-v", "error",
+                    "-rtsp_transport", "tcp", "-select_streams", "v:0", "-read_intervals", "%+#20",
+                    "-show_entries", "frame=pts_time", "-of", "json", replay_url],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+                replay_count = len(json.loads(replay_frames.stdout).get("frames", [])) \
+                    if replay_frames.returncode == 0 else 0
+                evidence["publishReplayFrameCount"] = replay_count
+                assert replay_count >= 10, \
+                    f"recovered publisher delivered {replay_count} video frames, expected at least 10"
+                evidence["checks"].append("publish-recovery-delivers-frames-to-a-real-consumer")
                 assert ui("stream-program")
                 wait_for(lambda: state().get("programOutput", {}).get("streaming") is False and
                     state().get("programOutput", {}).get("mediaMtxRunning") is False,
