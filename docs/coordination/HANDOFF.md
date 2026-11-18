@@ -1,7 +1,7 @@
 # 当前交接 / Current handoff
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 222 · 2026-11-19T01:57:10+08:00（UTC+08）
+> 快照版本 229 · 2026-11-19T02:02:16+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -18,9 +18,10 @@
 - **V51-011 · 进行中**；负责人：deepseek-v51-20261118-01；阻塞：无；下一步：等 #67 合入 dev 后把 f0eb858 迁到 codex/v51-r5-soak 并转 dev 开 PR，随后随完整候选派发 soak_minutes=120 的运行
 - **V51-012 · 进行中**；负责人：deepseek-v51-20261118-01；阻塞：无；下一步：候选 run 结束后填入实际摘要并开 docs PR / fill real receipts after the candidate run and open the docs PR
 - **V51-013 · 进行中**；负责人：deepseek-v51-20261118-01；阻塞：无；下一步：rc.52 绿并合并 #67/#70/#71/#74 进 dev 后，用一次带 #75 的完整候选运行验证设备操作阶段，再双语合并 #75。
+- **V51-014 · 进行中**；负责人：deepseek-v51-20261118-01；阻塞：无；下一步：本机语法与 Linux 契约复跑后，随下一次完整候选在 Windows 安装态产出 native-product-legacy-import.json；用户本人旧档案迁移留待目标机。
 
 ## 最近一次同步
 
-提交 2004cf3：产品快照改为在快照时刻读取各 Scene 自有 video_progress() 原始解码计数（缺计数记为 -1，不再冒认“冻结”），心跳缓存值降级为 healthSerial 仅供界面标签；LoopbackRtsp.path_progress() 改用两次新读取的最旧包 pts 前进判定 flow（rc.52 里两个样本都返回 11/11 包但产品侧全部停滞，说明计数不可作证）。#67→#70→#71→#74→#75 已按旧基线重排并推送（9d00b7f/d5bd146/d5a39dd/427cde6）。派发 rc.53（run 44364213218，soak 分支 d5a39dd，product_mode/complete/upgrade_previous/measure_obs_baseline，soak_minutes=0）验证该修复。
+重新认领 V51-014（范围已收窄为新增门禁与文档），开始实现。
 
 以任务中的验收条件决定完成；没有 Windows/硬件/发布证据时保持对应事项开放。

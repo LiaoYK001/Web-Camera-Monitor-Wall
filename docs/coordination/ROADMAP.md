@@ -1,7 +1,7 @@
 # 详细执行路线图 / Execution roadmap
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 222 · 2026-11-19T01:57:10+08:00（UTC+08）
+> 快照版本 229 · 2026-11-19T02:02:16+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -91,6 +91,7 @@
 - **FIX-001 · 完成**：修复已复现迁移与原生更新缺陷 / fix migration and updater regressions；依赖：AUDIT-001。验收：真实OBS插件路径迁移并可回读，失败不留半成品；安装前重新验证缓存size/SHA512；版本比较拒绝回退；负向回归及现有场景通过，不冒称完整R4
 - **V51-002 · 完成**：接通v5.1构建与真实安装更新门禁 / wire v5.1 build and installed update gates；依赖：FIX-001。验收：v5.1候选身份与内部/稳定区分；Windows新payload通过真正更新器校验/安装/启动，实际preview档案由新宿主登录恢复；回执绑定实际源码，不称全功能或性能合格
 - **V51-007 · 进行中**：加固双目录加密备份的中间故障一致性与安全重试 / harden dual-directory backup swap consistency and safe retry；依赖：无。验收：两目录交换的崩溃/失败后要么完全旧状态要么完全新状态；中断日志可被下次 restore 自动收敛或明确拒绝；失败不残留 activated 目录；native 存档必须成对恢复；config-only 旧存档仍可用；本机 unittest 覆盖中间失败与崩溃恢复。
+- **V51-014 · 进行中**：在已安装完整产品上验收旧数据导入入口与保留 / qualify the shipped old-data import path in the installed product；依赖：R1-001, V51-002。验收：已安装入口先建立旧账号/设备/事件，再用包内 migrate_legacy.py 导入到新档案；导入后旧账号可登录、首次建档关闭、设备与事件保留、DPAPI 备份密钥可解密、旧会话失效；源目录逐文件哈希不变、重复导入被拒绝、结束后无残留进程；回执区分配置导入合格与 fullFeatureMigrationQualified 仍为 false，不夸大
 
 ## R5 · 性能、体积与稳定性
 

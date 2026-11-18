@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 222,
-  "updated_at": "2026-11-19T01:57:10+08:00",
+  "revision": 229,
+  "updated_at": "2026-11-19T02:02:16+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1243,12 +1243,13 @@
         "git rebase a4d2512 clean；codex/v51-r4-backup-consistency=77958c3；gh pr 70 base=codex/v51-r3-output",
         "PR#70 rebase 到新 #67 head（770b0e1，4 个自有提交无冲突）；tests/test_encrypted_backup.py 10 OK；native-host/tests/test_complete_supervisor.py PASS（含 'converged the interrupted restore as completed' 与二次 prepare 不被中断日志拒绝、无 run/restore-recovery.json）；复核 product_supervisor.prepare() 顺序：独占锁+protect 之后、创建 config/native-profile 目录与读取 user.ini 之前调用 recover_interrupted_restore()",
         "commit be25901 on codex/v51-r4-backup-consistency; python3 tests/test_encrypted_backup.py 12 OK; same file against HEAD~1 service = 2 errors (falsifiable); test_complete_supervisor/test_native_updater/test_build_contract OK; run 44349201714 in_progress",
-        "307910f/2560a52/4a487d1 pushed; suites re-run green"
+        "307910f/2560a52/4a487d1 pushed; suites re-run green",
+        "#70 head 9d00b7f 已 rebase 到 #67 2004cf3；本机 test_complete_supervisor.py PASS。"
       ],
       "blocker": "",
       "next_step": "#67 合入 dev 后把 #70 base 改为 dev 并派发带 backup_restore_windows 门禁的 Windows 运行。",
-      "updated_at": "2026-11-19T01:14:36+08:00",
-      "last_note": "按新 #67 head 顺序 rebase：#70=307910f、#71=2560a52、#74=4a487d1，均 --force-with-lease 推送；rebase 后本机复跑 tests/test_encrypted_backup.py 12 OK 与 native-host/tests/test_complete_supervisor.py PASS（含恢复收敛断言）。"
+      "updated_at": "2026-11-19T02:02:16+08:00",
+      "last_note": "重新认领 V51-007：#70 备份一致性继续由本 Agent 负责，范围与之前一致。"
     },
     {
       "id": "V51-008",
@@ -1444,6 +1445,36 @@
       "next_step": "rc.52 绿并合并 #67/#70/#71/#74 进 dev 后，用一次带 #75 的完整候选运行验证设备操作阶段，再双语合并 #75。",
       "updated_at": "2026-11-19T01:23:04+08:00",
       "last_note": "协调后调整声明范围：native-host/tests/product_windows.py 的门禁改动归同一 Agent 的 V51-008 持有，本任务声明合成设备与相机注册表测试文件；实现同在一个 PR。"
+    },
+    {
+      "id": "V51-014",
+      "milestone": "R4",
+      "title": "在已安装完整产品上验收旧数据导入入口与保留 / qualify the shipped old-data import path in the installed product",
+      "priority": "P1",
+      "status": "in_progress",
+      "owner": "deepseek-v51-20261118-01",
+      "scope": [
+        "native-host/tests/legacy_import_windows.py",
+        "docs/native-legacy-import.md"
+      ],
+      "depends_on": [
+        "R1-001",
+        "V51-002"
+      ],
+      "acceptance": [
+        "已安装入口先建立旧账号/设备/事件，再用包内 migrate_legacy.py 导入到新档案",
+        "导入后旧账号可登录、首次建档关闭、设备与事件保留、DPAPI 备份密钥可解密、旧会话失效",
+        "源目录逐文件哈希不变、重复导入被拒绝、结束后无残留进程",
+        "回执区分配置导入合格与 fullFeatureMigrationQualified 仍为 false，不夸大"
+      ],
+      "evidence": [
+        "test_migrate_legacy.py 本地 PASS；安装包文件清单含 MIGRATE-LEGACY.cmd；尚无安装态导入回执。",
+        "基线 codex/v51-r3-005-devices @ 427cde6；rc.53 run 44364213218 正在验证解码计数修复。"
+      ],
+      "blocker": "",
+      "next_step": "本机语法与 Linux 契约复跑后，随下一次完整候选在 Windows 安装态产出 native-product-legacy-import.json；用户本人旧档案迁移留待目标机。",
+      "updated_at": "2026-11-19T02:02:16+08:00",
+      "last_note": "重新认领 V51-014（范围已收窄为新增门禁与文档），开始实现。"
     }
   ],
   "events": [
@@ -4005,6 +4036,82 @@
         "run 44356064395 receipts /tmp/rc52.Vf3r；本地 MediaMTX 1.18.2 验证：活路径 oldestPts 3600→14791 flowing=true，杀发布进程后 packets=[0,0] flowing=false；py_compile 通过；native-host/tests/test_build_contract.py 45 OK"
       ],
       "git_revision": "4459100339745f675d0d14528d5fce4670a0af51"
+    },
+    {
+      "sequence": 223,
+      "at": "2026-11-19T02:01:47+08:00",
+      "agent": "deepseek-v51-20261118-01",
+      "task": "V51-014",
+      "action": "add",
+      "note": "登记安装态旧数据导入验收：R4-001 因依赖 R2-002 未完成无法认领，故把“已安装完整产品上的旧数据导入入口与保留”单列为 V51-014，范围只含新增门禁、NSIS 接线、回执上传与文档，不改迁移脚本本体。",
+      "evidence": [
+        "test_migrate_legacy.py 本地 PASS；安装包文件清单含 MIGRATE-LEGACY.cmd；尚无安装态导入回执。"
+      ],
+      "git_revision": "57e65dc8e9eddf130f0ee023019d1edee5a62adc"
+    },
+    {
+      "sequence": 224,
+      "at": "2026-11-19T02:02:16+08:00",
+      "agent": "deepseek-v51-20261118-01",
+      "task": "V51-007",
+      "action": "release",
+      "note": "为消除与 V51-014 的文件范围冲突，临时释放 V51-007（同一 Agent 顺序处理，随后立即重新认领；#70 分支与提交保持不变）。",
+      "evidence": [],
+      "git_revision": "57e65dc8e9eddf130f0ee023019d1edee5a62adc"
+    },
+    {
+      "sequence": 225,
+      "at": "2026-11-19T02:02:16+08:00",
+      "agent": "deepseek-v51-20261118-01",
+      "task": "V51-014",
+      "action": "claim",
+      "note": "认领 V51-014 并开始编写 native-host/tests/legacy_import_windows.py：已安装入口建立旧账号/设备/事件→包内导入→新档案登录与保留→拒绝覆盖→无残留进程。",
+      "evidence": [
+        "基线 codex/v51-r3-005-devices @ 427cde6；rc.53 run 44364213218 正在验证解码计数修复。"
+      ],
+      "git_revision": "57e65dc8e9eddf130f0ee023019d1edee5a62adc"
+    },
+    {
+      "sequence": 226,
+      "at": "2026-11-19T02:02:16+08:00",
+      "agent": "deepseek-v51-20261118-01",
+      "task": "V51-014",
+      "action": "update",
+      "note": "范围限定为新增门禁脚本与其文档；NSIS 安装门禁与回执上传两条路径仍由 V51-007 持有，接线提交将在 #70 合入 dev 后补入。",
+      "evidence": [],
+      "git_revision": "57e65dc8e9eddf130f0ee023019d1edee5a62adc"
+    },
+    {
+      "sequence": 227,
+      "at": "2026-11-19T02:02:16+08:00",
+      "agent": "deepseek-v51-20261118-01",
+      "task": "V51-014",
+      "action": "release",
+      "note": "收窄范围后立即重新认领 V51-007，恢复其对安装脚本与工作流文件的持有（#70 仍在评审）。",
+      "evidence": [],
+      "git_revision": "57e65dc8e9eddf130f0ee023019d1edee5a62adc"
+    },
+    {
+      "sequence": 228,
+      "at": "2026-11-19T02:02:16+08:00",
+      "agent": "deepseek-v51-20261118-01",
+      "task": "V51-007",
+      "action": "claim",
+      "note": "重新认领 V51-007：#70 备份一致性继续由本 Agent 负责，范围与之前一致。",
+      "evidence": [
+        "#70 head 9d00b7f 已 rebase 到 #67 2004cf3；本机 test_complete_supervisor.py PASS。"
+      ],
+      "git_revision": "57e65dc8e9eddf130f0ee023019d1edee5a62adc"
+    },
+    {
+      "sequence": 229,
+      "at": "2026-11-19T02:02:16+08:00",
+      "agent": "deepseek-v51-20261118-01",
+      "task": "V51-014",
+      "action": "claim",
+      "note": "重新认领 V51-014（范围已收窄为新增门禁与文档），开始实现。",
+      "evidence": [],
+      "git_revision": "57e65dc8e9eddf130f0ee023019d1edee5a62adc"
     }
   ]
 }
