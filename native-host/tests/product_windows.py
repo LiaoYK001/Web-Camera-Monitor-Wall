@@ -602,7 +602,17 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     evidence["pixelFailureDiagnostics"] = {"phase": label, "role": role,
                         "temporalProgress": result.get("temporalProgress"),
                         "progressError": str(result.get("progressError") or "")[:120],
-                        "publisherState": harness["publishers"], "unreadablePaths": unreadable}
+                        "publisherState": harness["publishers"], "unreadablePaths": unreadable,
+                        # A frozen slot is either a source that stopped delivering frames
+                        # or a Scene that no longer renders the item. The product reports
+                        # both, so the receipt says which one this was.
+                        "videoInputs": observed.get("videoInputs", []),
+                        "wallItems": int(observed.get("wallItems") or 0),
+                        "programItems": int(observed.get("programItems") or 0),
+                        "slots": [{"camera": str(binding.get("cameraId") or "")[:24],
+                            "uuid": str(binding.get("sourceUuid") or "")[:8]}
+                            for binding in observed.get("bindings", [])[:8]
+                            if isinstance(binding, dict)]}
                     if (dead or unreadable) and fixture_retry:
                         # The synthetic fixture itself dropped out: restart every dead publisher,
                         # prove the host resumes decoding, then re-run this exact pixel phase

@@ -506,6 +506,32 @@ class ProductWindow final : public QWidget {
 			{"lastLock", last_lock_}, {"lockCode", last_lock_code_}, {"renewTransient", transient_renewals_},
 			{"videoAvailable", video_available}, {"hardwareDecodeVerified", false}};
 		state.insert("previewLocked", preview_ && preview_->property("webobsPreviewLocked").toBool());
+		// Bounded per-input progress and scene item counts. A frozen preview can mean a
+		// decoder stopped feeding frames or that this Scene no longer renders the item,
+		// and the two need different fixes; only uuid prefixes, counters and counts
+		// leave this snapshot.
+		QJsonArray video_inputs;
+		const auto health_now = health_clock_.elapsed();
+		for (const auto &[uuid, health] : input_health_) {
+			if (video_inputs.size() >= 16)
+				break;
+			video_inputs.append(QJsonObject{{"uuid", QString::fromStdString(uuid).left(8)},
+				{"serial", qint64(health.serial)},
+				{"stalledMs", health.sampled ? qint64(health_now - health.changed_ms) : qint64(-1)}});
+		}
+		state.insert("videoInputs", video_inputs);
+		const auto count_items = [](obs_scene_t *scene) {
+			int items = 0;
+			if (scene)
+				obs_scene_enum_items(scene, [](obs_scene_t *, obs_sceneitem_t *item, void *count) {
+					if (obs_sceneitem_visible(item))
+						++*static_cast<int *>(count);
+					return true;
+				}, &items);
+			return items;
+		};
+		state.insert("wallItems", count_items(wall_ ? wall_->scene : nullptr));
+		state.insert("programItems", count_items(program_ ? program_->scene : nullptr));
 		state.insert("programSceneId", program_scene_id_);
 		state.insert("programSceneFingerprint", program_fingerprint_);
 		state.insert("programStudioRevision", program_studio_revision_);
