@@ -612,6 +612,114 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 "programTargetSceneId", "phase")} | {
                 "programMediaSources": program.get("mediaSources")}
 
+        def process_tree_metrics():
+            """CPU seconds, private bytes, handles and descendants of the exact host tree.
+
+            Windows keeps these counters per process, so the product tree has to be
+            walked and summed. A process that cannot be opened is recorded instead of
+            dropped: a disappearing descendant is itself evidence of drift.
+            """
+            from ctypes import wintypes
+
+            class Times(ctypes.Structure):
+                _fields_ = [("low", wintypes.DWORD), ("high", wintypes.DWORD)]
+
+            class Memory(ctypes.Structure):
+                _fields_ = [("cb", wintypes.DWORD), ("pageFaultCount", wintypes.DWORD),
+                    ("peakWorkingSet", ctypes.c_size_t), ("workingSet", ctypes.c_size_t),
+                    ("quotaPeakPaged", ctypes.c_size_t), ("quotaPaged", ctypes.c_size_t),
+                    ("quotaPeakNonPaged", ctypes.c_size_t), ("quotaNonPaged", ctypes.c_size_t),
+                    ("pagefileUsage", ctypes.c_size_t), ("peakPagefileUsage", ctypes.c_size_t),
+                    ("privateUsage", ctypes.c_size_t)]
+
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            psapi = ctypes.WinDLL("psapi", use_last_error=True)
+            kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel.OpenProcess.restype = wintypes.HANDLE
+            kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+            kernel.GetProcessTimes.argtypes = [wintypes.HANDLE, ctypes.POINTER(Times),
+                ctypes.POINTER(Times), ctypes.POINTER(Times), ctypes.POINTER(Times)]
+            kernel.GetProcessHandleCount.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+            psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(Memory),
+                wintypes.DWORD]
+            pending = [frontend_pid]
+            seen = []
+            cpu = 0.0
+            private_bytes = 0
+            handles = 0
+            unavailable = []
+            while pending:
+                pid = pending.pop()
+                handle = kernel.OpenProcess(0x1000, False, pid)
+                if not handle:
+                    unavailable.append(pid)
+                    continue
+                try:
+                    creation, exit_time, kernel_time, user_time = Times(), Times(), Times(), Times()
+                    if kernel.GetProcessTimes(handle, ctypes.byref(creation), ctypes.byref(exit_time),
+                        ctypes.byref(kernel_time), ctypes.byref(user_time)):
+                        cpu += (kernel_time.high * 4294967296 + kernel_time.low
+                            + user_time.high * 4294967296 + user_time.low) / 1e7
+                    memory = Memory()
+                    memory.cb = ctypes.sizeof(memory)
+                    if psapi.GetProcessMemoryInfo(handle, ctypes.byref(memory), memory.cb):
+                        private_bytes += int(memory.privateUsage)
+                    count = wintypes.DWORD(0)
+                    if kernel.GetProcessHandleCount(handle, ctypes.byref(count)):
+                        handles += int(count.value)
+                finally:
+                    kernel.CloseHandle(handle)
+                seen.append(pid)
+                pending.extend(child_pid for child_pid, _ in child_processes(powershell, pid))
+            return {"cpuSeconds": round(cpu, 2), "privateBytes": private_bytes, "handles": handles,
+                "processIds": sorted(seen), "unavailable": sorted(unavailable)}
+
+        def soak_watched_inputs(minutes):
+            """Keep the installed five-input wall running and prove it does not drift.
+
+            Every sample re-asks the host's own per-input stall detection, so one
+            stream freezing inside the window fails even when it recovers before the
+            end. CPU, private bytes, handles and the descendant set are summed over
+            the exact product process tree, and growth beyond the bounded limits fails
+            the run instead of only being reported. No pixel or Program capture runs
+            inside the window, so the soak cannot change what it measures.
+            """
+            interval_seconds = 60
+            samples = []
+            baseline = None
+            started = time.monotonic()
+            for index in range(minutes):
+                assert ui("video-progress", sources=5, stalled=0), \
+                    f"a watched input stopped delivering frames during soak minute {index + 1}"
+                metrics = process_tree_metrics()
+                samples.append({"minute": index + 1,
+                    "elapsedSeconds": round(time.monotonic() - started, 1), **metrics})
+                if baseline is None:
+                    baseline = metrics
+                if index + 1 < minutes:
+                    time.sleep(interval_seconds)
+            final = samples[-1]
+            assert baseline["unavailable"] == [] and final["unavailable"] == [], \
+                "the soak could not read every product process"
+            assert sorted(final["processIds"]) == sorted(baseline["processIds"]), \
+                ("the product process tree changed while only watching: "
+                    + str(sorted(set(final["processIds"]) ^ set(baseline["processIds"]))))
+            growth = final["privateBytes"] - baseline["privateBytes"]
+            assert growth <= 300 * 1024 * 1024, f"private memory grew {growth} bytes while watching"
+            assert final["handles"] - baseline["handles"] <= 200, \
+                f"handle count grew {final['handles'] - baseline['handles']} while watching"
+            cpu_delta = final["cpuSeconds"] - baseline["cpuSeconds"]
+            assert cpu_delta >= (minutes - 1) * 30, \
+                f"the watching tree used only {cpu_delta}s of CPU across {minutes - 1} minutes"
+            evidence["soak"] = {"minutes": minutes, "intervalSeconds": interval_seconds,
+                "cpuSecondsDelta": round(cpu_delta, 2), "privateBytesGrowth": growth,
+                "handleGrowth": final["handles"] - baseline["handles"],
+                "baseline": {key: baseline[key] for key in ("cpuSeconds", "privateBytes", "handles")},
+                "final": {key: final[key] for key in ("cpuSeconds", "privateBytes", "handles")},
+                "samples": samples}
+            evidence["checks"].append(f"installed-soak-{minutes}-minutes-five-inputs")
+            checkpoint("soak-five-inputs-complete")
+
         def ui(action, **fields):
             owned = state()
             wanted_roles = {"main-preview"}
@@ -1677,6 +1785,10 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 wait_for(lambda: state().get("statsOpen") is False,
                     "actual OBS statistics window did not close")
                 evidence["checks"].append("authenticated-existing-obs-statistics-window")
+                soak_minutes = int(os.environ.get("WEBOBS_PRODUCT_SOAK_MINUTES") or 0)
+                if soak_minutes >= 2:
+                    phase = "installed-soak"
+                    soak_watched_inputs(soak_minutes)
                 phase = "complete-business-nvr"
                 recording_started = int(time.time() * 1000) - 60_000
                 nvr_configuration = {
