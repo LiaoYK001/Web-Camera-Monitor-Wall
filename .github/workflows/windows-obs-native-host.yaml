@@ -80,6 +80,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Native updater verification contract failed.' }
           python -B native-host/tests/test_complete_release_policy.py
           if ($LASTEXITCODE -ne 0) { throw 'Complete candidate release identity failed.' }
+          python -B native-host/tests/test_component_size_report.py
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate component size split contract failed.' }
           python -B native-host/tests/test_update_manifest.py
           if ($LASTEXITCODE -ne 0) { throw 'Candidate update manifest failed.' }
           python -B native-host/tests/test_upgrade_runtime.py
@@ -233,6 +235,14 @@ jobs:
           path: build/native-preview-assets/*
           if-no-files-found: error
           retention-days: 14
+      - name: Split the complete candidate into per-component byte groups
+        # Offline analysis of this run's own receipts: staged component groups,
+        # installer bytes and the installed tree measured before first start.
+        if: always() && inputs.complete && steps.product-ui.outcome == 'success'
+        shell: pwsh
+        run: |
+          python -B native-host/scripts/component_size_report.py --components (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/runtime/product-components.json') --nsis (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-product-nsis.json') --obs-reference native-host/qualification/obs-32.1.2-size-reference.json --output (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-product-size-split.json')
+          if ($LASTEXITCODE -ne 0) { throw 'Complete candidate component size split failed.' }
       - name: Retain only sanitized internal product receipts
         if: always() && inputs.product_mode
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -249,6 +259,7 @@ jobs:
             build/obs-native-ci/native-product-updater.json
             build/obs-native-ci/native-product-upgraded-ui.json
             build/obs-native-ci/runtime/product-components.json
+            build/obs-native-ci/native-product-size-split.json
       - name: Inventory the runtime and enforce the P4 size budget
         # The builder already inventories BOTH variants before first start.
         # Pixel builds now contain private fixtures; only clean normal builds
