@@ -73,6 +73,10 @@ public static class ProductTestWindow {
                 'webobsStreamProgram' { '推流 Program' }
                 'webobsOutputHealth' { $kind = [System.Windows.Automation.ControlType]::Text; '' }
                 'webobsSupportBundle' { '生成支持包' }
+                # Both LAN controls change their visible text, so match the
+                # object name the Qt provider exposes instead of the caption.
+                'webobsLanShare' { $kind = [System.Windows.Automation.ControlType]::Button; '' }
+                'webobsLanHealth' { $kind = [System.Windows.Automation.ControlType]::Text; '' }
                 'webobsHostStats' { 'OBS 宿主统计' }
                 'webobsManageDevices' { '设备与来源管理' }
                 'webobsManageAudio' { '音频与监听' }
@@ -286,6 +290,15 @@ public static class ProductTestWindow {
             if ($value.Current.Value -ne $operation.fixtureName) { throw 'Studio fixture selection was not committed.' }
             Invoke-Control 'webobsWatchScene'
         }
+        'lan-state' {
+            # The owner's LAN/Web entry must be reachable from the product window
+            # before any account login; only fixed stage names are reported.
+            $null = Find-Control 'webobsLanHealth'
+            $button = Find-Control 'webobsLanShare'
+            if (-not $button.Current.IsEnabled) { throw 'LAN sharing switch is disabled.' }
+            $code = 'lan-state'
+        }
+        'lan-toggle' { Invoke-Control 'webobsLanShare' }
         'logout' { Invoke-Control 'webobsLogout' }
         'refresh' { Invoke-Control 'webobsRefreshCatalog' }
         'close' { $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close() }

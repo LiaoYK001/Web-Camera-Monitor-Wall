@@ -204,7 +204,21 @@ def exercise(runtime, report):
             switch = Client("127.0.0.1", receipt["switchPort"], secure=False)
             assert switch.request("/lan")[0] == 401, \
                 "the LAN switch answered without the host token"
-            evidence["checks"].append("lan-switch-rejects-unauthenticated-read")
+            assert switch.request("/lan", {"enabled": False, "port": port})[0] == 401, \
+                "the LAN switch accepted an unauthenticated toggle"
+            evidence["checks"].append("lan-switch-rejects-unauthenticated-read-and-toggle")
+
+            evidence["lastCheckpoint"] = "status-file-reports-the-entry"
+            # The installed gates and the support bundle read this file; they are
+            # never given the host token the product window uses.
+            published = read_json(profile / "run/native-status.json")
+            assert published.get("lanSwitchPort") == receipt["switchPort"], \
+                "the status file did not publish the private switch port"
+            assert published.get("lan", {}).get("enabled") is True, \
+                "the status file did not report the enabled LAN entry"
+            assert published.get("lan", {}).get("urls") == receipt["urls"], \
+                "the status file and the switch receipt disagree about the published URLs"
+            evidence["checks"].append("lan-receipt-published-for-support-diagnostics")
 
             evidence["lastCheckpoint"] = "lan-https-health"
             lan = Client(addresses[0], port, secure=True, cafile=certificate)
