@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 242 · 2026-11-19T03:16:24+08:00（UTC+08）
+> 快照版本 243 · 2026-11-19T03:28:28+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #243 · 2026-11-19T03:28:28+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：rc.57 回执直接证实两处根因：中继现已就绪并分配动态端口（streamPublishUrl=127.0.0.1:58303、streamPlaybackUrl=rtsp://127.0.0.1:58302/program，不再出现 mediamtx-timeout），但 streamError=stream-service-unavailable，因为固定 Windows OBS 构建的禁用插件清单含 obs-webrtc，whip_custom/whip_output 不存在。同一回执还证明默认总线 Program 录像真实可用：Program 20261118-191832.mp4 17,446,129 B、41 秒、mask=1、低于 600Hz RMS 1378.5、高于 660Hz RMS 908.8。已取消该 run（后续门禁必然在同一处失败）并从 #74 头 99b6734 派发 rc.58（run 44380596633，complete=true、soak=0、measure_obs_baseline=true、upgrade_previous=true），验证 RTMP 发布、成对备份恢复与 LAN 入口。/ The rc.57 receipt proves both root causes: the relay is now ready with dynamic ports (publish 127.0.0.1:58303, playback rtsp 58302, no mediamtx-timeout) while streamError=stream-service-unavailable because the pinned Windows OBS build disables obs-webrtc, so whip_custom/whip_output do not exist. The same receipt also shows a real default-bus Program MP4 (17,446,129 bytes, 41 s, mask 1, 1378.5 below 600 Hz and 908.8 above 660 Hz). Cancelled that run and dispatched rc.58 (run 44380596633) from #74 head 99b6734 to validate RTMP publishing, paired backup restore and the LAN entry.
+- 证据：run 44374662264 artifact native-product-integration-receipts-5.1.0-rc.57 (failurePhase program-streaming, streamError stream-service-unavailable); rc.58 run 44380596633 sha 99b6734
+- 源码：`1c3875fada7c561e153a8e936a01919f8df0d5ab`
 ## #242 · 2026-11-19T03:16:24+08:00 · log
 
 - Agent：`deepseek-v51-20261118-01`；任务：`V51-008`

@@ -1,7 +1,7 @@
 # 当前交接 / Current handoff
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 242 · 2026-11-19T03:16:24+08:00（UTC+08）
+> 快照版本 243 · 2026-11-19T03:28:28+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -22,6 +22,6 @@
 
 ## 最近一次同步
 
-Program 发布传输收敛为回环 RTMP：固定 Windows OBS 树以 -DENABLE_WEBRTC=OFF 构建且锁定 vcpkg 无 LibDataChannel，安装态没有 whip_custom/whip_output（rc.16 运行时清单有 rtmp-services.dll/obs-outputs.dll，无 obs-webrtc.dll），故下一次失败是 stream-service-unavailable。现用 rtmp_custom+rtmp_output+ffmpeg_aac 发布到同一按需私有 MediaMTX，中继对外 RTSP+WHEP；发布 URL 无 app 段、key=program，用固定 v1.18.2 实测路径为 program（RTSP 回读 h264+aac，视频包持续前进），带 app 段则变成 program/program 且中继关闭发布。门禁新增传输=WHEP 端点应答断言，构建契约拒绝 whip_* 并要求 rtmp_*，本机 47/47 通过。OBS 侧 WHIP 直推仍记为缺口。/ Program publishing now uses loopback RTMP (rtmp_custom+rtmp_output+ffmpeg_aac) into the same private relay because the pinned Windows OBS tree builds with -DENABLE_WEBRTC=OFF and the locked vcpkg archive has no LibDataChannel, so whip_custom/whip_output do not exist in the installed host; verified against the pinned relay that a URL without an app segment plus key program maps to path program (RTSP reads h264+aac) while an app segment produced program/program and the relay closed the publish. Gate adds transport and WHEP-endpoint assertions, build contracts now refuse whip_* and require rtmp_*, 47/47 pass locally; direct OBS WHIP stays a documented gap.
+rc.57 回执直接证实两处根因：中继现已就绪并分配动态端口（streamPublishUrl=127.0.0.1:58303、streamPlaybackUrl=rtsp://127.0.0.1:58302/program，不再出现 mediamtx-timeout），但 streamError=stream-service-unavailable，因为固定 Windows OBS 构建的禁用插件清单含 obs-webrtc，whip_custom/whip_output 不存在。同一回执还证明默认总线 Program 录像真实可用：Program 20261118-191832.mp4 17,446,129 B、41 秒、mask=1、低于 600Hz RMS 1378.5、高于 660Hz RMS 908.8。已取消该 run（后续门禁必然在同一处失败）并从 #74 头 99b6734 派发 rc.58（run 44380596633，complete=true、soak=0、measure_obs_baseline=true、upgrade_previous=true），验证 RTMP 发布、成对备份恢复与 LAN 入口。/ The rc.57 receipt proves both root causes: the relay is now ready with dynamic ports (publish 127.0.0.1:58303, playback rtsp 58302, no mediamtx-timeout) while streamError=stream-service-unavailable because the pinned Windows OBS build disables obs-webrtc, so whip_custom/whip_output do not exist. The same receipt also shows a real default-bus Program MP4 (17,446,129 bytes, 41 s, mask 1, 1378.5 below 600 Hz and 908.8 above 660 Hz). Cancelled that run and dispatched rc.58 (run 44380596633) from #74 head 99b6734 to validate RTMP publishing, paired backup restore and the LAN entry.
 
 以任务中的验收条件决定完成；没有 Windows/硬件/发布证据时保持对应事项开放。
