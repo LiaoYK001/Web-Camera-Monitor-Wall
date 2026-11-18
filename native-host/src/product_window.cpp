@@ -510,14 +510,38 @@ class ProductWindow final : public QWidget {
 		// decoder stopped feeding frames or that this Scene no longer renders the item,
 		// and the two need different fixes; only uuid prefixes, counters and counts
 		// leave this snapshot.
+		// Which layer stalled: the graphics thread (renderFrames), the media side of
+		// a source (serial) or a Scene item that still receives frames but is no longer
+		// showing. Together these separate the three causes of a frozen tile.
+		state.insert("renderFrames", qint64(obs_get_total_frames()));
+		state.insert("laggedFrames", qint64(obs_get_lagged_frames()));
+		struct MediaHealth {
+			bool showing;
+			bool active;
+			int media_state;
+		};
+		std::map<std::string, MediaHealth> media_showing;
+		obs_enum_all_sources([](void *context, obs_source_t *source) {
+			const char *uuid = obs_source_get_uuid(source);
+			const char *id = obs_source_get_unversioned_id(source);
+			if (uuid && id && std::string_view(id) == "ffmpeg_source")
+				static_cast<std::map<std::string, MediaHealth> *>(context)->emplace(
+					uuid, MediaHealth{obs_source_showing(source), obs_source_active(source),
+						int(obs_source_media_get_state(source))});
+			return true;
+		}, &media_showing);
 		QJsonArray video_inputs;
 		const auto health_now = health_clock_.elapsed();
 		for (const auto &[uuid, health] : input_health_) {
 			if (video_inputs.size() >= 16)
 				break;
+			const auto found = media_showing.find(uuid);
 			video_inputs.append(QJsonObject{{"uuid", QString::fromStdString(uuid).left(8)},
 				{"serial", qint64(health.serial)},
-				{"stalledMs", health.sampled ? qint64(health_now - health.changed_ms) : qint64(-1)}});
+				{"stalledMs", health.sampled ? qint64(health_now - health.changed_ms) : qint64(-1)},
+				{"showing", found != media_showing.end() ? found->second.showing : false},
+				{"active", found != media_showing.end() ? found->second.active : false},
+				{"mediaState", found != media_showing.end() ? found->second.media_state : 0}});
 		}
 		state.insert("videoInputs", video_inputs);
 		const auto count_items = [](obs_scene_t *scene) {
