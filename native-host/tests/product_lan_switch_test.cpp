@@ -125,7 +125,10 @@ int main(int argc, char **argv)
 		require(exchange(fixture, client, "POST", QJsonObject{{"enabled", true}, {"port", 18443}}) == 200,
 			"LAN share toggle failed");
 		require(fixture.requests.contains("POST /lan HTTP/1.1"), "LAN toggle is not a POST");
-		require(fixture.requests.contains("Content-Type: application/json"), "toggle has no JSON content type");
+		// Qt canonicalizes header names differently across versions, so the JSON body
+		// declaration is matched the same case-insensitive way as the token.
+		require(fixture.requests.toLower().contains("content-type: application/json"),
+			"toggle has no JSON content type");
 
 		fixture.next_code = 401;
 		fixture.next_body = R"({"error":"unauthorized"})";
