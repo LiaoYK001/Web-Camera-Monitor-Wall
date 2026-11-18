@@ -105,6 +105,8 @@ class ProductWindow final : public QWidget {
 	QString program_target_fingerprint_;
 	QString program_apply_state_ = "idle";
 	QString program_apply_error_;
+	bool program_apply_transient_ = false;
+	int program_apply_attempts_ = 0;
 	bool program_sync_pending_ = false;
 	quint64 program_generation_ = 0;
 	obs_scene_t *blank_scene_ = nullptr;
@@ -364,6 +366,8 @@ class ProductWindow final : public QWidget {
 			{"programOutput", output},
 			{"programApply", QJsonObject{{"state", program_apply_state_},
 				{"error", program_apply_error_},
+				{"transient", program_apply_transient_},
+				{"attempts", program_apply_attempts_},
 				{"sceneId", program_scene_id_},
 				{"targetSceneId", program_target_scene_id_}}},
 			{"windows", windows},
@@ -503,6 +507,8 @@ class ProductWindow final : public QWidget {
 		state.insert("programStudioRevision", program_studio_revision_);
 		state.insert("programApplyState", program_apply_state_);
 		state.insert("programApplyError", program_apply_error_);
+		state.insert("programApplyTransient", program_apply_transient_);
+		state.insert("programApplyAttempts", program_apply_attempts_);
 		state.insert("programTargetSceneId", program_target_scene_id_);
 		state.insert("programSyncPending", program_sync_pending_);
 		state.insert("program", program_state());
@@ -702,6 +708,8 @@ class ProductWindow final : public QWidget {
 		program_sync_pending_ = false;
 		program_apply_state_ = "idle";
 		program_apply_error_.clear();
+		program_apply_transient_ = false;
+		program_apply_attempts_ = 0;
 		program_scene_id_.clear();
 		program_fingerprint_.clear();
 		program_studio_revision_ = -1;
@@ -730,9 +738,28 @@ class ProductWindow final : public QWidget {
 		update_projector_controls();
 	}
 
+	// A Program TAKE must never latch permanently on a refusal that OBS itself can
+	// settle out of (an in-flight fade, a canvas that is still busy, a graph that has
+	// to be rebuilt). Those are retried a bounded number of times by the sync timer.
+	// Structural refusals stay permanent so a real defect is not hidden behind retries.
+	static constexpr int program_apply_attempt_limit = 4;
+	static bool program_apply_is_transient(const QString &error)
+	{
+		static const char *const prefixes[] = {"program-canvas-busy", "program-transition-not-observed",
+			"program-graph-create-failed", "program-apply-failed", "scene-canvas-not-applied",
+			"scene-source-modified", "scene-create-failed", "scene-item-create-failed",
+			"scene-audio-item-create-failed", "scene-audio-mixer", "scene-audio-meter-unavailable"};
+		return std::any_of(std::begin(prefixes), std::end(prefixes),
+			[&error](const char *prefix) { return error.startsWith(QLatin1String(prefix)); });
+	}
+
 	void fail_program(qint64 revision, const QString &scene_id, const QString &fingerprint,
 		const QString &error)
 	{
+		const bool same_target = program_apply_state_ == "failed" &&
+			program_target_scene_id_ == scene_id && program_target_fingerprint_ == fingerprint;
+		program_apply_attempts_ = same_target ? program_apply_attempts_ + 1 : 1;
+		program_apply_transient_ = program_apply_is_transient(error);
 		program_target_revision_ = revision;
 		program_target_scene_id_ = scene_id;
 		program_target_fingerprint_ = fingerprint;
@@ -794,6 +821,8 @@ class ProductWindow final : public QWidget {
 		program_scene_id_ = scene_id;
 		program_fingerprint_ = fingerprint;
 		program_apply_error_.clear();
+		program_apply_transient_ = false;
+		program_apply_attempts_ = 0;
 		program_studio_revision_ = studio_revision;
 		program_target_revision_ = studio_revision;
 		program_target_scene_id_ = scene_id;
@@ -876,7 +905,8 @@ class ProductWindow final : public QWidget {
 				return;
 			}
 			if (scene_id == program_target_scene_id_ && fingerprint == program_target_fingerprint_ &&
-				program_apply_state_ == "failed")
+				program_apply_state_ == "failed" &&
+				(!program_apply_transient_ || program_apply_attempts_ >= program_apply_attempt_limit))
 				return;
 			if (!program_scene_id_.isEmpty() && scene_id == program_scene_id_ &&
 				fingerprint == program_fingerprint_ && program_apply_state_ == "applied") {

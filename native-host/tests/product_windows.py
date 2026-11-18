@@ -277,7 +277,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             program = value.get("program")
             program = program if isinstance(program, dict) else {}
             return {key: value.get(key) for key in ("programSceneId", "programApplyState",
-                "programApplyError", "programTargetSceneId", "phase")} | {
+                "programApplyError", "programApplyTransient", "programApplyAttempts",
+                "programTargetSceneId", "phase")} | {
                 "programMediaSources": program.get("mediaSources")}
 
         def ui(action, **fields):
@@ -1937,7 +1938,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 "phase", "mediaSources", "sessionBound", "catalogItems", "selectionIndices", "previewLocked",
                 "lastRetirementMs", "mainGeneration", "studioRevision", "renderer", "program",
                 "programSceneId", "programSceneFingerprint", "programApplyState", "programApplyError",
-                "programTargetSceneId", "startupStudioDeferred") if key in observed}
+                "programApplyTransient", "programApplyAttempts", "programTargetSceneId",
+                "startupStudioDeferred") if key in observed}
             evidence["observedState"]["watchingSavedScene"] = bool(observed.get("sceneId"))
             evidence["observedState"]["programOutput"] = observed.get("programOutput", {})
             evidence["observedState"]["supportBundle"] = observed.get("supportBundle", {})
