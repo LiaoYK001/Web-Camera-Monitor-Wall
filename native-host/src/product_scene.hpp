@@ -14,6 +14,16 @@ struct ProductVideoProgress {
 	bool available = false;
 	std::int64_t serial = 0; // Opaque delivered-video callback serial, never a rendering/hardware claim.
 };
+struct ProductAudioInputProgress {
+	int track = 0;
+	double gain = 1.0;
+	bool muted = false;
+	int sync_offset_ms = 0;
+	// The leading silence the owned FFmpeg mixer actually applies to this track
+	// after the mix-wide negative-offset normalization.
+	int applied_delay_ms = 0;
+};
+
 struct ProductAudioProgress {
 	std::string source_id;
 	bool available = false;
@@ -26,6 +36,7 @@ struct ProductAudioProgress {
 	bool muted = false;
 	unsigned int mixers = 0;
 	std::int64_t sync_offset = 0;
+	std::vector<ProductAudioInputProgress> inputs;
 	std::string mixer_log;
 };
 

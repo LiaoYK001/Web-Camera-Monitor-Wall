@@ -117,6 +117,35 @@ def process_creation_time(pid):
         kernel.CloseHandle(handle)
 
 
+def child_processes(powershell, pid):
+    """Direct children of the native host, for on-demand process ownership claims.
+
+    The product claims MediaMTX and the per-source FFmpeg mixer start only when
+    a Scene or Program output actually needs them. Enumerating the host's own
+    children is the only way to prove that no such helper is running while the
+    user is doing plain RTSP monitoring.
+    """
+    listing = subprocess.run([powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+        f"Get-CimInstance Win32_Process -Filter 'ParentProcessID={int(pid)}' | "
+        'ForEach-Object { "$($_.ProcessId)|$($_.Name)" }'],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=25)
+    assert listing.returncode == 0, f"could not enumerate native host children: {listing.stderr[:200]}"
+    children = []
+    for line in listing.stdout.splitlines():
+        pid_text, _, name = line.partition("|")
+        if pid_text.strip().isdigit():
+            children.append((int(pid_text), name.strip().lower()))
+    return children
+
+
+def terminate_process(powershell, pid):
+    """Kill one explicitly identified child PID; never a name-wide sweep."""
+    killed = subprocess.run([powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+        f"Stop-Process -Id {int(pid)} -Force"], capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=25)
+    assert killed.returncode == 0, f"could not terminate PID {pid}: {killed.stderr[:200]}"
+
+
 def exercise(runtime, report, *, with_media=False, retained_profile=None):
     if os.name != "nt":
         raise ValueError("actual Windows product gate requires Windows")
@@ -949,6 +978,19 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 evidence["checks"].extend(["two-fixed-scene-projectors-share-owned-decoders",
                     "main-switch-preserves-two-different-projector-scenes", "native-projector-fullscreen-windowed-final-pixels",
                     "closing-one-projector-preserves-other-and-main"])
+                # Direct-only operation: plain RTSP monitoring with a silent Program
+                # Scene must not have started the private MediaMTX relay or any
+                # FFmpeg audio mixer as a child of the native host. Both appear
+                # later only because a Scene or a Program output asked for them.
+                host_pid = int(state()["pid"])
+                remember_owned_pids([pid for pid, _ in child_processes(powershell, host_pid)])
+                monitoring_children = child_processes(powershell, host_pid)
+                unwanted = sorted({name for pid, name in monitoring_children
+                    if name in ("mediamtx.exe", "ffmpeg.exe")})
+                assert not unwanted, \
+                    f"Program output helpers were running during Direct-only monitoring: {unwanted}"
+                evidence["directOnlyHostChildren"] = sorted({name for _, name in monitoring_children})
+                evidence["checks"].append("program-output-helpers-start-on-demand-only")
                 phase = "native-program-take"
                 checkpoint("program-choose")
                 assert ui("choose", indices=[1, 2, 3, 4, 5])
@@ -1102,6 +1144,23 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 # Program scene, then verify the finalized MP4's streams and
                 # final pixels, including distinct temporal timecode frames.
                 phase = "program-recording"
+                # Negative control on the real output path: a blocked recording root
+                # must refuse the start and report the concrete reason in the status
+                # receipt instead of leaving the product claiming an active recording.
+                program_recordings = profile / "recordings" / "program"
+                assert program_recordings.is_dir(), "supervisor did not prepare the Program recordings root"
+                program_recordings.rmdir()
+                program_recordings.write_text("blocked by the product gate", encoding="utf-8")
+                assert ui("record-program")
+                wait_for(lambda: state().get("programOutput", {}).get("recording") is False and
+                    state().get("programOutput", {}).get("recordingError") == "recording-directory-failed",
+                    "blocked Program recording root did not surface a concrete failure", timeout=10)
+                evidence["recordingFailureReceipt"] = state().get("programOutput", {}).get("recordingError")
+                assert not state().get("programOutput", {}).get("recordingPath"), \
+                    "refused recording still promised an artifact path"
+                program_recordings.unlink()
+                program_recordings.mkdir()
+                checkpoint("program-recording-refused")
                 assert ui("record-program")
                 wait_for(lambda: state().get("programOutput", {}).get("recording") is True,
                     "native Program recording did not start", timeout=20)
@@ -1262,6 +1321,250 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     "native Program publisher did not release MediaMTX", timeout=30)
                 evidence["checks"].append("program-composite-whip-stream")
                 checkpoint("program-streaming-stopped")
+                # --- Received-output audio acceptance ---------------------------
+                # Everything below decodes what the user actually receives: the
+                # finished Program MP4 and the published stream. Scene booleans and
+                # stream headers are not evidence that a chosen bus carried the
+                # expected tone or that another bus stayed free of cross-talk.
+                def apply_program_scene(scene, expected_media):
+                    code, _, studio = request("/api/v1/studio", cookie=cookie)
+                    assert code == 200
+                    studio["scenes"] = [item for item in studio["scenes"]
+                        if item["id"] != scene["id"]] + [scene]
+                    studio["programSceneId"] = scene["id"]
+                    code, _, studio = request("/api/v1/studio", studio, cookie=cookie, method="PUT",
+                        revision=studio["revision"])
+                    assert code == 200, f"Studio did not accept the {scene['id']} Program Scene"
+                    wait_for(lambda: state().get("programSceneId") == scene["id"] and
+                        state().get("programApplyState") == "applied" and
+                        state().get("program", {}).get("mediaSources") == expected_media,
+                        f"native Program did not apply the {scene['id']} Scene", timeout=25)
+
+                def record_program_output(label):
+                    assert ui("record-program")
+                    wait_for(lambda: state().get("programOutput", {}).get("recording") is True,
+                        f"{label} Program recording did not start", timeout=20)
+                    time.sleep(5.5)
+                    assert ui("record-program")
+                    def finished():
+                        value = state().get("programOutput", {})
+                        path = value.get("recordingPath") if isinstance(value, dict) else None
+                        return value if (value.get("recording") is False and
+                            value.get("recordingReady") is True and isinstance(path, str) and
+                            Path(path).is_file() and Path(path).suffix.lower() == ".mp4") else None
+                    receipt = wait_for(finished, f"{label} Program MP4 was not finalized", timeout=120)
+                    assert audio_stream_count(Path(receipt["recordingPath"])) >= 1, \
+                        f"{label} Program MP4 has no decodable stream"
+                    return receipt
+
+                def advancing_video_frames(path, minimum):
+                    """Video really moved: enough frames and strictly rising timestamps."""
+                    probe = subprocess.run([str(runtime / "bin/ffprobe.exe"), "-v", "error",
+                        "-select_streams", "v:0", "-read_intervals", "%+#40",
+                        "-show_entries", "frame=pts_time", "-of", "json", str(path)],
+                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+                    assert probe.returncode == 0, f"{path.name} video stream is not probeable"
+                    stamps = [float(item["pts_time"]) for item in json.loads(probe.stdout).get("frames", [])
+                        if item.get("pts_time") is not None]
+                    assert len(stamps) >= minimum, f"{path.name} delivered fewer than {minimum} video frames"
+                    assert all(later > earlier for earlier, later in zip(stamps, stamps[1:])), \
+                        f"{path.name} video timestamps are not advancing"
+                    return len(stamps)
+
+                def audio_stream_count(path):
+                    probe = subprocess.run([str(runtime / "bin/ffprobe.exe"), "-v", "error",
+                        "-select_streams", "a", "-show_entries", "stream=index,codec_name,codec_type",
+                        "-of", "json", str(path)], capture_output=True, text=True,
+                        encoding="utf-8", errors="replace", timeout=30)
+                    assert probe.returncode == 0, f"{path.name} audio streams are not probeable"
+                    streams = json.loads(probe.stdout).get("streams", [])
+                    assert all(item.get("codec_type") == "audio" for item in streams), \
+                        "audio stream probe returned a non-audio stream"
+                    return len(streams)
+
+                def program_audio_entry(source_id):
+                    """The applied native mix source, or None while a Scene switch settles."""
+                    matches = [item for item in state().get("audioSources", [])
+                        if item.get("sourceId") == source_id]
+                    return matches[0] if len(matches) == 1 else None
+
+                phase = "program-bus-isolation"
+                # Two Sources on two different output buses with two different fixed
+                # pitches. The finished file must show each bus carrying only its own
+                # tone: a recorder or mix source that leaks across buses produces the
+                # other pitch in the same encoded track.
+                isolation_scene = {"schemaVersion": 6, "revision": 0, "id": "fixture-isolation",
+                    "name": "Fixture Program bus isolation",
+                    "canvas": {"width": 1920, "height": 1080, "backgroundColor": "#000000"},
+                    "sources": [
+                        {"id": "iso-low", "kind": "camera", "name": "Bus two camera",
+                            "cameraId": "fixture-1", "profileId": "main", "hardwareDecode": "auto",
+                            "muted": False, "volume": 1, "syncOffsetMs": 0, "monitoring": "off",
+                            "audioTrack": 2, "audioInputs": [
+                                {"track": 0, "gain": 1, "muted": False, "syncOffsetMs": 0}]},
+                        {"id": "iso-high", "kind": "camera", "name": "Bus three camera",
+                            "cameraId": "fixture-2", "profileId": "main", "hardwareDecode": "auto",
+                            "muted": False, "volume": 1, "syncOffsetMs": 0, "monitoring": "off",
+                            "audioTrack": 3, "audioInputs": [
+                                {"track": 0, "gain": 1, "muted": False, "syncOffsetMs": 0}]}],
+                    "items": [
+                        {"id": "iso-low-item", "sourceId": "iso-low", "x": 0, "y": 0,
+                            "width": 960, "height": 1080, "scaleMode": "contain",
+                            "crop": {"top": 0, "right": 0, "bottom": 0, "left": 0},
+                            "visible": True, "locked": True, "zIndex": 0},
+                        {"id": "iso-high-item", "sourceId": "iso-high", "x": 960, "y": 0,
+                            "width": 960, "height": 1080, "scaleMode": "contain",
+                            "crop": {"top": 0, "right": 0, "bottom": 0, "left": 0},
+                            "visible": True, "locked": True, "zIndex": 1}]}
+                apply_program_scene(isolation_scene, 4)
+                checkpoint("program-bus-isolation-applied")
+                assert {item.get("sourceId") for item in state().get("audioSources", [])} == {
+                    "fixture-isolation.iso-low", "fixture-isolation.iso-high"}, \
+                    "bus isolation Scene did not create exactly two native mix sources"
+                assert {item.get("mixers") for item in state().get("audioSources", [])} == {2.0, 4.0}, \
+                    "the two mix sources did not route to two different OBS output buses"
+                isolation = record_program_output("bus isolation")
+                isolation_path = Path(isolation["recordingPath"])
+                assert isolation.get("audioTracks") == 6, \
+                    f"bus isolation recording encoded mask {isolation.get('audioTracks')}, expected 6"
+                assert audio_stream_count(isolation_path) == 2, \
+                    "bus isolation recording did not encode one audio track per selected bus"
+                isolation_first_440 = pixel_windows.tone_amplitude(ffmpeg, str(isolation_path), 0, 440)
+                isolation_first_1200 = pixel_windows.tone_amplitude(ffmpeg, str(isolation_path), 0, 1200)
+                isolation_second_1200 = pixel_windows.tone_amplitude(ffmpeg, str(isolation_path), 1, 1200)
+                isolation_second_440 = pixel_windows.tone_amplitude(ffmpeg, str(isolation_path), 1, 440)
+                evidence["programBusIsolation"] = {
+                    "busTwo": {"at440Hz": isolation_first_440, "at1200Hz": isolation_first_1200},
+                    "busThree": {"at1200Hz": isolation_second_1200, "at440Hz": isolation_second_440}}
+                assert isolation_first_440 > 200 and isolation_first_1200 < 60, \
+                    "bus two recording lost its 440 Hz tone or leaked the other bus's pitch"
+                assert isolation_second_1200 > 200 and isolation_second_440 < 60, \
+                    "bus three recording lost its 1200 Hz tone or leaked the other bus's pitch"
+                advancing_video_frames(isolation_path, 15)
+                evidence["checks"].append("program-output-buses-are-isolated-in-the-recorded-file")
+                checkpoint("program-bus-isolation-decoded")
+                phase = "program-track-controls"
+                # Per-track mute and gain, verified acoustically in the same file.
+                def alt_variant(scene_id, inputs):
+                    variant = json.loads(json.dumps(alt_scene))
+                    variant.update(id=scene_id, name="Fixture Program " + scene_id)
+                    variant["sources"][0]["audioInputs"] = inputs
+                    return variant
+                muted_scene = alt_variant("fixture-alt-mute", [
+                    {"track": 0, "gain": 1, "muted": False, "syncOffsetMs": 0},
+                    {"track": 1, "gain": 1, "muted": True, "syncOffsetMs": 0}])
+                apply_program_scene(muted_scene, 2)
+                muted = record_program_output("per-track mute")
+                muted_path = Path(muted["recordingPath"])
+                muted_440 = pixel_windows.tone_amplitude(ffmpeg, str(muted_path), 0, 440)
+                muted_880 = pixel_windows.tone_amplitude(ffmpeg, str(muted_path), 0, 880)
+                evidence["programTrackMute"] = {"at440Hz": muted_440, "at880Hz": muted_880,
+                    "audioTrackMask": muted.get("audioTracks")}
+                assert muted.get("audioTracks") == 2, \
+                    f"muted-track recording encoded mask {muted.get('audioTracks')}, expected 2"
+                assert muted_440 > 200 and muted_880 < 60, \
+                    "muting one input track did not remove that pitch from the received file"
+                evidence["checks"].append("per-track-mute-is-audible-in-the-recorded-file")
+                checkpoint("program-track-mute-decoded")
+                full_gain = alt_variant("fixture-alt-gain-full", [
+                    {"track": 0, "gain": 1, "muted": False, "syncOffsetMs": 0},
+                    {"track": 1, "gain": 1, "muted": False, "syncOffsetMs": 0}])
+                apply_program_scene(full_gain, 2)
+                gain_full = record_program_output("per-track gain reference")
+                gain_full_path = Path(gain_full["recordingPath"])
+                gain_full_440 = pixel_windows.tone_amplitude(ffmpeg, str(gain_full_path), 0, 440)
+                gain_full_880 = pixel_windows.tone_amplitude(ffmpeg, str(gain_full_path), 0, 880)
+                low_gain = alt_variant("fixture-alt-gain-low", [
+                    {"track": 0, "gain": 1, "muted": False, "syncOffsetMs": 0},
+                    {"track": 1, "gain": 0.2, "muted": False, "syncOffsetMs": 0}])
+                apply_program_scene(low_gain, 2)
+                gain_low = record_program_output("per-track gain reduced")
+                gain_low_path = Path(gain_low["recordingPath"])
+                gain_low_440 = pixel_windows.tone_amplitude(ffmpeg, str(gain_low_path), 0, 440)
+                gain_low_880 = pixel_windows.tone_amplitude(ffmpeg, str(gain_low_path), 0, 880)
+                evidence["programTrackGain"] = {"gainOne": {"at440Hz": gain_full_440,
+                    "at880Hz": gain_full_880}, "gainPointTwo": {"at440Hz": gain_low_440,
+                    "at880Hz": gain_low_880}}
+                assert gain_full_440 > 200 and gain_full_880 > 200, \
+                    "both tracks at gain one were not audible in the received file"
+                # Linear gain 0.2 leaves about a fifth of that pitch's amplitude.
+                # The tolerance excludes "gain reached the mix source but the
+                # mixer ignored it" while allowing for AAC and resampler loss.
+                assert 0.05 < gain_low_880 / gain_full_880 < 0.55, \
+                    f"gain 0.2 did not scale the second track ({gain_low_880} of {gain_full_880})"
+                assert gain_low_440 > 200 and 0.6 < gain_low_440 / gain_full_440 < 1.5, \
+                    "reducing one track's gain also changed the other track"
+                evidence["checks"].append("per-track-gain-is-audible-in-the-recorded-file")
+                checkpoint("program-track-gain-decoded")
+                phase = "program-track-offset"
+                # Per-track sync offsets reach the owned mixer as leading silence, and
+                # the negative offset normalizes into the mix source's own sync offset.
+                offset_scene = alt_variant("fixture-alt-offset", [
+                    {"track": 0, "gain": 1, "muted": False, "syncOffsetMs": 300},
+                    {"track": 1, "gain": 1, "muted": False, "syncOffsetMs": -200}])
+                apply_program_scene(offset_scene, 2)
+                offset_entry = wait_for(lambda: program_audio_entry("fixture-alt-offset.fixture-alt-source")
+                    if program_audio_entry("fixture-alt-offset.fixture-alt-source").get("available") else None,
+                    "offset Scene mix source did not become available", timeout=20)
+                assert offset_entry.get("syncOffset") == -200_000_000, \
+                    f"negative per-track offset did not normalize into the mix source ({offset_entry.get('syncOffset')})"
+                applied = [(item.get("track"), item.get("appliedDelayMs"), item.get("syncOffsetMs"))
+                    for item in offset_entry.get("audioInputs", [])]
+                assert applied == [(0, 500, 300), (1, 0, -200)], \
+                    f"per-track offsets did not reach the applied mixer as configured: {applied}"
+                assert offset_entry.get("mixers") == 2, "offset Scene mix source changed its output bus"
+                evidence["programTrackOffsets"] = {"sourceSyncNs": offset_entry.get("syncOffset"),
+                    "appliedInputs": applied}
+                evidence["checks"].append("per-track-sync-offsets-reach-the-applied-mixer")
+                checkpoint("program-track-offset-applied")
+                phase = "program-whip-disconnect"
+                # WHIP relay loss: killing the product's own private MediaMTX child
+                # must surface a concrete disconnect instead of a permanently
+                # "connected" publisher, and the next start must recover.
+                relay_children = [pid for pid, name in child_processes(powershell, int(state()["pid"]))
+                    if name == "mediamtx.exe"]
+                assert relay_children == [], "MediaMTX survived the normal publisher stop"
+                assert ui("stream-program")
+                recovered_stream = wait_for(streaming_ready, "Program WHIP did not start for the disconnect probe",
+                    timeout=40)
+                relay_children = [pid for pid, name in child_processes(powershell, int(state()["pid"]))
+                    if name == "mediamtx.exe"]
+                remember_owned_pids(relay_children)
+                assert len(relay_children) == 1, \
+                    f"Program streaming owned {len(relay_children)} MediaMTX children, expected one"
+                evidence["whipRelayPid"] = relay_children[0]
+                terminate_process(powershell, relay_children[0])
+                wait_for(lambda: state().get("programOutput", {}).get("streaming") is False and
+                    str(state().get("programOutput", {}).get("streamError", "")).startswith("whip-") and
+                    state().get("programOutput", {}).get("mediaMtxRunning") is False,
+                    "killing the private MediaMTX relay did not surface a WHIP disconnect", timeout=30)
+                evidence["whipDisconnectError"] = str(state().get("programOutput", {}).get("streamError"))[:120]
+                disconnected_url = recovered_stream.get("streamPlaybackUrl")
+                checkpoint("program-whip-disconnect-reported")
+                assert ui("stream-program")
+                restarted_stream = wait_for(streaming_ready,
+                    "Program WHIP could not start again after a relay loss", timeout=40)
+                assert restarted_stream.get("streamConnected") is True, \
+                    "restarted publisher never delivered frames again"
+                assert restarted_stream.get("streamPlaybackUrl") != disconnected_url, \
+                    "recovered publisher reused the relay endpoint of the killed process"
+                replay = subprocess.run([str(runtime / "bin/ffprobe.exe"), "-v", "error",
+                    "-rtsp_transport", "tcp", "-show_entries", "stream=codec_name,codec_type", "-of", "json",
+                    restarted_stream["streamPlaybackUrl"]], capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", timeout=30)
+                assert replay.returncode == 0 and any(item.get("codec_type") == "video"
+                    for item in json.loads(replay.stdout).get("streams", [])), \
+                    "recovered publisher is not readable by a real consumer"
+                assert ui("stream-program")
+                wait_for(lambda: state().get("programOutput", {}).get("streaming") is False and
+                    state().get("programOutput", {}).get("mediaMtxRunning") is False,
+                    "recovered publisher did not release MediaMTX after stopping", timeout=30)
+                residual = sorted({name for pid, name in child_processes(powershell, int(state()["pid"]))
+                    if name in ("mediamtx.exe", "ffmpeg.exe")})
+                assert residual == [], f"Program output left helper processes after stopping: {residual}"
+                evidence["checks"].extend(["whip-relay-loss-is-reported-and-recoverable",
+                    "program-output-helpers-are-released-after-stop"])
+                checkpoint("program-output-resources-released")
                 phase = "support-bundle"
                 assert ui("support-bundle")
                 def support_bundle_ready():

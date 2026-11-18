@@ -350,6 +350,32 @@ def band_rms(ffmpeg: Path, source: str, stream_index: int, *, lowpass: float = 0
     return round(math.sqrt(sum(value * value for value in samples) / len(samples)), 1)
 
 
+def tone_amplitude(ffmpeg: Path, source: str, stream_index: int, frequency: float, *,
+                   sample_rate: int = 8000, duration: float = 3.0) -> float:
+    """Lock-in amplitude of one exact pitch inside a decoded stream.
+
+    band_rms proves that a band carries energy, but FFmpeg's lowpass/highpass are
+    two-pole filters: a 440 Hz tone still leaks measurably above a 660 Hz
+    highpass, so band energy cannot prove the OTHER pitch is absent. Correlating
+    the samples with sin/cos at the target frequency answers the presence and
+    absence questions directly and needs no third-party dependency.
+    """
+    samples = _decode_pcm(ffmpeg, source, stream_index, sample_rate, duration)
+    if samples is None:
+        raise AssertionError("decoded audio window is shorter than one second")
+    step = 2  # 4 kHz analysis rate still covers the fixture pitches.
+    values = samples[::step]
+    rate = sample_rate / step
+    # Skip decoder priming so the first block cannot invent amplitude.
+    values = values[len(values) // 20:]
+    sine = cosine = 0.0
+    for index, value in enumerate(values):
+        angle = 2.0 * math.pi * frequency * index / rate
+        sine += value * math.sin(angle)
+        cosine += value * math.cos(angle)
+    return round(2.0 * math.hypot(sine, cosine) / len(values), 1)
+
+
 def tone_probe(ffmpeg: Path, source: str, stream_index: int, *, sample_rate: int = 8000,
                duration: float = 2.0) -> tuple[float, float] | None:
     """Decode one audio stream to mono PCM and estimate its dominant pure tone.
@@ -387,11 +413,19 @@ def make_fixtures(private: Path, ffmpeg: Path, ffprobe: Path, node: str, *, all_
                           "-x265-params", f"pools=1:frame-threads=1:keyint=10:min-keyint=10:scenecut=0:b-adapt=0:bframes={requested_b_frames}:log-level=error"]
         command = [str(ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-f", "rawvideo",
                    "-pixel_format", "rgb24", "-video_size", "320x180", "-framerate", "10", "-i", str(raw)]
-        if channel == 0:
-            command += ["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=8",
-                        "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=8",
-                        "-map", "0:v:0", "-map", "1:a:0", "-map", "2:a:0",
-                        "-c:a", "aac", "-b:a", "64k", "-shortest"]
+        # Fixture one carries two distinct pitches so a per-track mix can prove
+        # both reached the output; fixture two carries a third pitch on its own
+        # track so two Sources routed to different output buses can be separated
+        # in the recorded file instead of only counting streams.
+        tones = (440, 880) if channel == 0 else ((1200,) if channel == 1 else ())
+        if tones:
+            for frequency in tones:
+                command += ["-f", "lavfi", "-i",
+                            f"sine=frequency={frequency}:sample_rate=48000:duration=8"]
+            command += ["-map", "0:v:0"]
+            for index in range(len(tones)):
+                command += ["-map", f"{index + 1}:a:0"]
+            command += ["-c:a", "aac", "-b:a", "64k", "-shortest"]
         else:
             command += ["-an"]
         command += [*video_args, "-f", "matroska", str(video)]
@@ -406,25 +440,26 @@ def make_fixtures(private: Path, ffmpeg: Path, ffprobe: Path, node: str, *, all_
             raise AssertionError("Encoded fixture codec/dimensions/reordering did not match its specification")
         audio_tracks = 0
         audio_tones = []
-        if channel == 0:
+        if tones:
             audio_probe = subprocess.run(
                 [str(ffprobe), "-v", "error", "-select_streams", "a", "-show_entries",
                  "stream=index,codec_type,codec_name", "-of", "json", str(video)],
                 check=True, capture_output=True, text=True, timeout=20)
             audio_streams = json.loads(audio_probe.stdout).get("streams", [])
-            if len(audio_streams) != 2 or any(item.get("codec_type") != "audio" for item in audio_streams):
-                raise AssertionError("Encoded multi-track fixture did not contain two audio tracks")
-            audio_tracks = 2
-            # Decode the actual PCM instead of trusting two stream headers. The
+            if len(audio_streams) != len(tones) or any(item.get("codec_type") != "audio" for item in audio_streams):
+                raise AssertionError("Encoded fixture did not contain the expected audio tracks")
+            audio_tracks = len(tones)
+            # Decode the actual PCM instead of trusting stream headers. The
             # tracks carry different fixed pitches, so a later Program artifact
-            # can prove which track reached the mix rather than only that two
-            # tracks exist in the container.
-            measured = [tone_probe(ffmpeg, str(video), index) for index in (0, 1)]
+            # can prove which track reached the mix rather than only that the
+            # container lists them.
+            measured = [tone_probe(ffmpeg, str(video), index) for index in range(len(tones))]
             if any(item is None for item in measured):
                 raise AssertionError("Fixture audio track produced no decodable one-second window")
             assert all(item[0] > 200 for item in measured), "decoded fixture audio is silent"
-            if not (400 <= measured[0][1] <= 480 and 820 <= measured[1][1] <= 940):
-                raise AssertionError("Fixture audio tracks are not the two expected distinguishable tones")
+            for wanted, (rms, hz) in zip(tones, measured):
+                if not wanted - 40 <= hz <= wanted + 40:
+                    raise AssertionError(f"Fixture audio track {wanted} Hz decoded as {hz} Hz")
             audio_tones = [item[1] for item in measured]
         pictures, b_pictures = picture_counts(document.get("frames"), requested_b_frames > 0)
         fixtures.append({"channel": channel + 1, "codec": codec, "width": 320, "height": 180,

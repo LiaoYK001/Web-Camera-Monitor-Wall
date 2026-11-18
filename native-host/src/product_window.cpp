@@ -504,6 +504,11 @@ class ProductWindow final : public QWidget {
 			for (const auto &audio : graph->audio_progress()) {
 				if (!audio_seen.insert(audio.source_id).second)
 					continue;
+				QJsonArray audio_inputs;
+				for (const auto &input : audio.inputs)
+					audio_inputs.append(QJsonObject{{"track", input.track}, {"gain", input.gain},
+						{"muted", input.muted}, {"syncOffsetMs", input.sync_offset_ms},
+						{"appliedDelayMs", input.applied_delay_ms}});
 				audio_sources.append(QJsonObject{{"sourceId", QString::fromStdString(audio.source_id)},
 					{"available", audio.available}, {"active", audio.source_active},
 					{"showing", audio.source_showing}, {"processExitCode", audio.process_exit_code},
@@ -511,6 +516,7 @@ class ProductWindow final : public QWidget {
 					{"mediaState", audio.media_state}, {"volume", audio.volume},
 					{"muted", audio.muted}, {"mixers", double(audio.mixers)},
 					{"syncOffset", double(audio.sync_offset)},
+					{"audioInputs", audio_inputs},
 					{"mixerLog", QString::fromStdString(audio.mixer_log)}});
 			}
 		};

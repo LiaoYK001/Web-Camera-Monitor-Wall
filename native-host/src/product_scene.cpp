@@ -424,6 +424,14 @@ std::vector<ProductAudioProgress> ProductSceneGraph::audio_progress()
 			obs_source_muted(entry->audio_source),
 			unsigned(obs_source_get_audio_mixers(entry->audio_source)),
 			std::int64_t(obs_source_get_sync_offset(entry->audio_source)),
+			[&entry] {
+				std::vector<ProductAudioInputProgress> inputs;
+				const int normalization = audio_normalization(entry->configuration);
+				for (const auto &input : entry->configuration.audio_inputs)
+					inputs.push_back({input.track, input.gain, input.muted, input.sync_offset_ms,
+						(std::max)(0, normalization + input.sync_offset_ms)});
+				return inputs;
+			}(),
 			std::move(log)});
 	}
 #endif
