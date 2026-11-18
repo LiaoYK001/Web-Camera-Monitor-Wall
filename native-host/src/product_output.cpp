@@ -122,7 +122,7 @@ bool wait_output_inactive(obs_output_t *output, int timeout_ms)
 	return !obs_output_active(output);
 }
 
-// An encoded AV output (ffmpeg muxer, WHIP) cannot start with zero audio
+// An encoded AV output (ffmpeg muxer, RTMP) cannot start with zero audio
 // encoders: libobs refuses the start inside can_begin_data_capture() and the
 // plugin returns false without ever setting an output-level error. A Scene
 // without any routed audio therefore records or publishes one silent track on
@@ -161,7 +161,7 @@ QString relay_log_tail(const QByteArray &bytes)
 	return text.replace(QStringLiteral("://"), QStringLiteral(":/"));
 }
 
-QString media_mtx_config(int api_port, int rtsp_port, int whip_port, int udp_port)
+QString media_mtx_config(int api_port, int rtsp_port, int webrtc_port, int udp_port, int rtmp_port)
 {
 	return QStringLiteral(
 		// MediaMTX accepts only stdout, file and syslog here; the pinned v1.18.2 relay
@@ -190,7 +190,8 @@ QString media_mtx_config(int api_port, int rtsp_port, int whip_port, int udp_por
 		"rtspTransports: [tcp]\n"
 		"rtspEncryption: \"no\"\n"
 		"rtspAddress: 127.0.0.1:%2\n"
-		"rtmp: false\n"
+		"rtmp: true\n"
+		"rtmpAddress: 127.0.0.1:%5\n"
 		"hls: false\n"
 		"srt: false\n"
 		"webrtc: true\n"
@@ -208,7 +209,7 @@ QString media_mtx_config(int api_port, int rtsp_port, int whip_port, int udp_por
 		"  source: publisher\n"
 		"  overridePublisher: false\n"
 		"paths:\n"
-		"  program:\n").arg(api_port).arg(rtsp_port).arg(whip_port).arg(udp_port);
+		"  program:\n").arg(api_port).arg(rtsp_port).arg(webrtc_port).arg(udp_port).arg(rtmp_port);
 }
 
 } // namespace
@@ -221,7 +222,10 @@ struct ProductProgramOutputImpl {
 	QString recording_error;
 	QString stream_error;
 	QString stream_publish_url;
+	QString stream_publish_server;
+	QString stream_transport = QStringLiteral("rtmp");
 	QString stream_playback_url;
+	QString stream_playback_whep;
 	bool recording = false;
 	bool recording_ready = false;
 	bool streaming = false;
@@ -241,10 +245,10 @@ struct ProductProgramOutputImpl {
 	quint32 streaming_tracks = 0;
 	// The mask actually encoded into the retained finished recording.
 	quint32 completed_tracks = 0;
-	Output whip_output;
-	Encoder whip_video;
-	Encoder whip_audio;
-	Service whip_service;
+	Output publish_output;
+	Encoder publish_video;
+	Encoder publish_audio;
+	Service publish_service;
 
 	explicit ProductProgramOutputImpl(QString root) : data_root(std::move(root))
 	{
@@ -265,10 +269,10 @@ struct ProductProgramOutputImpl {
 	}
 	void release_streaming()
 	{
-		whip_output.reset();
-		whip_video.reset();
-		whip_audio.reset();
-		whip_service.reset();
+		publish_output.reset();
+		publish_video.reset();
+		publish_audio.reset();
+		publish_service.reset();
 	}
 	void stop_media_mtx()
 	{
@@ -289,19 +293,23 @@ struct ProductProgramOutputImpl {
 			return false;
 		}
 		// Every listener of this private relay is allocated as a free loopback port,
-		// including the WHIP/WebRTC address. The product's own distribution gateway
+		// including the RTMP publish address. The product's own distribution gateway
 		// MediaMTX binds WebRTC on 8889 (gateway/mediamtx.yml), so a fixed publish
 		// port made the Program output refuse to start, with an empty streamError,
-		// whenever that gateway was running; the WHIP URL the encoder publishes to
-		// is derived from the port actually allocated here.
+		// whenever that gateway was running; the publish URL the encoder sends to is
+		// derived from the port actually allocated here.
 		const int api_port = free_tcp_port();
 		int rtsp_port = free_tcp_port();
 		while (rtsp_port && rtsp_port == api_port) rtsp_port = free_tcp_port();
-		int whip_port = free_tcp_port();
-		while (whip_port && (whip_port == api_port || whip_port == rtsp_port))
-			whip_port = free_tcp_port();
+		int webrtc_port = free_tcp_port();
+		while (webrtc_port && (webrtc_port == api_port || webrtc_port == rtsp_port))
+			webrtc_port = free_tcp_port();
+		int rtmp_port = free_tcp_port();
+		while (rtmp_port && (rtmp_port == api_port || rtmp_port == rtsp_port ||
+			rtmp_port == webrtc_port))
+			rtmp_port = free_tcp_port();
 		const int udp_port = free_udp_port();
-		if (!api_port || !rtsp_port || !whip_port || !udp_port) {
+		if (!api_port || !rtsp_port || !webrtc_port || !udp_port || !rtmp_port) {
 			stream_error = error = "mediamtx-port-failed";
 			return false;
 		}
@@ -313,7 +321,8 @@ struct ProductProgramOutputImpl {
 		const QString config_path = run_dir.absoluteFilePath("mediamtx.yml");
 		QSaveFile config(config_path);
 		if (!config.open(QIODevice::WriteOnly) ||
-		    config.write(media_mtx_config(api_port, rtsp_port, whip_port, udp_port).toUtf8()) < 0 ||
+		    config.write(media_mtx_config(api_port, rtsp_port, webrtc_port, udp_port,
+			    rtmp_port).toUtf8()) < 0 ||
 		    !config.commit()) {
 			stream_error = error = "mediamtx-config-failed";
 			return false;
@@ -349,10 +358,17 @@ struct ProductProgramOutputImpl {
 			probe.connectToHost(QHostAddress::LocalHost, quint16(api_port));
 			if (probe.waitForConnected(200)) {
 				probe.disconnectFromHost();
-				stream_publish_url =
-					QStringLiteral("http://127.0.0.1:%1/program/whip").arg(whip_port);
+				// The publish URL carries no app segment: the relay then takes the
+				// stream key ("program") as the whole path name, which is the path it
+				// reads back. Verified against the pinned relay: an app segment plus
+				// the same key produced "program/program" and closed the publish.
+				stream_publish_server =
+					QStringLiteral("rtmp://127.0.0.1:%1/").arg(rtmp_port);
+				stream_publish_url = stream_publish_server + QStringLiteral("program");
 				stream_playback_url =
-					QStringLiteral("rtsp://127.0.0.1:%1/program").arg(rtsp_port);
+				QStringLiteral("rtsp://127.0.0.1:%1/program").arg(rtsp_port);
+				stream_playback_whep =
+					QStringLiteral("http://127.0.0.1:%1/program/whep").arg(webrtc_port);
 				return true;
 			}
 			wait_ms(100);
@@ -423,7 +439,7 @@ struct ProductProgramOutputImpl {
 			// by the time OBS reads the label.
 			const QByteArray label = ("WebOBS Program recording AAC track "
 				+ QString::number(track + 1)).toUtf8();
-			obs_encoder_t *audio = obs_audio_encoder_create("ffmpeg_aac", label.constData(),
+		obs_encoder_t *audio = obs_audio_encoder_create("ffmpeg_aac", label.constData(),
 				audio_settings, size_t(track), nullptr);
 			if (!audio) {
 				obs_data_release(audio_settings);
@@ -495,20 +511,20 @@ struct ProductProgramOutputImpl {
 		if (!streaming)
 			return;
 		const bool relay_running = media_mtx.state() == QProcess::Running;
-		// WHIP becomes active only after the loopback handshake completes, and a
-		// live reconnect is still the same user-facing output, so neither counts
-		// as a loss. A dead relay is definitive; a dead output needs the short
-		// start window so a slow handshake is not reported as a failure.
-		const bool output_live = whip_output.value &&
-			(obs_output_active(whip_output.value) || obs_output_reconnecting(whip_output.value));
+		// The publish output becomes active only after the loopback handshake
+		// completes, and a live reconnect is still the same user-facing output, so
+		// neither counts as a loss. A dead relay is definitive; a dead output needs
+		// the short start window so a slow handshake is not reported as a failure.
+		const bool output_live = publish_output.value &&
+			(obs_output_active(publish_output.value) || obs_output_reconnecting(publish_output.value));
 		if (relay_running && (output_live || stream_clock.elapsed() < 5000))
 			return;
-		const QString detail = whip_output.value ?
-			bounded_error(obs_output_get_last_error(whip_output.value)) : QString();
+		const QString detail = publish_output.value ?
+			bounded_error(obs_output_get_last_error(publish_output.value)) : QString();
 		if (!relay_running)
-			stream_error = detail.isEmpty() ? "whip-relay-exited" : "whip-relay-exited: " + detail;
+			stream_error = detail.isEmpty() ? "publish-relay-exited" : "publish-relay-exited: " + detail;
 		else
-			stream_error = detail.isEmpty() ? "whip-output-lost" : "whip-output-lost: " + detail;
+			stream_error = detail.isEmpty() ? "publish-output-lost" : "publish-output-lost: " + detail;
 		release_streaming();
 		streaming = false;
 		streaming_tracks = 0;
@@ -584,9 +600,17 @@ struct ProductProgramOutputImpl {
 		const quint32 tracks = encodable_audio_tracks(audio_tracks);
 		if (!start_media_mtx(error)) return false;
 		obs_data_t *service_settings = obs_data_create();
-		obs_data_set_string(service_settings, "server", stream_publish_url.toUtf8().constData());
-		obs_data_set_string(service_settings, "bearer_token", "");
-		obs_service_t *service = obs_service_create("whip_custom", "WebOBS Program WHIP",
+		obs_data_set_string(service_settings, "server",
+			stream_publish_server.toUtf8().constData());
+		obs_data_set_string(service_settings, "key", "program");
+		obs_data_set_bool(service_settings, "use_auth", false);
+		// The pinned Windows OBS tree builds with -DENABLE_WEBRTC=OFF, so neither
+		// whip_custom nor whip_output does: obs-webrtc needs LibDataChannel, which
+		// the ABI-locked vcpkg archive does not carry. rtmp_custom and rtmp_output
+		// ship in the installed rtmp-services.dll and obs-outputs.dll, and this
+		// same private relay republishes the mix as RTSP plus WebRTC/WHEP for a
+		// real consumer.
+		obs_service_t *service = obs_service_create("rtmp_custom", "WebOBS Program publish",
 			service_settings, nullptr);
 		obs_data_release(service_settings);
 		if (!service) {
@@ -594,15 +618,15 @@ struct ProductProgramOutputImpl {
 			stream_error = error = "stream-service-unavailable";
 			return false;
 		}
-		whip_service.reset(service);
+		publish_service.reset(service);
 		Data video_settings(obs_data_create());
 		obs_data_set_string(video_settings.get(), "rate_control", "CBR");
 		obs_data_set_int(video_settings.get(), "bitrate", 6000);
 		obs_data_set_int(video_settings.get(), "keyint_sec", 2);
 		obs_data_set_string(video_settings.get(), "preset", "veryfast");
 		obs_data_set_string(video_settings.get(), "profile", "high");
-		obs_service_apply_encoder_settings(whip_service.value, video_settings.get(), nullptr);
-		obs_encoder_t *video = obs_video_encoder_create("obs_x264", "WebOBS Program WHIP x264",
+		obs_service_apply_encoder_settings(publish_service.value, video_settings.get(), nullptr);
+		obs_encoder_t *video = obs_video_encoder_create("obs_x264", "WebOBS Program publish x264",
 			video_settings.get(), nullptr);
 		if (!video) {
 			release_streaming();
@@ -610,12 +634,13 @@ struct ProductProgramOutputImpl {
 			error = "stream-video-encoder-unavailable";
 			return false;
 		}
-		whip_video.reset(video);
-		obs_encoder_set_video(whip_video.value, obs_get_video());
-		// WHIP carries one audio track. Publish the lowest Program track rather
-		// than track 0, which is empty whenever the Scene selects another bus. A
-		// Scene with no routed audio publishes a silent bus 0 track instead: the
-		// encoded WHIP output cannot start with no audio encoder at all.
+		publish_video.reset(video);
+		obs_encoder_set_video(publish_video.value, obs_get_video());
+		// RTMP/FLV carries one audio track and only accepts AAC. Publish the lowest
+		// Program track rather than track 0, which is empty whenever the Scene
+		// selects another bus. A Scene with no routed audio publishes a silent bus 0
+		// track instead: the encoded publish output cannot start with no audio
+		// encoder at all.
 		int selected_track = 0;
 		for (int track = 0; track < 6; ++track) {
 			if (tracks & (1u << track)) {
@@ -624,10 +649,10 @@ struct ProductProgramOutputImpl {
 			}
 		}
 		obs_data_t *audio_settings = obs_data_create();
-		obs_data_set_int(audio_settings, "bitrate", 96);
-		const QByteArray label = ("WebOBS Program WHIP Opus track "
+		obs_data_set_int(audio_settings, "bitrate", 128);
+		const QByteArray label = ("WebOBS Program publish AAC track "
 			+ QString::number(selected_track + 1)).toUtf8();
-		obs_encoder_t *audio = obs_audio_encoder_create("ffmpeg_opus", label.constData(),
+		obs_encoder_t *audio = obs_audio_encoder_create("ffmpeg_aac", label.constData(),
 			audio_settings, size_t(selected_track), nullptr);
 		obs_data_release(audio_settings);
 		if (!audio) {
@@ -637,23 +662,23 @@ struct ProductProgramOutputImpl {
 			error = "stream-audio-encoder-unavailable";
 			return false;
 		}
-		whip_audio.reset(audio);
-		obs_encoder_set_audio(whip_audio.value, obs_get_audio());
-		obs_output_t *output = obs_output_create("whip_output", "WebOBS Program WHIP output",
-			nullptr, nullptr);
+		publish_audio.reset(audio);
+		obs_encoder_set_audio(publish_audio.value, obs_get_audio());
+		obs_output_t *output = obs_output_create("rtmp_output",
+			"WebOBS Program publish output", nullptr, nullptr);
 		if (!output) {
 			release_streaming();
 			stop_media_mtx();
 			stream_error = error = "stream-output-unavailable";
 			return false;
 		}
-		whip_output.reset(output);
-		obs_output_set_mixers(whip_output.value, size_t(1u << selected_track));
-		obs_output_set_video_encoder(whip_output.value, whip_video.value);
-		obs_output_set_audio_encoder(whip_output.value, whip_audio.value, 0);
-		obs_output_set_service(whip_output.value, whip_service.value);
-		const QString preflight = output_preflight_error(whip_output.value,
-			QStringLiteral("stream"), {whip_video.value, whip_audio.value});
+		publish_output.reset(output);
+		obs_output_set_mixers(publish_output.value, size_t(1u << selected_track));
+		obs_output_set_video_encoder(publish_output.value, publish_video.value);
+		obs_output_set_audio_encoder(publish_output.value, publish_audio.value, 0);
+		obs_output_set_service(publish_output.value, publish_service.value);
+		const QString preflight = output_preflight_error(publish_output.value,
+			QStringLiteral("stream"), {publish_video.value, publish_audio.value});
 		if (!preflight.isEmpty()) {
 			release_streaming();
 			stop_media_mtx();
@@ -662,8 +687,8 @@ struct ProductProgramOutputImpl {
 			error = preflight;
 			return false;
 		}
-		if (!obs_output_start(whip_output.value)) {
-			const QString detail = bounded_error(obs_output_get_last_error(whip_output.value));
+		if (!obs_output_start(publish_output.value)) {
+			const QString detail = bounded_error(obs_output_get_last_error(publish_output.value));
 			release_streaming();
 			stop_media_mtx();
 			stream_error = detail.isEmpty() ? "stream-start-failed" : "stream-start-failed: " + detail;
@@ -678,11 +703,11 @@ struct ProductProgramOutputImpl {
 	bool stop_streaming(QString &error)
 	{
 		if (!streaming) return error = "streaming-inactive", false;
-		if (whip_output.value) {
-			obs_output_stop(whip_output.value);
-			if (!wait_output_inactive(whip_output.value, 10000)) {
-				obs_output_force_stop(whip_output.value);
-				wait_output_inactive(whip_output.value, 5000);
+		if (publish_output.value) {
+			obs_output_stop(publish_output.value);
+			if (!wait_output_inactive(publish_output.value, 10000)) {
+				obs_output_force_stop(publish_output.value);
+				wait_output_inactive(publish_output.value, 5000);
 			}
 		}
 		release_streaming();
@@ -753,8 +778,8 @@ ProductProgramOutputStatus ProductProgramOutput::status() const
 		if (live > value.recording_bytes) value.recording_bytes = live;
 	}
 	value.streaming = impl_->streaming;
-	value.stream_connected = impl_->streaming && impl_->whip_output.value &&
-		obs_output_get_total_frames(impl_->whip_output.value) > 0;
+	value.stream_connected = impl_->streaming && impl_->publish_output.value &&
+		obs_output_get_total_frames(impl_->publish_output.value) > 0;
 	value.media_mtx_running = impl_->media_mtx.state() == QProcess::Running;
 	// While a recording runs this is the mask being encoded; once it finished it
 	// stays with the retained file so the receipt can state what the user's MP4
@@ -763,6 +788,8 @@ ProductProgramOutputStatus ProductProgramOutput::status() const
 		(impl_->streaming ? impl_->streaming_tracks : impl_->completed_tracks);
 	value.stream_publish_url = impl_->stream_publish_url;
 	value.stream_playback_url = impl_->stream_playback_url;
+	value.stream_playback_whep = impl_->stream_playback_whep;
+	value.stream_transport = impl_->stream_transport;
 	value.stream_error = impl_->stream_error;
 	return value;
 }

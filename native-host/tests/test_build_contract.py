@@ -182,16 +182,20 @@ class BuildContractTests(unittest.TestCase):
 
         The product's own distribution gateway MediaMTX binds WebRTC on 8889, and
         Windows reserves dynamic port ranges that can make a fixed port unbindable
-        with nothing listening on it. Either case refused the WHIP start while the
-        host state still reported an empty streamError, so every relay listener is
-        allocated as a free loopback port and each refusal is recorded.
+        with nothing listening on it. Either case refused the publish start while
+        the host state still reported an empty streamError, so every relay
+        listener is allocated as a free loopback port and each refusal is recorded.
         """
         source = (ROOT / "native-host/src/product_output.cpp").read_text(encoding="utf-8")
         for forbidden in ("webrtcAddress: 127.0.0.1:8889", "http://127.0.0.1:8889", "port_available(8889)"):
             self.assertNotIn(forbidden, source)
-        self.assertIn("int whip_port = free_tcp_port();", source)
+        self.assertIn("int webrtc_port = free_tcp_port();", source)
+        self.assertIn("int rtmp_port = free_tcp_port();", source)
         self.assertIn("webrtcAddress: 127.0.0.1:%3", source)
-        self.assertIn('QStringLiteral("http://127.0.0.1:%1/program/whip").arg(whip_port)', source)
+        self.assertIn('"rtmpAddress: 127.0.0.1:%5\\n"', source)
+        # The publish URL carries no app segment, so the relay maps the stream
+        # key onto the configured "program" path instead of "program/program".
+        self.assertIn('QStringLiteral("rtmp://127.0.0.1:%1/").arg(rtmp_port)', source)
         start = source[source.index("bool start_media_mtx"):source.index("bool start_recording")]
         for refusal in ("mediamtx-unavailable", "mediamtx-port-failed", "mediamtx-directory-failed",
                         "mediamtx-config-failed", "mediamtx-start-failed", "mediamtx-exited",
@@ -204,6 +208,25 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("waitForFinished(0)", start)
         self.assertIn("relay_log_tail", start)
         self.assertIn("relay_log.append(media_mtx.readAll())", start)
+
+    def test_program_publishing_uses_only_services_the_windows_build_ships(self):
+        """The Program publish output must use OBS identifiers the installed runtime has.
+
+        desktop/scripts/build-obs-native.ps1 configures OBS with -DENABLE_WEBRTC=OFF,
+        and obs-webrtc's own CMakeLists returns early without LibDataChannel, so
+        neither whip_custom nor whip_output exists in the installed host: run
+        44374662264 reached "stream-service-unavailable" for exactly that reason.
+        rtmp_custom and rtmp_output are registered by the shipped rtmp-services.dll
+        and obs-outputs.dll, RTMP/FLV audio is AAC, and the same private relay
+        republishes the mix as RTSP plus WebRTC/WHEP for a real consumer.
+        """
+        source = (ROOT / "native-host/src/product_output.cpp").read_text(encoding="utf-8")
+        builder = (ROOT / "desktop/scripts/build-obs-native.ps1").read_text(encoding="utf-8")
+        self.assertIn("-DENABLE_WEBRTC=OFF", builder)
+        for shipped in ('"rtmp_custom"', '"rtmp_output"', '"ffmpeg_aac"', '"rtmp: true\\n"'):
+            self.assertIn(shipped, source)
+        for absent in ('"whip_custom"', '"whip_output"', '"ffmpeg_opus"'):
+            self.assertNotIn(absent, source)
 
     def test_program_output_relay_log_destination_is_accepted(self):
         """The private Program relay must only use log destinations the pinned MediaMTX accepts.

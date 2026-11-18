@@ -21,11 +21,17 @@ struct ProductProgramOutputStatus {
 	quint32 audio_tracks = 0;
 	QString stream_publish_url;
 	QString stream_playback_url;
+	// Browser-readable playback of the same mix (WebRTC/WHEP on the private
+	// relay). It is informational: the gate decodes the RTSP playback.
+	QString stream_playback_whep;
+	// Transport the publish output actually uses. The pinned Windows OBS tree
+	// builds with -DENABLE_WEBRTC=OFF, so this is "rtmp", not "whip".
+	QString stream_transport;
 	QString stream_error;
 };
 
-// Owns OBS Program encoders, one optional file output and one optional WHIP
-// output. The local monitor/preview path never depends on this object, so an
+// Owns OBS Program encoders, one optional file output and one optional
+// publish output. The local monitor/preview path never depends on this object, so an
 // idle product starts no encoder, no MediaMTX and no transcoder. Main thread
 // only, like the rest of the native product window.
 class ProductProgramOutput {

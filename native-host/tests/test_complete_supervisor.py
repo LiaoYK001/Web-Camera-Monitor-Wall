@@ -56,7 +56,7 @@ def exercise():
             assert environment["WEBOBS_GO2RTC_ENABLED"] == "true"
             # webobsd must remain Direct-only: composite_enabled flips the control
             # server into OBS composition and it fails to start on the native
-            # runtime. Program recording/WHIP belong to the native host instead.
+            # runtime. Program recording/publishing belong to the native host instead.
             assert environment["WEBOBS_COMPOSITE_ENABLED"] == "false"
             assert Path(environment["WEBOBS_FFMPEG_PATH"]).name == "ffmpeg.exe"
             assert Path(environment["WEBOBS_FFMPEG_PATH"]).parent.name == "bin"
