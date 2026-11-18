@@ -1,7 +1,7 @@
 # 任务与认领 / Tasks and ownership
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 152 · 2026-11-18T12:56:21+08:00（UTC+08）
+> 快照版本 159 · 2026-11-18T14:58:48+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -46,6 +46,7 @@
 | V51-005 | P1 | 进行中 | deepseek-v51-20261118-01 | 候选发布脚本改用统一 Tag 映射与 main 祖先校验 / use shared Tag mapping and main ancestry check in candidate publisher | — |
 | V51-006 | P1 | 待开始 | — | 接通稳定打包身份与验收文件单一契约 / wire stable packaging identity with one acceptance-file contract | V51-004 |
 | V51-007 | P1 | 进行中 | deepseek-v51-20261118-01 | 加固双目录加密备份的中间故障一致性与安全重试 / harden dual-directory backup swap consistency and safe retry | — |
+| V51-008 | P1 | 待开始 | — | 把 Program 合成输出验收落到用户实际收到的产物 / accept Program output from the delivered recording and stream | — |
 
 ## COORD-001 · 建立统一任务账本、开发日志、认领和交接机制
 
@@ -411,11 +412,11 @@
 
 - 修改范围：`native-host/scripts/publish_candidate.py`, `native-host/tests/test_candidate_publish.py`, `native-host/scripts/release_policy.py`, `native-host/scripts/stage.py`, `native-host/scripts/update_manifest.py`, `native-host/tests/test_stable_packaging.py`, `native-host/tests/test_update_manifest.py`
 - 验收：候选与正式版 Tag 一律来自 release_policy.tag_for_version；--final 必须提供已登记验收并从已审查 main 可达的提交，否则拒绝；不覆盖已存在 Tag/Release；本机测试覆盖正反对照，不发生真实网络调用。
-- 下一步：提交并推送到 codex/v51-publish-chain，更新 PR #69 说明；真实稳定发行由 V51-006 在集中验收后执行
+- 下一步：#67 合入 dev 后 rebase codex/v51-publish-chain 到新 dev 并复跑本机发布链测试；正式稳定链仍需真实验收 JSON 才可用。
 - 阻塞：无
-- 证据：分支 codex/v51-publish-chain 基于 codex/v51-release-identity@f176fba；PR #69 (draft); .worktrees/v51-publish@6301ae7; test_candidate_publish.py PASS; test_stable_release_identity/test_complete_release_policy/test_preview_release PASS; test_build_contract 43/44（本树未初始化 obs 子模块）；本机 PASS：test_stable_packaging/test_candidate_publish/test_update_manifest/test_stable_release_identity/test_complete_release_policy/test_preview_release；test_build_contract 43/44（本树未初始化 obs 子模块）；PR #69 head a0a6ae6; 本机 release-chain 测试 6 个 PASS；test_build_contract 43/44（本树未初始化 obs 子模块）；https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44240683072
-- 最新记录：已派发 rc.26（run 44240683072，head ae4fce7，complete=true）验证 Direct-only 复原后的首启与恢复隔离、Program 录像/推流按节目音轨编码、默认与第二总线对照、录像/回放解码带能量、托盘与备份/支持包门禁。
-- 最近更新：2026-11-18T12:56:21+08:00
+- 证据：分支 codex/v51-publish-chain 基于 codex/v51-release-identity@f176fba；PR #69 (draft); .worktrees/v51-publish@6301ae7; test_candidate_publish.py PASS; test_stable_release_identity/test_complete_release_policy/test_preview_release PASS; test_build_contract 43/44（本树未初始化 obs 子模块）；本机 PASS：test_stable_packaging/test_candidate_publish/test_update_manifest/test_stable_release_identity/test_complete_release_policy/test_preview_release；test_build_contract 43/44（本树未初始化 obs 子模块）；PR #69 head a0a6ae6; 本机 release-chain 测试 6 个 PASS；test_build_contract 43/44（本树未初始化 obs 子模块）；https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44240683072；.worktrees/v51-publish@99f8f30；本机 test_candidate_publish/test_stable_packaging PASS；.worktrees/v51-publish@dc6d1b4；native-host/tests/test_build_contract.py 44 tests OK；test_candidate_publish/test_stable_packaging/test_update_manifest/test_stable_release_identity PASS；PR #69 全部 checks SUCCESS（含 windows-native-control-contracts、windows-update-contracts、offline staging）
+- 最新记录：补齐 #69 的本机重验：初始化固定的 OBS 子模块后 test_build_contract 44/44；发布链否定用例补全（验收 JSON 缺失/非法/非对象/其他仓库/未写 sourceRevision；latest.yml 单独 size 不符、单独 sha512 不符、version 不符、缺 size、文件名非 latest.yml），并把未绑定源码版本的验收回执改为失败关闭。发布链只验证到待发布，未创建 Tag/Release/稳定 feed。
+- 最近更新：2026-11-18T14:58:48+08:00
 
 ## V51-006 · 接通稳定打包身份与验收文件单一契约 / wire stable packaging identity with one acceptance-file contract
 
@@ -429,10 +430,20 @@
 
 ## V51-007 · 加固双目录加密备份的中间故障一致性与安全重试 / harden dual-directory backup swap consistency and safe retry
 
-- 修改范围：`backup/encrypted_backup.py`, `tests/test_encrypted_backup.py`, `native-host/scripts/native_updater.py`, `native-host/tests/test_native_updater.py`
+- 修改范围：`backup/encrypted_backup.py`, `tests/test_encrypted_backup.py`, `native-host/scripts/native_updater.py`, `native-host/tests/test_native_updater.py`, `native-host/scripts/product_supervisor.py`, `native-host/tests/test_complete_supervisor.py`, `native-host/tests/backup_restore_windows.py`, `desktop/scripts/test-native-product-install.ps1`, `.github/workflows/windows-obs-native-host.yaml`, `docs/windows-native-feature-parity.md`
 - 验收：两目录交换的崩溃/失败后要么完全旧状态要么完全新状态；中断日志可被下次 restore 自动收敛或明确拒绝；失败不残留 activated 目录；native 存档必须成对恢复；config-only 旧存档仍可用；本机 unittest 覆盖中间失败与崩溃恢复。
-- 下一步：本机跑 tests/test_encrypted_backup.py 与相关 Windows 恢复测试契约，然后推送并开 PR（base codex/v51-r3-output）
+- 下一步：#67 合入 dev 后把 #70 base 改为 dev 并派发带 backup_restore_windows 门禁的 Windows 运行。
 - 阻塞：无
-- 证据：分支 codex/v51-r4-backup-consistency 基于 codex/v51-r3-output@ae4fce7；本机 tests/test_encrypted_backup.py 10 tests OK（libsodium 可用）；native-host/tests/test_native_updater.py 与 test_migrate_legacy.py PASS；本机 tests/test_encrypted_backup.py 10 OK；native-host/tests/test_native_updater.py PASS（含新增错误码映射断言）
-- 最新记录：扩展范围：恢复日志与成对拒绝的新失败信息需要映射为有界更新器错误码，避免只显示通用 backup-create-failed。
-- 最近更新：2026-11-18T12:44:20+08:00
+- 证据：分支 codex/v51-r4-backup-consistency 基于 codex/v51-r3-output@ae4fce7；本机 tests/test_encrypted_backup.py 10 tests OK（libsodium 可用）；native-host/tests/test_native_updater.py 与 test_migrate_legacy.py PASS；本机 tests/test_encrypted_backup.py 10 OK；native-host/tests/test_native_updater.py PASS（含新增错误码映射断言）；PR #70 checks 进行中；python3 -B native-host/tests/test_complete_supervisor.py PASS（含中断交换收敛契约）；python3 -B tests/test_encrypted_backup.py 10/10；python3 -B native-host/tests/test_native_updater.py 3 项 PASS；本任务书 Windows 门禁待 CI 回执；.worktrees/v51-backup@7a7d64d；native-host/tests/test_complete_supervisor.py PASS；tests/test_encrypted_backup.py 10/10；native-host/tests/test_native_updater.py 3 PASS；PR #70 checks 将随 force-push 重跑
+- 最新记录：#70 已 rebase 到新的 #67 基线（de8eebe）并推送 head 7a7d64d；本机中断交换收敛契约、加密备份、更新器错误码全部通过。安装态恢复门禁 backup_restore_windows.py 只在 NSIS 安装验收里执行，必须有 Windows 回执才能写安装态通过。
+- 最近更新：2026-11-18T14:58:48+08:00
+
+## V51-008 · 把 Program 合成输出验收落到用户实际收到的产物 / accept Program output from the delivered recording and stream
+
+- 修改范围：`native-host/src/product_output.cpp`, `native-host/src/product_window.cpp`, `native-host/src/product_scene.hpp`, `native-host/tests/product_windows.py`, `native-host/tests/pixel_windows.py`
+- 验收：安装后应用里两路不同频率音调在录制文件与回环 WHIP 流中可解码：选中总线有预期音调、未选总线无串音、视频帧持续推进；逐轨静音/增益/偏移生效并如实区分配置到达与声学实测；录像目录失败与 WHIP 断线给出有界错误并回收编码器、服务与 MediaMTX；纯 RTSP 监看时不启动 Program 输出子进程；回执绑定源码 SHA 与安装包。
+- 下一步：读取 rc.27/rc.29 结果；失败按具体断言修复后用新编号复跑。
+- 阻塞：无
+- 证据：PR #67 head de8eebe（base dev）；rc.26 失败原因 MSVC C2664（QString→const char*）已用具名 QByteArray 修复；rc.28 失败原因 product_output.cpp(412) C2664（三目临时量绑到 QString&）已修复；https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44255084712
+- 最新记录：已派发 rc.29（run 44255084712，head de8eebe，complete=true）：包含具名 QByteArray 编码器 label、具名 QString 恢复原因、WHIP 握手 5 秒宽限、Direct-only 按需进程门禁、录像目录失败正反对照、总线隔离（1200Hz 单轨夹具+锁相音调检测）、逐轨静音/增益/偏移、WHIP 断线后回收。rc.27（44251999122）编译与集成服务步骤已过，产品 UI 步骤失败，日志要等 job 结束才能读取。
+- 最近更新：2026-11-18T14:58:48+08:00

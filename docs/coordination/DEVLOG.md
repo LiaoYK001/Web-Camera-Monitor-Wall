@@ -1,12 +1,54 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 152 · 2026-11-18T12:56:21+08:00（UTC+08）
+> 快照版本 159 · 2026-11-18T14:58:48+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #159 · 2026-11-18T14:58:48+08:00 · update
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：已派发 rc.29（run 44255084712，head de8eebe，complete=true）：包含具名 QByteArray 编码器 label、具名 QString 恢复原因、WHIP 握手 5 秒宽限、Direct-only 按需进程门禁、录像目录失败正反对照、总线隔离（1200Hz 单轨夹具+锁相音调检测）、逐轨静音/增益/偏移、WHIP 断线后回收。rc.27（44251999122）编译与集成服务步骤已过，产品 UI 步骤失败，日志要等 job 结束才能读取。
+- 证据：https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44255084712
+- 源码：`48e0a7892c7172df4435fd5f298c0f96e7924361`
+## #158 · 2026-11-18T14:58:48+08:00 · update
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-007`
+- 记录：#70 已 rebase 到新的 #67 基线（de8eebe）并推送 head 7a7d64d；本机中断交换收敛契约、加密备份、更新器错误码全部通过。安装态恢复门禁 backup_restore_windows.py 只在 NSIS 安装验收里执行，必须有 Windows 回执才能写安装态通过。
+- 证据：.worktrees/v51-backup@7a7d64d；native-host/tests/test_complete_supervisor.py PASS；tests/test_encrypted_backup.py 10/10；native-host/tests/test_native_updater.py 3 PASS；PR #70 checks 将随 force-push 重跑
+- 源码：`48e0a7892c7172df4435fd5f298c0f96e7924361`
+## #157 · 2026-11-18T14:58:48+08:00 · update
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-005`
+- 记录：补齐 #69 的本机重验：初始化固定的 OBS 子模块后 test_build_contract 44/44；发布链否定用例补全（验收 JSON 缺失/非法/非对象/其他仓库/未写 sourceRevision；latest.yml 单独 size 不符、单独 sha512 不符、version 不符、缺 size、文件名非 latest.yml），并把未绑定源码版本的验收回执改为失败关闭。发布链只验证到待发布，未创建 Tag/Release/稳定 feed。
+- 证据：.worktrees/v51-publish@dc6d1b4；native-host/tests/test_build_contract.py 44 tests OK；test_candidate_publish/test_stable_packaging/test_update_manifest/test_stable_release_identity PASS；PR #69 全部 checks SUCCESS（含 windows-native-control-contracts、windows-update-contracts、offline staging）
+- 源码：`48e0a7892c7172df4435fd5f298c0f96e7924361`
+## #156 · 2026-11-18T14:58:39+08:00 · add
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：承接 #67：编码器 label、失败上报、音轨隔离与按需进程门禁都在同一分支；先修编译再复跑。
+- 证据：PR #67 head de8eebe（base dev）；rc.26 失败原因 MSVC C2664（QString→const char*）已用具名 QByteArray 修复；rc.28 失败原因 product_output.cpp(412) C2664（三目临时量绑到 QString&）已修复
+- 源码：`48e0a7892c7172df4435fd5f298c0f96e7924361`
+## #155 · 2026-11-18T14:49:31+08:00 · update
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-007`
+- 记录：扩展 V51-007 范围并接入普通启动恢复：supervisor 在持有数据目录独占锁后、创建目录与读取 config/OBS profile 之前调用 recover_interrupted()，成对完成或回滚并保留旧对；非法日志失败关闭并写 run/restore-recovery.json。新增安装态门禁 backup_restore_windows.py（真实恢复进程在两次目录交换之间被终止→从安装入口启动收敛→可重试→config-only 旧包保留现有原生档案），并接入 NSIS 安装验收与工作流回执上传。
+- 证据：python3 -B native-host/tests/test_complete_supervisor.py PASS（含中断交换收敛契约）；python3 -B tests/test_encrypted_backup.py 10/10；python3 -B native-host/tests/test_native_updater.py 3 项 PASS；本任务书 Windows 门禁待 CI 回执
+- 源码：`48e0a7892c7172df4435fd5f298c0f96e7924361`
+## #154 · 2026-11-18T13:02:02+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-007`
+- 记录：PR #70 head 56e25e7（含更新器错误码映射）。本机测试全通过；等待 Windows CI 与本分支的 web-runtime-ci 结果后再决定关闭。
+- 证据：PR #70 checks 进行中
+- 源码：`48e0a7892c7172df4435fd5f298c0f96e7924361`
+## #153 · 2026-11-18T13:02:02+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-005`
+- 记录：补交遗漏：publish_candidate.py 与 test_candidate_publish.py 改为复用 release_policy.read_acceptance/apply_acceptance（先前一次提交漏加这两个文件）。分支 head 现为 99f8f30，PR #69 自动更新。
+- 证据：.worktrees/v51-publish@99f8f30；本机 test_candidate_publish/test_stable_packaging PASS
+- 源码：`48e0a7892c7172df4435fd5f298c0f96e7924361`
 ## #152 · 2026-11-18T12:56:21+08:00 · log
 
 - Agent：`deepseek-v51-20261118-01`；任务：`V51-005`
