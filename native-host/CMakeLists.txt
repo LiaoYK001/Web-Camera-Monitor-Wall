@@ -25,7 +25,8 @@ if(WEBOBS_NATIVE_BUILD_PLUGIN)
   target_sources(webobs-native-host PRIVATE src/product_media.cpp)
   if(WEBOBS_NATIVE_PRODUCT_MODE)
     find_package(Qt6 CONFIG REQUIRED COMPONENTS Network)
-    target_sources(webobs-native-host PRIVATE src/product_window.cpp src/product_scene.cpp src/product_http_client.cpp)
+    target_sources(webobs-native-host PRIVATE src/product_window.cpp src/product_scene.cpp
+      src/product_output.cpp src/product_http_client.cpp)
     target_sources(webobs-native-host PRIVATE ../core/src/obs_scene_items.cpp
       ../core/src/scene_document.cpp ../core/src/browser_security.cpp ../core/src/redaction.cpp)
     # Reuse the pinned OBS dependency tree and finder; no second JSON runtime.

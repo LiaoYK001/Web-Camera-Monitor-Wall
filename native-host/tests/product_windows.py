@@ -1097,6 +1097,99 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     expected_media=7, program_scene="fixture-alt", program_media=2,
                     projector_orders={"program-projector": "quick-1"})
                 checkpoint("program-after-pixels")
+                # The same native host must produce real composite output, not a
+                # separate prototype or an NVR restream. Record the applied
+                # Program scene, then verify the finalized MP4's streams and
+                # final pixels, including distinct temporal timecode frames.
+                phase = "program-recording"
+                assert ui("record-program")
+                wait_for(lambda: state().get("programOutput", {}).get("recording") is True,
+                    "native Program recording did not start", timeout=20)
+                checkpoint("program-recording-started")
+                time.sleep(5.5)
+                assert ui("record-program")
+                def recording_ready():
+                    value = state().get("programOutput", {})
+                    path = value.get("recordingPath") if isinstance(value, dict) else None
+                    return value if (value.get("recording") is False and value.get("recordingReady") is True and
+                        isinstance(path, str) and Path(path).is_file() and Path(path).suffix.lower() == ".mp4") else None
+                recorded = wait_for(recording_ready, "native Program MP4 was not finalized", timeout=120)
+                checkpoint("program-recording-finalized")
+                recorded_path = Path(recorded["recordingPath"])
+                probe = subprocess.run([str(runtime / "bin/ffprobe.exe"), "-v", "error", "-show_entries",
+                    "stream=codec_name,codec_type,width,height:format=duration", "-of", "json", str(recorded_path)],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+                assert probe.returncode == 0, "recorded Program MP4 is not readable"
+                document = json.loads(probe.stdout)
+                streams = document.get("streams", [])
+                video_streams = [stream for stream in streams if stream.get("codec_type") == "video"]
+                audio_streams = [stream for stream in streams if stream.get("codec_type") == "audio"]
+                assert len(video_streams) == 1 and video_streams[0].get("codec_name") == "h264" and \
+                    video_streams[0].get("width") == 1920 and video_streams[0].get("height") == 1080, \
+                    "recorded Program video stream is not H.264 1920x1080"
+                assert len(audio_streams) == 1 and audio_streams[0].get("codec_name") == "aac", \
+                    "recorded Program audio stream is not AAC"
+                assert float(document.get("format", {}).get("duration", 0)) >= 4.0, "recorded Program is too short"
+                frames = private / "program-recording-frames"
+                frames.mkdir()
+                ffmpeg = runtime / "bin/ffmpeg.exe"
+                for index, offset in enumerate((0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0)):
+                    extract = subprocess.run([str(ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin",
+                        "-i", str(recorded_path), "-ss", str(offset), "-frames:v", "1",
+                        str(frames / f"client-{index}.bmp")], capture_output=True, timeout=30)
+                    assert extract.returncode == 0 and (frames / f"client-{index}.bmp").is_file(), \
+                        "could not extract a recorded Program frame"
+                analysis = subprocess.run([shutil.which("node"), str(HERE / "pixel-pattern.cjs"), "analyze",
+                    str(frames), "program-projector", "quick-1", "true"], capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", timeout=20)
+                pixel_result = json.loads(analysis.stdout) if analysis.returncode == 0 else {}
+                assert pixel_result.get("passed") is True, "recorded Program frames did not match the applied scene"
+                evidence["checks"].append("program-composite-mp4-recording")
+                checkpoint("program-recording-pixels")
+                # WHIP publishing uses the same Program OBS output and owns a
+                # private MediaMTX only while streaming. RTSP playback proves
+                # the packets reached a real consumer, not just an active flag.
+                phase = "program-streaming"
+                assert ui("stream-program")
+                def streaming_ready():
+                    value = state().get("programOutput", {})
+                    return value if (isinstance(value, dict) and value.get("streaming") is True and
+                        value.get("streamConnected") is True and
+                        isinstance(value.get("streamPlaybackUrl"), str)) else None
+                streamed = wait_for(streaming_ready, "native Program WHIP publishing did not start", timeout=40)
+                playback_url = streamed["streamPlaybackUrl"]
+                assert re.fullmatch(r"rtsp://127\.0\.0\.1:[0-9]{2,5}/program", playback_url), \
+                    "native Program publisher exposed an unexpected playback URL"
+                checkpoint("program-streaming-started")
+                def readable_stream():
+                    probe = subprocess.run([str(runtime / "bin/ffprobe.exe"), "-v", "error",
+                        "-rtsp_transport", "tcp", "-show_entries", "stream=codec_name,codec_type", "-of", "json",
+                        playback_url], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20)
+                    return json.loads(probe.stdout).get("streams", []) if probe.returncode == 0 else []
+                stream_streams = []
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline:
+                    stream_streams = readable_stream()
+                    if stream_streams:
+                        break
+                    time.sleep(0.5)
+                assert stream_streams, "published Program stream is not readable"
+                assert any(stream.get("codec_type") == "video" and stream.get("codec_name") == "h264"
+                    for stream in stream_streams), "published Program has no H.264 video"
+                assert any(stream.get("codec_type") == "audio" and stream.get("codec_name") == "opus"
+                    for stream in stream_streams), "published Program has no Opus audio"
+                stream_frames = subprocess.run([str(runtime / "bin/ffprobe.exe"), "-v", "error",
+                    "-rtsp_transport", "tcp", "-select_streams", "v:0", "-read_intervals", "%+#20",
+                    "-show_entries", "frame=pts_time", "-of", "json", playback_url],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+                assert stream_frames.returncode == 0 and len(json.loads(stream_frames.stdout).get("frames", [])) >= 10, \
+                    "published Program did not deliver enough video frames"
+                assert ui("stream-program")
+                wait_for(lambda: state().get("programOutput", {}).get("streaming") is False and
+                    state().get("programOutput", {}).get("mediaMtxRunning") is False,
+                    "native Program publisher did not release MediaMTX", timeout=30)
+                evidence["checks"].append("program-composite-whip-stream")
+                checkpoint("program-streaming-stopped")
                 checkpoint("program-projector-close")
                 assert ui("projector-close")
                 checkpoint("program-projector-closed")
@@ -1360,6 +1453,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 "lastRetirementMs", "mainGeneration", "studioRevision", "renderer", "program",
                 "programSceneId", "programSceneFingerprint", "programApplyState", "startupStudioDeferred") if key in observed}
             evidence["observedState"]["watchingSavedScene"] = bool(observed.get("sceneId"))
+            evidence["observedState"]["programOutput"] = observed.get("programOutput", {})
             evidence["observedState"]["projectorCount"] = len(observed.get("projectors", []))
             evidence["observedState"]["projectorGeometry"] = [
                 {"slot": view.get("slot"), "geometry": view.get("geometry"),

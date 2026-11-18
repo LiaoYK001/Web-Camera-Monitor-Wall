@@ -229,6 +229,8 @@ class ProductSupervisor:
                 self.recordings = migrated_recording or (
                     Path(os.environ.get("USERPROFILE", str(self.root))) / "Videos" / "WebOBS")
             self.recordings.mkdir(parents=True, exist_ok=True)
+            self.program_recordings = self.recordings / "program"
+            self.program_recordings.mkdir(parents=True, exist_ok=True)
             detector_model = self.runtime / "web/models/ssd_mobilenet_v1_12.onnx"
             self.environment.update({
                 "WEBOBS_EVENT_DATABASE": str(config / "events.db"),
@@ -264,7 +266,11 @@ class ProductSupervisor:
                 "WEBOBS_DETECTOR_PYTHON_MODULE": str(self.runtime / "services/analytics/detector_worker.py"),
                 "WEBOBS_CAMERA_BACKGROUND_PROBES": "true",
                 "WEBOBS_NVR_ENABLED": "true", "WEBOBS_GO2RTC_ENABLED": "true",
-                "WEBOBS_COMPOSITE_ENABLED": "false",
+                # The native host publishes the real Program over the bundled
+                # WHIP/MediaMTX path only while the user starts Program output.
+                # Advertising the existing WHEP proxy lets the authenticated
+                # management UI consume that same output.
+                "WEBOBS_COMPOSITE_ENABLED": "true",
             })
             if detector_model.is_file():
                 self.environment["WEBOBS_DETECTOR_MODEL"] = str(detector_model)
@@ -488,6 +494,8 @@ class ProductSupervisor:
                 WEBOBS_NATIVE_PRODUCT_VERSION=self.version,
                 WEBOBS_NATIVE_PREVIEW="true" if self.preview else "false",
                 WEBOBS_NATIVE_PROFILE_ROOT=str(self.root / "native-profile"))
+            if self.complete and getattr(self, "program_recordings", None) is not None:
+                frontend_environment["WEBOBS_PROGRAM_RECORDINGS"] = str(self.program_recordings)
             frontend = self.start("frontend", [str(self.runtime / "bin/64bit/obs64.exe"),
                 "--portable", "--disable-updater"], environment=frontend_environment)
             self.status("running")
