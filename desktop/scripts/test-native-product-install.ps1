@@ -1,7 +1,8 @@
 #requires -Version 7.2
 # Build and qualify a fresh internal integrated installation. No legacy upgrade,
 # stable feed, existing installation/profile or public binary publication.
-param([Parameter(Mandatory=$true)][string]$BuildDirectory)
+param([Parameter(Mandatory=$true)][string]$BuildDirectory,
+    [Parameter()][ValidateRange(0, 240)][int]$SoakMinutes = 0)
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $buildRoot = [IO.Path]::GetFullPath($BuildDirectory)
@@ -97,7 +98,10 @@ try {
         throw 'Installed shortcut does not target the unified native entry.'
     }
     $phase = 'installed-entry-ui-and-media'
+    if ($SoakMinutes -gt 0) { $env:WEBOBS_PRODUCT_SOAK_MINUTES = [string]$SoakMinutes }
     & $python -B (Join-Path $repoRoot 'native-host/tests/product_windows.py') --runtime $installed --with-media --retained-profile $profile --report (Join-Path $buildRoot 'native-product-installed-ui.json')
+    $env:WEBOBS_PRODUCT_SOAK_MINUTES = $null
+    $report.soakMinutes = $SoakMinutes
     if ($LASTEXITCODE -ne 0) { throw 'Actual installed product entry/UI/media gate failed.' }
     $report.freshInstalledEntryQualified = $true
     foreach ($file in @('config/cluster.sqlite3','config/cameras.db')) {
