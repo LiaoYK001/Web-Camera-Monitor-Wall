@@ -248,6 +248,105 @@ def verify_tree(root: pathlib.Path) -> None:
         raise BackupError("backup contains undeclared files")
 
 
+JOURNAL_NAME = ".webobs-restore-journal.json"
+MAX_JOURNAL = 4096
+
+
+def _remove_tree(path: pathlib.Path | None) -> None:
+    """Delete a staged copy that never became the live directory."""
+    if path is None:
+        return
+    if path.is_symlink():
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path, ignore_errors=True)
+    elif path.exists():
+        path.unlink()
+
+
+def _journal_path(parent: pathlib.Path) -> pathlib.Path:
+    return parent / JOURNAL_NAME
+
+
+def _write_journal(path: pathlib.Path, payload: dict) -> None:
+    """Persist the swap progress so a killed process cannot hide a half swap."""
+    temporary = path.with_name(f".{path.name}.tmp")
+    body = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    if len(body.encode("utf-8")) > MAX_JOURNAL:
+        raise BackupError("restore journal exceeds its bounded size")
+    with temporary.open("wb") as destination:
+        destination.write(body.encode("utf-8") + b"\n")
+        destination.flush()
+        os.fsync(destination.fileno())
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+
+
+def _journal_paths(payload: dict) -> dict:
+    keys = ("configRoot", "configActivated", "configRollback", "nativeProfile",
+            "nativeActivated", "nativeRollback")
+    if set(payload) - set(keys) - {"schema", "state", "createdAt", "archive", "archiveSha256"}:
+        raise BackupError("restore journal is invalid")
+    paths = {}
+    for key in keys:
+        value = payload.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str) or not pathlib.Path(value).is_absolute():
+            raise BackupError("restore journal is invalid")
+        paths[key] = pathlib.Path(value)
+    return paths
+
+
+def recover_interrupted(journal_path: pathlib.Path) -> str | None:
+    """Converge a half restore left by a crash into one consistent pair.
+
+    The staged copy names tell which side already landed: the configuration
+    directory is committed exactly when its staged copy is gone. Before that
+    point the previous pair is restored; after it the remaining staged native
+    profile is landed, so configuration and native profile always move as a
+    pair. Previous data is never deleted here.
+    """
+    if not journal_path.exists():
+        return None
+    if journal_path.is_symlink():
+        raise BackupError("restore journal is unsafe")
+    if journal_path.stat().st_size > MAX_JOURNAL:
+        raise BackupError("restore journal exceeds its bounded size")
+    try:
+        payload = json.loads(journal_path.read_text(encoding="utf-8"))
+    except ValueError as error:
+        raise BackupError("restore journal is unreadable") from error
+    if not isinstance(payload, dict) or payload.get("schema") != 1 or payload.get("state") != "prepared":
+        raise BackupError("restore journal is invalid")
+    paths = _journal_paths(payload)
+    activated = paths.get("configActivated")
+    activated_native = paths.get("nativeActivated")
+    rollback = paths.get("configRollback")
+    native_rollback = paths.get("nativeRollback")
+    native_profile = paths.get("nativeProfile")
+    config_root = paths.get("configRoot")
+    if activated is None:
+        raise BackupError("restore journal is invalid")
+    if activated.exists():
+        # The configuration directory never landed: put the previous pair back.
+        if config_root is not None and not config_root.exists() and rollback is not None and rollback.exists():
+            os.replace(rollback, config_root)
+        _remove_tree(activated_native)
+        _remove_tree(activated)
+        journal_path.unlink()
+        return "rolled-back"
+    if activated_native is not None and activated_native.exists():
+        if native_profile is not None and native_profile.exists():
+            raise BackupError("restore journal is inconsistent")
+        if native_profile is None:
+            _remove_tree(activated_native)
+        else:
+            os.replace(activated_native, native_profile)
+    journal_path.unlink()
+    return "completed"
+
+
 def restore(config_root: pathlib.Path, archive_path: pathlib.Path, key_file: pathlib.Path,
             sodium: SodiumStream, confirmed: bool,
             native_profile: pathlib.Path | None = None) -> pathlib.Path:
@@ -255,6 +354,8 @@ def restore(config_root: pathlib.Path, archive_path: pathlib.Path, key_file: pat
         raise BackupError("restore confirmation and a regular backup file are required")
     parent = config_root.parent
     parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    journal_path = _journal_path(parent)
+    recover_interrupted(journal_path)
     with tempfile.TemporaryDirectory(prefix=".webobs-decrypt-", dir=parent) as directory:
         temporary_root = pathlib.Path(directory)
         tar_path = temporary_root / "snapshot.tar.gz"
@@ -286,42 +387,63 @@ def restore(config_root: pathlib.Path, archive_path: pathlib.Path, key_file: pat
         native_candidate = extracted / "webobs-native-profile"
         if native_candidate.exists():
             verify_tree(native_candidate)
+            if native_profile is None:
+                # Restoring only the configuration half of an archive that also
+                # carries a native profile would leave a mismatched pair.
+                raise BackupError("restore must name the native profile of this archive")
         else:
             native_candidate = None
         activated = parent / f".webobs-restore-{uuid.uuid4().hex}"
-        shutil.copytree(candidate, activated)
         activated_native = None
         if native_candidate is not None:
-            if native_profile is None:
-                # An old caller that does not name the native profile must not
-                # silently replace a directory it did not intend to touch.
-                native_candidate = None
-            else:
-                native_profile = pathlib.Path(native_profile)
-                activated_native = native_profile.parent / f".webobs-native-restore-{uuid.uuid4().hex}"
-                shutil.copytree(native_candidate, activated_native)
-        rollback = parent / f".webobs-rollback-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}"
-        if config_root.exists():
-            os.replace(config_root, rollback)
-        native_rollback = None
-        if activated_native is not None:
-            native_rollback = native_profile.parent / \
-                f".webobs-native-rollback-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}"
-            if native_profile.exists():
-                os.replace(native_profile, native_rollback)
+            native_profile = pathlib.Path(native_profile)
+            activated_native = native_profile.parent / f".webobs-native-restore-{uuid.uuid4().hex}"
+        journal = {"schema": 1, "state": "prepared", "createdAt": time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()),
+                   "archive": str(archive_path.resolve()), "archiveSha256": file_sha256(archive_path),
+                   "configRoot": str(config_root), "configActivated": str(activated),
+                   "configRollback": None,
+                   "nativeProfile": str(native_profile) if native_profile is not None else None,
+                   "nativeActivated": str(activated_native) if activated_native is not None else None,
+                   "nativeRollback": None}
         try:
+            shutil.copytree(candidate, activated)
+            if activated_native is not None:
+                shutil.copytree(native_candidate, activated_native)
+        except Exception:
+            _remove_tree(activated_native)
+            _remove_tree(activated)
+            raise
+        _write_journal(journal_path, journal)
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        rollback = parent / f".webobs-rollback-{stamp}-{uuid.uuid4().hex[:8]}"
+        native_rollback = None
+        try:
+            if config_root.exists():
+                os.replace(config_root, rollback)
+                journal["configRollback"] = str(rollback)
+                _write_journal(journal_path, journal)
+            if activated_native is not None:
+                native_rollback = native_profile.parent / \
+                    f".webobs-native-rollback-{stamp}-{uuid.uuid4().hex[:8]}"
+                if native_profile.exists():
+                    os.replace(native_profile, native_rollback)
+                    journal["nativeRollback"] = str(native_rollback)
+                    _write_journal(journal_path, journal)
             os.replace(activated, config_root)
             if activated_native is not None:
                 os.replace(activated_native, native_profile)
         except Exception:
             if rollback.exists() and not config_root.exists():
                 os.replace(rollback, config_root)
-            if activated_native is not None and native_rollback is not None:
+            if native_rollback is not None:
                 if native_profile.exists():
                     shutil.rmtree(native_profile)
-                if native_rollback.exists():
-                    os.replace(native_rollback, native_profile)
+                os.replace(native_rollback, native_profile)
+            _remove_tree(activated_native)
+            _remove_tree(activated)
+            journal_path.unlink(missing_ok=True)
             raise
+        journal_path.unlink(missing_ok=True)
         return rollback
 
 
@@ -408,7 +530,7 @@ def schedule(config_root: pathlib.Path, backup_root: pathlib.Path, key_file: pat
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices={"create", "restore", "schedule"})
+    parser.add_argument("action", choices={"create", "restore", "recover", "schedule"})
     parser.add_argument("archive", nargs="?")
     parser.add_argument("--config-root", default=os.environ.get("WEBOBS_BACKUP_CONFIG_ROOT", "/config/webobs"))
     parser.add_argument("--native-profile-root", default=os.environ.get("WEBOBS_BACKUP_NATIVE_PROFILE", ""))
@@ -428,6 +550,8 @@ def main() -> None:
             raise SystemExit("restore requires an encrypted archive")
         restore(config_root, pathlib.Path(args.archive), key_file, sodium,
                 os.environ.get("WEBOBS_RESTORE_CONFIRM") == "replace-config", native_profile)
+    elif args.action == "recover":
+        print(recover_interrupted(_journal_path(config_root.parent)) or "none")
     else:
         install_owner_shutdown(STOP.set)
         schedule(config_root, backup_root, key_file, sodium)
