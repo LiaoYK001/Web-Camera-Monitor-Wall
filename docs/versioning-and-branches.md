@@ -51,12 +51,23 @@ Release series use `v<major>.<minor>` and, regularly from v4, `v<major>.<minor>.
 | `v3.4` | `v3-M2` + go2rtc, Scenes, account audio, playback recovery and Windows x64 / go2rtc、Scenes、账号声音、播放恢复与 Windows x64 | Published at `4b2ab5f09b48`; Windows 3.4.0-dev.0 is an explicitly unsigned test installer with no updater metadata / 已发布；Windows 为明确标记的未签名测试安装包，不含更新元数据 |
 | `v3.5` | `v3-M2` + full unsigned Windows updates / 完整未签名 Windows 自动更新 | Published at `e7b6a2ad5f87`; Windows 3.5.0 UNSIGNED, latest.yml, two-version local NSIS upgrade and public GitHub download verified; clean-system/camera qualification separate / 已发布，实际本机升级与公开下载通过，干净系统/摄像机验收另列 |
 | `v4.0` | `v4-M1` + recoverable workflows and three-target patches / 可恢复操作与三主端补丁 | Release baseline `4.0.0`; immutable artifacts/status in [Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v4.0), actual evidence and limits in [notes](release-notes-v4.0.md) / 发布基线与正式发行状态、验证边界分开记录 |
+| `v4.5` | `v4-M1` + Windows x64 native monitor preview / Windows x64 原生监看预览 | Published **prerelease** `v4.5`; scoped authenticated monitoring, never Latest or a stable updater feed / 已发布的预发布预览版，范围受限，不作为 Latest 或稳定更新通道 |
+| `v5.0.0-rc.1` | `v5-M1` + complete fusion candidate / 完整融合候选 | Published **prerelease** candidate; migration/updater defects found afterwards, superseded by v5.1 work; assets immutable / 已发布的预发布候选，随后发现迁移与更新器缺陷并由 v5.1 继续修复，附件不可变 |
+| `v5.1` (planned / 计划中) | `v5-M1` + audited integration, migration and full-product gaps / 已审计融合、数据迁移与完整功能缺口 | Target Windows x64 stable release; requires recorded installation, upgrade and migration acceptance before the stable feed opens / 目标 Windows x64 正式发布；开启稳定更新通道前须登记安装、升级与迁移验收 |
 
 A milestone name is an engineering gate, not a release date. A release may be cut only from completed, reviewed gates. Public SemVer tags may add a patch component such as `v1.1.1`; an existing tag is immutable.
 
 里程碑名称是工程门禁，不是发布日期。只有已完成并经审查的门禁才能形成发布。公开 SemVer Tag 可增加补丁位，例如 `v1.1.1`；已经发布的 Tag 不得移动。
 
 v4.1 当前范围例外（2026-10-20 用户决定）：仅 Windows x64，Android 与 Docker/容器暂停同步交付。仍通过 Windows 版本化发布 PR → 已审查 main 提交 → 不可变 v4.1 Tag/Release，不因暂停两端而发布其 APK/镜像或变更 GHCR 别名。历史验收保留；[Windows 单端流程](release-flow.md#windows-单端发布--windows-only-publication)。Current v4.1 scope is Windows x64 only; the reviewed release branch/tag flow remains mandatory, with no Android/container publication or alias changes.
+
+### Native host Windows Tag mapping / Windows 原生宿主的 Tag 映射（2026-11-18）
+
+Windows 原生宿主（`native-host/`）沿用上面的发布系列规则，但版本字符串与 Git Tag 不是同一位数：功能版本的应用/安装器使用三位版本（`5.1.0`），发布 Tag 使用两位（`v5.1`）；补丁版本两者一致（`5.1.2` → `v5.1.2`）；内部候选保留 `-rc.N`（`5.1.0-rc.25` → `v5.1.0-rc.25`，只作为该固定 Tag 的测试更新源）；`-dev.N` 开发构建没有可发布 Tag。映射由 `native-host/scripts/release_policy.tag_for_version()` 单一实现，构建、候选上传和发布脚本不得自行拼接 `"v" + version`，否则会产出 `v5.1.0` 这类不存在的 Tag。
+
+稳定通道只在验收登记后开启：`release_policy.configure_stable()` 要求安装、旧版本升级与完整功能迁移验收以及有界验收回执位置，缺一即失败；rc 与 dev 身份始终 `stableUpdaterEnabled=false`。详见[发布流程](release-flow.md)。
+
+The native Windows host follows the release-series rules above while decoupling the installer version from the Git Tag: a feature release is `5.1.0` with Tag `v5.1`, a patch keeps both three-part, a candidate keeps its `-rc.N` suffix (test feed pinned to that Tag only), and development builds have no publishable Tag. `native-host/scripts/release_policy.tag_for_version()` is the single implementation; build, candidate-upload and publish scripts must not concatenate `"v" + version`, which would produce a nonexistent `v5.1.0` tag. The stable feed opens only after recorded acceptance; `configure_stable()` fails closed without installation, legacy-upgrade and full-feature-migration acceptance plus a bounded receipt location.
 
 ## Branch responsibilities / 分支职责
 

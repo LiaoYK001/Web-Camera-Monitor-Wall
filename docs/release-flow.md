@@ -124,6 +124,27 @@ export GH_TOKEN=<classic PAT，含 write:packages>
 9. 把 `<image>:vX.Y` 与 `<image>:latest` 提升到**同一 digest**，并逐个复验；
 10. `make_latest=true`。
 
+## 4.1 Windows 原生宿主稳定身份与 Tag 映射（v5.x 起） / Native host stable identity and Tag mapping (from v5.x)
+
+Windows 原生宿主（`native-host/`）与旧 Electron/容器发布共用同一版本规则，但交付身份由 `native-host/scripts/release_policy.py` 集中判定。规则如下，任何脚本或 workflow 都不得各自拼接：
+
+| 应用／安装器版本 | 发布 Tag | 更新通道 |
+| --- | --- | --- |
+| `5.1.0`（功能版本） | `v5.1` | 稳定 `latest.yml`，仅在验收登记后开启 |
+| `5.1.2`（补丁版本） | `v5.1.2` | 同上，沿用已审查基线 |
+| `5.1.0-rc.25`（内部候选） | `v5.1.0-rc.25` | 该固定 Tag 的测试更新源，`latest.yml` 不进稳定通道 |
+| `5.1.0-dev.3`（开发构建） | 无可发布 Tag | 禁止发布，`publicationForbidden` |
+
+即 **功能版本发布两位 Tag，应用与安装器保留三位版本**（`5.1.0` → `v5.1`），补丁保留三位 Tag，候选保留 `-rc.N` 后缀；`publish_candidate.py`、workflow 与上传脚本必须调用 `tag_for_version()` 而不是 `"v" + version`。
+
+稳定身份（`releaseProfile=native-complete-stable`）不是版本号属性，而是**已登记的验收**：`configure_stable()` 只有在 manifest 显式携带 `productIntegration`、`installationQualified`、`legacyUpgradeQualified`、`fullFeatureMigrationQualified` 为 `true`，且提供有界（12–512 字符）的 `qualificationReceipt` 位置时才成立；缺任一项直接失败，不静默开启 `stableUpdaterEnabled`。回执文件本身保存在仓库外的验收目录，文档与 Release 说明只引用其位置和已验/未验平台。开发构建与 rc 候选永远保持 `stableUpdaterEnabled=false`、`candidate=true`；仅版本号递增不构成发布授权。
+
+Native host releases share the repository version rule, but their delivery identity is decided centrally by `native-host/scripts/release_policy.py`. A feature release publishes the two-part Tag while the application/installer keeps the three-part version (`5.1.0` → `v5.1`); patches keep the three-part Tag; candidates keep `-rc.N` and only their pinned Tag feed; development builds have no publishable Tag. The stable profile (`native-complete-stable`) is a recorded acceptance, not a version string: `configure_stable()` requires explicit product-integration, installation, legacy-upgrade and full-feature-migration acceptance plus a bounded `qualificationReceipt` location, otherwise it fails closed and never enables the stable updater. Candidates and development builds stay outside the stable feed; bumping a version alone never authorizes publication.
+
+正式打包还必须先确认构建提交可从已审查的 `main` 到达：发布 PR（`dev` → `main`，双语标题）合并后，从该 `main` 提交构建，并用 `gh api repos/<owner>/<repo>/compare/<buildSha>...main` 的 `status`（`ahead` 或 `identical`）核对，不达标时停止而不是改用最近的 `dev` 提交。已公开的 `v4.5` 与 `v5.0.0-rc.1` 附件保持不变，新候选使用未占用的新编号。
+
+Stable packaging additionally requires the build commit to be reachable from the reviewed `main`: merge the bilingual versioned release PR first, build from that `main` commit, and verify `gh api repos/<owner>/<repo>/compare/<buildSha>...main` reports `ahead` or `identical`. Do not substitute a newer `dev` commit. Published `v4.5` and `v5.0.0-rc.1` assets stay immutable.
+
 ## 门禁边界 / What is gated, what is not
 
 | 项 | 状态 |
