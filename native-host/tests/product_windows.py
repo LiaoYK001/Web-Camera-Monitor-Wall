@@ -491,6 +491,16 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             checkpoint("pixels-" + label + "-observed")
             if blank:
                 assert observed.get("phase") == "locked" and observed.get("mediaSources") == 0
+            elif observed.get("sessionBound") is not True:
+                # A revoked session tears the wall and its projectors down, which shows up
+                # later as an opaque stale window handle or frozen pixels. Name the actual
+                # revocation category the product reported instead.
+                revoked = {"phase": label, "lastLock": str(observed.get("lastLock") or "")[:40],
+                    "lockCode": int(observed.get("lockCode") or 0),
+                    "renewTransient": int(observed.get("renewTransient") or 0)}
+                evidence["sessionRevoked"] = revoked
+                raise AssertionError("product session was revoked before the " + label +
+                    " capture: " + revoked["lastLock"] + "/" + str(revoked["lockCode"]))
             assert observed.get("windows", [{}])[0].get("qtClass") == "OBSBasicPreview"
             target = private / ("pixels-" + label)
             target.mkdir()
@@ -561,6 +571,13 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     continue
                 break
             evidence.setdefault("captures", []).append({"phase": label, **capture})
+            if not blank:
+                # Renewal health at capture time: a tolerated busy authority is recorded,
+                # while any lock category makes the receipt explicit.
+                evidence["captures"][-1]["renewal"] = {
+                    "lastLock": str(observed.get("lastLock") or "")[:40],
+                    "lockCode": int(observed.get("lockCode") or 0),
+                    "renewTransient": int(observed.get("renewTransient") or 0)}
             checkpoint("pixels-" + label + "-captured")
             assert result.returncode == 0 and capture.get("captureFailed") is False, "actual product preview capture failed"
             orders = {"main-preview": ("quick-" + ",".join(map(str, quick_order))) if quick_order is not None else
@@ -2008,7 +2025,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 "lastRetirementMs", "mainGeneration", "studioRevision", "renderer", "program",
                 "programSceneId", "programSceneFingerprint", "programApplyState", "programApplyError",
                 "programApplyTransient", "programApplyAttempts", "programTargetSceneId",
-                "startupStudioDeferred") if key in observed}
+                "startupStudioDeferred", "lastLock", "lockCode", "renewTransient") if key in observed}
             evidence["observedState"]["watchingSavedScene"] = bool(observed.get("sceneId"))
             evidence["observedState"]["programOutput"] = observed.get("programOutput", {})
             evidence["observedState"]["supportBundle"] = observed.get("supportBundle", {})

@@ -150,6 +150,9 @@ class ProductWindow final : public QWidget {
 	quint64 main_generation_ = 0;
 	bool heartbeat_pending_ = false;
 	bool applying_ = false;
+	int transient_renewals_ = 0;
+	QString last_lock_ = QStringLiteral("none");
+	int last_lock_code_ = 0;
 	qint64 last_retirement_ms_ = 0;
 
 	using Reply = std::function<void(int, const QJsonObject &)>;
@@ -500,6 +503,7 @@ class ProductWindow final : public QWidget {
 			{"studioChoices", studio_choices},
 			{"mainGeneration", qint64(main_generation_)},
 			{"sessionBound", !user_id_.isEmpty()}, {"mediaSources", media_sources}, {"bindings", bindings},
+			{"lastLock", last_lock_}, {"lockCode", last_lock_code_}, {"renewTransient", transient_renewals_},
 			{"videoAvailable", video_available}, {"hardwareDecodeVerified", false}};
 		state.insert("previewLocked", preview_ && preview_->property("webobsPreviewLocked").toBool());
 		state.insert("programSceneId", program_scene_id_);
@@ -881,7 +885,7 @@ class ProductWindow final : public QWidget {
 			program_sync_pending_ = false;
 			if (generation != program_generation_ || user_id_.isEmpty() || tearing_down_) return;
 			if (code == 401 || code == 403) {
-				locked(tr("会话或场景权限已失效，Program 已锁定。"));
+				locked(tr("会话或场景权限已失效，Program 已锁定。"), "program-session-refused", code);
 				return;
 			}
 			if (code != 200) return;
@@ -1025,7 +1029,11 @@ class ProductWindow final : public QWidget {
 		if (user_id_.isEmpty()) return;
 		request("/api/v1/native/auth/session", "GET", {}, [this](int code, const QJsonObject &) {
 			if (code != 200) {
-				locked(tr("会话已失效，请重新登录。"));
+				if (renewal_transient(code)) {
+					status_->setText(tr("本机会话核验暂不可用，请稍后重试。"));
+					return;
+				}
+				locked(tr("会话已失效，请重新登录。"), code == 401 ? "session-rejected" : "session-check-refused", code);
 				return;
 			}
 			if (!QMetaObject::invokeMethod(frontend_, "on_stats_triggered", Qt::DirectConnection)) {
@@ -1199,10 +1207,23 @@ class ProductWindow final : public QWidget {
 			update_projector_controls();
 			const auto graph = graph_reference.lock();
 			if (!graph || main_generation != main_generation_ || wall_ != graph || applying_) return;
-			if (code != 200 || body.value("cameraVersions").toObject() != versions ||
+			if (code != 200) {
+				// A busy authority declines this projector opening only; the already
+				// authorized wall keeps its current authorization.
+				if (renewal_transient(code)) {
+					++transient_renewals_;
+					last_lock_code_ = code;
+					status_->setText(tr("本机授权服务繁忙，投影暂未打开，请稍后重试。"));
+					return;
+				}
+				locked(tr("投影观看权限或配置已失效，请重新登录。"),
+					code == 401 ? "projector-session-rejected" : "projector-refused", code);
+				return;
+			}
+			if (body.value("cameraVersions").toObject() != versions ||
 			    (scene && (body.value("sceneFingerprint").toString() != fingerprint ||
 				body.value("studioRevision").toInteger(-1) < 0))) {
-				locked(tr("投影观看权限或配置已失效，请重新登录。"));
+				locked(tr("投影观看权限或配置已失效，请重新登录。"), "projector-precondition-changed", code);
 				return;
 			}
 			std::set<QWidget *> previous;
@@ -1268,20 +1289,55 @@ class ProductWindow final : public QWidget {
 				if (!projectors_[i] || projectors_[i]->id != id) return;
 				auto &current = *projectors_[i];
 				current.heartbeat_pending = false;
-				if (code != 200 || body.value("cameraVersions").toObject() != current.versions ||
+				if (code != 200) {
+					if (tolerate_transient_renewal(code))
+						return;
+					locked(tr("投影会话、摄像机权限或配置已失效，请重新登录。"),
+						code == 401 ? "projector-session-rejected" : "projector-renew-refused", code);
+					return;
+				}
+				transient_renewals_ = 0;
+				if (body.value("cameraVersions").toObject() != current.versions ||
 				    (scene && (body.value("sceneFingerprint").toString() != current.scene_fingerprint ||
 					body.value("studioRevision").toInteger(-1) < 0)))
-					locked(tr("投影会话、摄像机权限或配置已失效，请重新登录。"));
+					locked(tr("投影会话、摄像机权限或配置已失效，请重新登录。"), "projector-precondition-changed", code);
 				else if (scene && body.value("studioRevision").toInteger(-1) != current.studio_revision) {
 					current.studio_revision = body.value("studioRevision").toInteger(-1);
 					observe_current_media();
 				}
-			});
+			}, 6000);
 		}
 	}
 
-	void locked(const QString &message)
+	// A renewal the local authority did not answer, because it is busy or briefly
+	// unavailable, is not a revoked session. Two consecutive retries keep the wall
+	// playing; a third unanswered renewal fails closed. An explicit refusal, a
+	// changed device version or a changed Scene fingerprint still locks at once.
+	static bool renewal_transient(int code)
 	{
+		return code == 0 || code == 408 || code == 429 || code == 500 || code == 502 || code == 503;
+	}
+
+	bool tolerate_transient_renewal(int code)
+	{
+		if (!renewal_transient(code))
+			return false;
+		++transient_renewals_;
+		last_lock_code_ = code;
+		if (transient_renewals_ < 3) {
+			last_lock_ = QStringLiteral("renew-retrying");
+			status_->setText(tr("本机授权服务繁忙，正在重试续期。"));
+			return true;
+		}
+		last_lock_ = QStringLiteral("renew-unavailable");
+		return false;
+	}
+
+	void locked(const QString &message, const char *category = "unspecified", int code = 0)
+	{
+		last_lock_ = QString::fromLatin1(category);
+		last_lock_code_ = code;
+		transient_renewals_ = 0;
 		// Save only this account's window preferences before protected views
 		// retire. Geometry never authorizes media or reopens a projector.
 		for (std::size_t i = 0; i < projectors_.size(); ++i)
@@ -1385,6 +1441,9 @@ class ProductWindow final : public QWidget {
 				return;
 			}
 			user_id_ = id;
+			transient_renewals_ = 0;
+			last_lock_ = QStringLiteral("none");
+			last_lock_code_ = 0;
 			QFile workspace_file(workspace_path());
 			if (workspace_file.size() <= 16384 && workspace_file.open(QIODevice::ReadOnly)) {
 				const auto saved = QJsonDocument::fromJson(workspace_file.readAll()).object()
@@ -2159,23 +2218,31 @@ public:
 			const QJsonObject renewal = scene_active ?
 				QJsonObject{{"sceneId", watching_scene_id_}, {"fingerprint", watching_scene_fingerprint_}} :
 				QJsonObject{{"cameras", watching_}};
+			// The authority answers this through the account/registry services, which can
+			// be busy while Program output runs; the server enforces its own budget.
 			request(path, active ? "POST" : "GET", renewal, [this, active, scene_active, renewed_graph](int code, const QJsonObject &body) {
 				heartbeat_pending_ = false;
 				// A finished renewal of the old graph cannot revoke a newer graph.
 				// A graph retained during preparation MUST still enforce its result.
 				if ((active && renewed_graph.expired()) || renewed_graph.lock() != wall_) return;
-				if (code != 200)
-					locked(tr("会话或摄像机权限已失效，请重新登录。"));
-				else if (active && body.value("cameraVersions").toObject() != watching_versions_)
-					locked(tr("设备配置已变更，请重新登录后连接。"));
+				if (code != 200) {
+					if (tolerate_transient_renewal(code))
+						return;
+					locked(tr("会话或摄像机权限已失效，请重新登录。"),
+						code == 401 ? "session-rejected" : "renew-refused", code);
+					return;
+				}
+				transient_renewals_ = 0;
+				if (active && body.value("cameraVersions").toObject() != watching_versions_)
+					locked(tr("设备配置已变更，请重新登录后连接。"), "camera-versions-changed", code);
 				else if (scene_active && (body.value("sceneFingerprint").toString() != watching_scene_fingerprint_ ||
 					body.value("studioRevision").toInteger(-1) < 0))
-					locked(tr("场景已变更，请重新登录后连接。"));
+					locked(tr("场景已变更，请重新登录后连接。"), "scene-changed", code);
 				else if (scene_active && body.value("studioRevision").toInteger(-1) != watching_studio_revision_) {
 					watching_studio_revision_ = body.value("studioRevision").toInteger(-1);
 					observe_current_media();
 				}
-			});
+			}, 6000);
 		});
 	}
 	~ProductWindow() override
