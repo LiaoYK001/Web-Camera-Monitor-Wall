@@ -546,17 +546,52 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
         def check_pixels(label, *, blank=False, repeat_first=False, reverse=False, expected_media=None,
                 projector_orders=None, quick_order=None, program_scene=None, program_media=None,
                 fixture_retry=True):
-            # A loopback publisher is harness state, not product state: ffmpeg can exit while
-            # looping a synthetic file, and then every reader of that path stalls through no
-            # fault of the product. Restart dead publishers before capturing and record it.
+            def counted(snapshot):
+                return {str(entry.get("uuid") or ""): int(entry["serial"])
+                    for entry in snapshot.get("videoInputs", []) if isinstance(entry, dict)
+                    and type(entry.get("serial")) is int and 0 < int(entry["serial"]) < 10 ** 15}
+
+            def fixture_recovered(restarted):
+                """Harness-side proof that the synthetic feed pushes and decodes again.
+
+                A loopback publisher is harness state, not product state: ffmpeg can exit or
+                stall while looping a synthetic file, and then every reader of that path goes
+                silent through no fault of the product. The existing `video-progress` UI
+                assertion asks the health label for an exact wall-only count (1..5 with
+                "已收帧" equal to it), so it cannot prove recovery in a Program phase: that
+                Scene adds one dedicated audio-silent variant and the label then reports six
+                inputs, which made the repair path throw in run 44349201714 whether or not
+                the restart worked. Recovered is the same evidence the pixel gate uses below:
+                every published path pushes packets again and every counted frame counter
+                advanced inside one measured 2.5 s window.
+                """
+                if any(publisher is None or publisher.poll() is not None
+                       for publisher in rtsp.publishers):
+                    return False
+                if not all(entry.get("flowing") is True for entry in rtsp.path_progress()):
+                    return False
+                before = counted(state())
+                time.sleep(2.5)
+                after = counted(state())
+                advanced = [uuid for uuid in before
+                            if uuid in after and after[uuid] > before[uuid]]
+                evidence.setdefault("fixturePublisherWatch", []).append({
+                    "phase": label, "restarted": list(restarted), "countedInputs": len(after),
+                    "advancedInputs": len(advanced)})
+                # A locked/blank phase owns no inputs at all, so there the packet flow above
+                # is the whole proof; otherwise the five wall inputs must decode again.
+                needed = 0 if blank else 5
+                return len(before) >= needed and len(advanced) >= needed
+
+            # Restart dead publishers before capturing and record it.
             dead = [index for index, publisher in enumerate(rtsp.publishers)
                 if publisher is None or publisher.poll() is not None]
             if dead and not blank:
                 evidence.setdefault("fixturePublisherWatch", []).append({"phase": label, "dead": dead})
                 for index in dead:
                     rtsp.restart_publisher(index)
-                wait_for(lambda: ui("video-progress", sources=5, stalled=0),
-                    "restarted loopback publisher did not resume frame progress", timeout=60)
+                wait_for(lambda: fixture_recovered(dead),
+                    "restarted loopback publisher did not resume frame progress", timeout=90)
             checkpoint("pixels-" + label + "-program")
             check_monitor_program(program_scene=program_scene, program_media=program_media)
             from ctypes import wintypes
@@ -885,10 +920,11 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                         # once. A product-side stall with a healthy fixture still fails below.
                         evidence["fixtureRestartedAfterPixelFailure"] = {"phase": label,
                             "deadPublishers": dead, "unreadablePaths": unreadable, "stalledPaths": stalled}
-                        for index in sorted(set(dead + unreadable + stalled)):
+                        repaired = sorted(set(dead + unreadable + stalled))
+                        for index in repaired:
                             rtsp.restart_publisher(index)
-                        wait_for(lambda: ui("video-progress", sources=5, stalled=0),
-                            "restarted loopback fixture did not resume frame progress", timeout=60)
+                        wait_for(lambda: fixture_recovered(repaired),
+                            "restarted loopback fixture did not resume frame progress", timeout=90)
                         evidence["fixtureRestartResumed"] = label
                         return check_pixels(label, blank=blank, repeat_first=repeat_first, reverse=reverse,
                             expected_media=expected_media, projector_orders=projector_orders,
