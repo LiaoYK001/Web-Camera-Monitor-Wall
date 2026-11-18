@@ -2,6 +2,7 @@
 
 #include <obs.h>
 
+#include <QByteArray>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
@@ -353,10 +354,13 @@ struct ProductProgramOutputImpl {
 		for (int track = 0; track < 6; ++track) {
 			if (!(audio_tracks & (1u << track)))
 				continue;
-			const QString label = ("WebOBS Program recording AAC track "
-				+ QString::number(track + 1)).toUtf8().constData();
-			obs_encoder_t *audio = obs_audio_encoder_create("ffmpeg_aac", label, audio_settings,
-				size_t(track), nullptr);
+			// Keep the UTF-8 bytes alive in a named QByteArray: the encoder API
+			// takes const char *, and a temporary QByteArray would already be gone
+			// by the time OBS reads the label.
+			const QByteArray label = ("WebOBS Program recording AAC track "
+				+ QString::number(track + 1)).toUtf8();
+			obs_encoder_t *audio = obs_audio_encoder_create("ffmpeg_aac", label.constData(),
+				audio_settings, size_t(track), nullptr);
 			if (!audio) {
 				obs_data_release(audio_settings);
 				release_recording();
@@ -499,10 +503,10 @@ struct ProductProgramOutputImpl {
 		if (audio_tracks) {
 			obs_data_t *audio_settings = obs_data_create();
 			obs_data_set_int(audio_settings, "bitrate", 96);
-			const QString label = ("WebOBS Program WHIP Opus track "
-				+ QString::number(selected_track + 1)).toUtf8().constData();
-			obs_encoder_t *audio = obs_audio_encoder_create("ffmpeg_opus", label, audio_settings,
-				size_t(selected_track), nullptr);
+			const QByteArray label = ("WebOBS Program WHIP Opus track "
+				+ QString::number(selected_track + 1)).toUtf8();
+			obs_encoder_t *audio = obs_audio_encoder_create("ffmpeg_opus", label.constData(),
+				audio_settings, size_t(selected_track), nullptr);
 			obs_data_release(audio_settings);
 			if (!audio) {
 				release_streaming();
