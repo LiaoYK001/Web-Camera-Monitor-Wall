@@ -442,9 +442,15 @@ std::uint32_t ProductSceneGraph::audio_output_tracks()
 {
 	std::uint32_t tracks = 0;
 	for (const auto &entry : sources_) {
-		if (!entry || !entry->source || obs_source_muted(entry->source))
+		if (!entry)
 			continue;
-		tracks |= obs_source_get_audio_mixers(entry->source);
+		// A Scene that declares audioInputs mutes the camera source and feeds the
+		// buses through its dedicated per-track mix source, so the mix source has
+		// to be consulted on its own. Skipping the whole entry whenever the camera
+		// source is muted reported an empty mask, and the AV muxer then refused
+		// obs_output_start() without any output-level error.
+		if (entry->source && !obs_source_muted(entry->source))
+			tracks |= obs_source_get_audio_mixers(entry->source);
 #ifdef WEBOBS_NATIVE_PRODUCT_MODE
 		if (entry->audio_source && !obs_source_muted(entry->audio_source))
 			tracks |= obs_source_get_audio_mixers(entry->audio_source);

@@ -444,7 +444,11 @@ class ProductWindow final : public QWidget {
 			{"streamPublishUrl", value.stream_publish_url},
 			{"streamPlaybackUrl", value.stream_playback_url},
 			{"streamError", value.stream_error},
-			{"audioTracks", double(value.audio_tracks)}};
+			// audioTracks is what the running output encodes; selectedAudioTracks is
+			// the mask the applied Program Scene actually routes right now, so an
+			// idle receipt still proves which bus the next recording will encode.
+			{"audioTracks", double(value.audio_tracks)},
+			{"selectedAudioTracks", double(program_ ? program_->audio_output_tracks() : 0u)}};
 	}
 	bool select_monitor(obs_scene_t *scene)
 	{

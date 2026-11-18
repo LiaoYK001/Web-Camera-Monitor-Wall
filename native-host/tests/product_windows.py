@@ -439,47 +439,68 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             metadata.write_text(json.dumps({"schema": 1, "scope": "synthetic-test-only",
                 "pid": str(frontend_pid), "windows": observed["windows"]}), encoding="utf-8")
             checkpoint("pixels-" + label + "-capture-setup")
-            checkpoint("pixels-" + label + "-capture-start")
-            try:
-                # Normalize every argument and avoid PowerShell prompts/invalid
-                # console output turning a pixel capture into an opaque launch
-                # TypeError under a fully loaded product host.
-                capture_command = [str(powershell), "-NoLogo", "-NoProfile", "-NonInteractive", "-File",
-                    str(HERE / "capture-pixels.ps1"), "-ExpectedProcessId", str(frontend_pid),
-                    "-ExpectedExecutable", str(runtime / "bin/64bit/obs64.exe"),
-                    "-ExpectedCreationTime", str(created), "-StateFile", str(metadata), "-OutputDirectory", str(target)]
-                process = subprocess.Popen(capture_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    text=True, encoding="utf-8", errors="replace", close_fds=True,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            window_roles = {window["role"] for window in observed["windows"]}
+            for attempt in range(2):
+                checkpoint("pixels-" + label + "-capture-start")
                 try:
-                    stdout, stderr = process.communicate(timeout=35)
+                    # Normalize every argument and avoid PowerShell prompts/invalid
+                    # console output turning a pixel capture into an opaque launch
+                    # TypeError under a fully loaded product host.
+                    capture_command = [str(powershell), "-NoLogo", "-NoProfile", "-NonInteractive", "-File",
+                        str(HERE / "capture-pixels.ps1"), "-ExpectedProcessId", str(frontend_pid),
+                        "-ExpectedExecutable", str(runtime / "bin/64bit/obs64.exe"),
+                        "-ExpectedCreationTime", str(created), "-StateFile", str(metadata),
+                        "-OutputDirectory", str(target)]
+                    process = subprocess.Popen(capture_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        text=True, encoding="utf-8", errors="replace", close_fds=True,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                    try:
+                        stdout, stderr = process.communicate(timeout=35)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        stdout, stderr = process.communicate()
+                        raise
+                    result = subprocess.CompletedProcess(capture_command, process.returncode, stdout, stderr)
                 except subprocess.TimeoutExpired:
-                    process.kill()
-                    stdout, stderr = process.communicate()
+                    evidence.setdefault("captures", []).append({"phase": label,
+                        "captureFailed": True, "diagnostic": {"stage": "timeout", "code": "capture-timeout"}})
+                    checkpoint("pixels-" + label + "-capture-timeout")
                     raise
-                result = subprocess.CompletedProcess(capture_command, process.returncode, stdout, stderr)
-            except subprocess.TimeoutExpired:
-                evidence.setdefault("captures", []).append({"phase": label,
-                    "captureFailed": True, "diagnostic": {"stage": "timeout", "code": "capture-timeout"}})
-                checkpoint("pixels-" + label + "-capture-timeout")
-                raise
-            except Exception as error:
-                # Keep only the exception class and numeric Win32/POSIX code;
-                # never copy paths, command lines or private state.
-                message = str(error)
-                for private_value in (str(metadata), str(target), str(runtime), str(profile)):
-                    message = message.replace(private_value, "<private>")
-                evidence["captureLaunchError"] = {
-                    "type": type(error).__name__,
-                    "winerror": int(getattr(error, "winerror", 0) or 0),
-                    "errno": int(getattr(error, "errno", 0) or 0),
-                    "message": message[:200],
-                }
-                checkpoint("pixels-" + label + "-capture-error")
-                raise
-            checkpoint("pixels-" + label + "-capture-returned")
-            capture = pixel_windows.capture_report(result)
-            checkpoint("pixels-" + label + "-capture-report")
+                except Exception as error:
+                    # Keep only the exception class and numeric Win32/POSIX code;
+                    # never copy paths, command lines or private state.
+                    message = str(error)
+                    for private_value in (str(metadata), str(target), str(runtime), str(profile)):
+                        message = message.replace(private_value, "<private>")
+                    evidence["captureLaunchError"] = {
+                        "type": type(error).__name__,
+                        "winerror": int(getattr(error, "winerror", 0) or 0),
+                        "errno": int(getattr(error, "errno", 0) or 0),
+                        "message": message[:200],
+                    }
+                    checkpoint("pixels-" + label + "-capture-error")
+                    raise
+                checkpoint("pixels-" + label + "-capture-returned")
+                capture = pixel_windows.capture_report(result)
+                checkpoint("pixels-" + label + "-capture-report")
+                stale_identity = capture.get("captureFailed") is True and any(
+                    isinstance(role, dict) and role.get("diagnostic", {}).get("code") == "window-identity"
+                    for role in capture.get("captures", []))
+                if stale_identity and attempt == 0:
+                    # A reported window handle is a snapshot: a native client can
+                    # recreate its HWND between the status read and the capture
+                    # process. Re-read the window identity once and capture again;
+                    # every pixel/identity assertion still applies to that retry.
+                    evidence.setdefault("captures", []).append({"phase": label + "-stale-handle", **capture})
+                    evidence["captureIdentityRetry"] = {"phase": label, "attempt": 1}
+                    refreshed = state()
+                    if {window.get("role") for window in refreshed.get("windows", [])} != window_roles:
+                        break
+                    observed = refreshed
+                    metadata.write_text(json.dumps({"schema": 1, "scope": "synthetic-test-only",
+                        "pid": str(frontend_pid), "windows": observed["windows"]}), encoding="utf-8")
+                    continue
+                break
             evidence.setdefault("captures", []).append({"phase": label, **capture})
             checkpoint("pixels-" + label + "-captured")
             assert result.returncode == 0 and capture.get("captureFailed") is False, "actual product preview capture failed"
@@ -1161,6 +1182,13 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 program_recordings.unlink()
                 program_recordings.mkdir()
                 checkpoint("program-recording-refused")
+                # The Scene routes its audio through the dedicated mix source while the
+                # camera source stays muted, so the reported selection mask is the
+                # evidence that the recorder will encode the Scene's bus and not bus 0.
+                selected = state().get("programOutput", {}).get("selectedAudioTracks")
+                assert selected == 2, \
+                    f"applied Program Scene reported audio track mask {selected}; expected 2 (audioTrack 2)"
+                evidence["programSelectedAudioTrackMask"] = selected
                 assert ui("record-program")
                 wait_for(lambda: state().get("programOutput", {}).get("recording") is True,
                     "native Program recording did not start", timeout=20)
@@ -1241,6 +1269,10 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     state().get("program", {}).get("mediaSources") == 2,
                     "default-bus Program scene did not apply", timeout=20)
                 checkpoint("program-default-bus-applied")
+                default_selection = state().get("programOutput", {}).get("selectedAudioTracks")
+                assert default_selection == 1, \
+                    f"default-bus Program Scene reported audio track mask {default_selection}; expected 1"
+                evidence["programDefaultBusSelectedMask"] = default_selection
                 assert ui("record-program")
                 wait_for(lambda: state().get("programOutput", {}).get("recording") is True,
                     "default-bus Program recording did not start", timeout=20)
@@ -1889,7 +1921,10 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 audio_markers = ("MP: Failed to open media", "MP: Failed to find stream info",
                     "MP: Could not initialize audio or video", "Disconnected. Reconnecting",
                     "Reconnected.", "ffmpeg_source", "Error opening input", "frame size not set",
-                    "Stream specifier", "matches no streams", "Could not open", "Audio")
+                    "Stream specifier", "matches no streams", "Could not open", "Audio",
+                    "Writing file", "Failed to open AAC codec", "Couldn't find encoder",
+                    "bad settings specified", "x264 failed to load", "has no media set",
+                    "Failed to create process pipe", "Unable to write", "encoder '")
                 diagnostic_lines = []
                 for line in tail.splitlines():
                     if not any(marker in line for marker in audio_markers):

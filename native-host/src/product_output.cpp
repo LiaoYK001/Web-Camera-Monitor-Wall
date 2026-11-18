@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <memory>
 #include <utility>
+#include <vector>
 
 namespace webobs::native_host {
 namespace {
@@ -127,6 +128,37 @@ bool wait_output_inactive(obs_output_t *output, int timeout_ms)
 	timer.start();
 	while (obs_output_active(output) && timer.elapsed() < timeout_ms) wait_ms(50);
 	return !obs_output_active(output);
+}
+
+// An encoded AV output (ffmpeg muxer, WHIP) cannot start with zero audio
+// encoders: libobs refuses the start inside can_begin_data_capture() and the
+// plugin returns false without ever setting an output-level error. A Scene
+// without any routed audio therefore records or publishes one silent track on
+// the default bus instead of failing the start for the user.
+quint32 encodable_audio_tracks(quint32 selected_tracks)
+{
+	return selected_tracks ? selected_tracks : 1u;
+}
+
+// Name the stage that refused an output start. obs_output_start() can return
+// false with an empty last_error, so the receipt must not say only
+// "start-failed": the caller gets the concrete preflight reason plus the
+// encoder's own error text when libobs copied one.
+QString output_preflight_error(obs_output_t *output, const QString &stage,
+	const std::vector<obs_encoder_t *> &encoders)
+{
+	if (!obs_output_can_begin_data_capture(output, 0))
+		return stage + QStringLiteral("-capture-not-ready");
+	if (obs_output_initialize_encoders(output, 0)) return {};
+	QString detail;
+	for (auto *encoder : encoders) {
+		const QString text = bounded_error(encoder ? obs_encoder_get_last_error(encoder) : nullptr);
+		if (!text.isEmpty()) detail = text;
+	}
+	const QString copied = bounded_error(obs_output_get_last_error(output));
+	if (!copied.isEmpty()) detail = copied;
+	return detail.isEmpty() ? stage + QStringLiteral("-encoder-initialize-failed")
+		: stage + QStringLiteral("-encoder-initialize-failed: ") + detail;
 }
 
 QString media_mtx_config(int api_port, int rtsp_port, int udp_port)
@@ -313,6 +345,7 @@ struct ProductProgramOutputImpl {
 		if (recording) return error = "recording-active", false;
 		recording_error.clear();
 		recording_ready = false;
+		const quint32 tracks = encodable_audio_tracks(audio_tracks);
 		if (!QDir().mkpath(recordings_root)) {
 			// The status receipt must carry the same reason the UI shows; a
 			// silently refused start would look like an idle product.
@@ -354,7 +387,7 @@ struct ProductProgramOutputImpl {
 		obs_data_t *audio_settings = obs_data_create();
 		obs_data_set_int(audio_settings, "bitrate", 128);
 		for (int track = 0; track < 6; ++track) {
-			if (!(audio_tracks & (1u << track)))
+			if (!(tracks & (1u << track)))
 				continue;
 			// Keep the UTF-8 bytes alive in a named QByteArray: the encoder API
 			// takes const char *, and a temporary QByteArray would already be gone
@@ -375,12 +408,23 @@ struct ProductProgramOutputImpl {
 			++recording_audio_count;
 		}
 		obs_data_release(audio_settings);
-		if (audio_tracks && recording_audio_count == 0) {
+		if (recording_audio_count == 0) {
 			release_recording();
 			error = "recording-audio-encoder-unavailable";
 			return false;
 		}
-		recording_tracks = audio_tracks;
+		recording_tracks = tracks;
+		std::vector<obs_encoder_t *> encoders{recording_video.value};
+		for (int track = 0; track < 6; ++track)
+			if (recording_audio[track].value)
+				encoders.push_back(recording_audio[track].value);
+		const QString preflight = output_preflight_error(recording_output.value,
+			 QStringLiteral("recording"), encoders);
+		if (!preflight.isEmpty()) {
+			release_recording();
+			recording_error = error = preflight;
+			return false;
+		}
 		if (!obs_output_start(recording_output.value)) {
 			const QString detail = bounded_error(obs_output_get_last_error(recording_output.value));
 			release_recording();
@@ -503,6 +547,7 @@ struct ProductProgramOutputImpl {
 	{
 		if (streaming) return error = "streaming-active", false;
 		stream_error.clear();
+		const quint32 tracks = encodable_audio_tracks(audio_tracks);
 		if (!start_media_mtx(error)) return false;
 		obs_data_t *service_settings = obs_data_create();
 		obs_data_set_string(service_settings, "server", stream_publish_url.toUtf8().constData());
@@ -534,32 +579,32 @@ struct ProductProgramOutputImpl {
 		whip_video.reset(video);
 		obs_encoder_set_video(whip_video.value, obs_get_video());
 		// WHIP carries one audio track. Publish the lowest Program track rather
-		// than track 0, which is empty whenever the Scene selects another bus.
+		// than track 0, which is empty whenever the Scene selects another bus. A
+		// Scene with no routed audio publishes a silent bus 0 track instead: the
+		// encoded WHIP output cannot start with no audio encoder at all.
 		int selected_track = 0;
 		for (int track = 0; track < 6; ++track) {
-			if (audio_tracks & (1u << track)) {
+			if (tracks & (1u << track)) {
 				selected_track = track;
 				break;
 			}
 		}
-		if (audio_tracks) {
-			obs_data_t *audio_settings = obs_data_create();
-			obs_data_set_int(audio_settings, "bitrate", 96);
-			const QByteArray label = ("WebOBS Program WHIP Opus track "
-				+ QString::number(selected_track + 1)).toUtf8();
-			obs_encoder_t *audio = obs_audio_encoder_create("ffmpeg_opus", label.constData(),
-				audio_settings, size_t(selected_track), nullptr);
-			obs_data_release(audio_settings);
-			if (!audio) {
-				release_streaming();
-				stop_media_mtx();
-				streaming_tracks = 0;
-				error = "stream-audio-encoder-unavailable";
-				return false;
-			}
-			whip_audio.reset(audio);
-			obs_encoder_set_audio(whip_audio.value, obs_get_audio());
+		obs_data_t *audio_settings = obs_data_create();
+		obs_data_set_int(audio_settings, "bitrate", 96);
+		const QByteArray label = ("WebOBS Program WHIP Opus track "
+			+ QString::number(selected_track + 1)).toUtf8();
+		obs_encoder_t *audio = obs_audio_encoder_create("ffmpeg_opus", label.constData(),
+			audio_settings, size_t(selected_track), nullptr);
+		obs_data_release(audio_settings);
+		if (!audio) {
+			release_streaming();
+			stop_media_mtx();
+			streaming_tracks = 0;
+			error = "stream-audio-encoder-unavailable";
+			return false;
 		}
+		whip_audio.reset(audio);
+		obs_encoder_set_audio(whip_audio.value, obs_get_audio());
 		obs_output_t *output = obs_output_create("whip_output", "WebOBS Program WHIP output",
 			nullptr, nullptr);
 		if (!output) {
@@ -570,9 +615,18 @@ struct ProductProgramOutputImpl {
 		}
 		whip_output.reset(output);
 		obs_output_set_video_encoder(whip_output.value, whip_video.value);
-		if (whip_audio.value)
-			obs_output_set_audio_encoder(whip_output.value, whip_audio.value, 0);
+		obs_output_set_audio_encoder(whip_output.value, whip_audio.value, 0);
 		obs_output_set_service(whip_output.value, whip_service.value);
+		const QString preflight = output_preflight_error(whip_output.value,
+			QStringLiteral("stream"), {whip_video.value, whip_audio.value});
+		if (!preflight.isEmpty()) {
+			release_streaming();
+			stop_media_mtx();
+			streaming_tracks = 0;
+			stream_error = preflight;
+			error = preflight;
+			return false;
+		}
 		if (!obs_output_start(whip_output.value)) {
 			const QString detail = bounded_error(obs_output_get_last_error(whip_output.value));
 			release_streaming();
@@ -582,7 +636,7 @@ struct ProductProgramOutputImpl {
 			return false;
 		}
 		streaming = true;
-		streaming_tracks = audio_tracks;
+		streaming_tracks = tracks;
 		stream_clock.start();
 		return true;
 	}
