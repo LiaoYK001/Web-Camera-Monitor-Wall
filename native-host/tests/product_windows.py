@@ -624,45 +624,101 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                         "showing": entry.get("showing"), "active": entry.get("active"),
                         "removed": entry.get("removed")}
 
-                waited, windows, unresolved = time.monotonic(), 0, None
-                silent_inputs: list = []
-                while time.monotonic() - waited < 30:
-                    first = state()
-                    first_serials = counted_serials(first)
-                    bound_ids, playing_ids = rendered_input_ids(first)
-                    expected = bound_ids | (playing_ids & set(first_serials))
-                    # PLAYING with a counter that never left zero is the interesting case,
-                    # so it is recorded every window even though it is not awaited here.
-                    silent_inputs = [describe(entry) for entry in video_entries(first)
-                        if entry.get("showing") is True and entry.get("active") is True
-                        and entry.get("mediaState") == 1 and str(entry.get("uuid") or "") not in first_serials]
-                    time.sleep(2.5)
-                    later = state()
-                    later_serials = counted_serials(later)
-                    windows += 1
-                    bound_later, _ = rendered_input_ids(later)
-                    missing = sorted(expected - set(later_serials))
-                    stagnant = [{"uuid": uuid, "before": first_serials.get(uuid),
-                                 "after": later_serials.get(uuid)}
-                        for uuid in sorted(expected & set(later_serials))
-                        if int(later_serials[uuid]) <= int(first_serials[uuid])]
-                    if len(bound_later) < 5:
-                        missing.append("<fewer-than-five-wall-bindings>")
-                    if not missing and not stagnant:
-                        unresolved = None
+                def fixture_fault():
+                    """Harness-side fault for this window: which synthetic paths stopped pushing.
+
+                    A loopback publisher can stall while its process is still alive, and then
+                    every reader of that path — including a Program Scene's dedicated source —
+                    goes silent with no product involvement. Only a path that provably stopped
+                    pushing packets is repaired, so a product stall still fails the gate.
+                    """
+                    harness = fixture_publisher_health()
+                    dead = [entry["index"] for entry in harness["publishers"]
+                            if entry["state"] != "alive"]
+                    unreadable = [index for index, ok in enumerate(harness["readable"]) if not ok]
+                    stalled = [entry["index"] for entry in harness["pathProgress"]
+                               if entry.get("flowing") is False]
+                    return harness, sorted(set(dead) | set(unreadable) | set(stalled))
+
+                def measure_window(budget_seconds):
+                    """Watch real per-input frame progress; return None when every input advanced."""
+                    deadline = time.monotonic() + budget_seconds
+                    windows, unresolved, silent_inputs = 0, None, []
+                    silent_since = None
+                    while time.monotonic() < deadline:
+                        first = state()
+                        first_serials = counted_serials(first)
+                        bound_ids, playing_ids = rendered_input_ids(first)
+                        expected = bound_ids | (playing_ids & set(first_serials))
+                        # PLAYING with a counter that never left zero is the interesting case,
+                        # so it is recorded every window; a source that only just opened is
+                        # allowed because the host refreshes per-input health every 2 s.
+                        silent_inputs = [describe(entry) for entry in video_entries(first)
+                            if entry.get("showing") is True and entry.get("active") is True
+                            and entry.get("mediaState") == 1
+                            and str(entry.get("uuid") or "") not in first_serials]
+                        if silent_inputs:
+                            silent_since = silent_since or time.monotonic()
+                        else:
+                            silent_since = None
+                        # Several refresh ticks of PLAYING-with-zero-callbacks is not "still
+                        # opening"; it is an input the product opened and never decoded.
+                        persistent_silent = silent_since is not None and \
+                            time.monotonic() - silent_since >= 8.0
+                        time.sleep(2.5)
+                        later = state()
+                        later_serials = counted_serials(later)
+                        windows += 1
+                        bound_later, _ = rendered_input_ids(later)
+                        missing = sorted(expected - set(later_serials))
+                        stagnant = [{"uuid": uuid, "before": first_serials.get(uuid),
+                                     "after": later_serials.get(uuid)}
+                            for uuid in sorted(expected & set(later_serials))
+                            if int(later_serials[uuid]) <= int(first_serials[uuid])]
+                        if len(bound_later) < 5:
+                            missing.append("<fewer-than-five-wall-bindings>")
+                        if not missing and not stagnant and not persistent_silent:
+                            return None
+                        unresolved = {"windowMs": 2500, "windows": windows,
+                            "missingOrNewInputs": missing[:6], "stagnantInputs": stagnant[:6],
+                            "playingWithoutFrameCount": silent_inputs[:4],
+                            "persistentSilentMs": int((time.monotonic() - silent_since) * 1000)
+                                if silent_since is not None else 0,
+                            "countedInputs": len(later_serials),
+                            "reportedInputs": len(video_entries(later)),
+                            "videoInputs": [describe(entry) for entry in video_entries(later)][:16]}
+                        evidence.setdefault("programPixelInputWait", []).append({
+                            "phase": label, "waitedMs": int((time.monotonic() - started) * 1000),
+                            "windows": windows, "watchedInputs": len(counted_serials(state())),
+                            "stagnantInputs": unresolved["stagnantInputs"],
+                            "playingWithoutFrameCount": silent_inputs[:4]})
+                    return unresolved
+
+                started = time.monotonic()
+                unresolved, repairs = measure_window(30), []
+                while unresolved is not None and len(repairs) < 2:
+                    harness, faulty = fixture_fault()
+                    if not faulty:
+                        unresolved["fixturePublishers"] = harness["publishers"]
+                        unresolved["fixtureStalledPaths"] = []
+                        unresolved["fixturePathProgress"] = harness["pathProgress"][:5]
                         break
-                    unresolved = {"windowMs": 2500, "windows": windows,
-                        "missingOrNewInputs": missing[:6], "stagnantInputs": stagnant[:6],
-                        "playingWithoutFrameCount": silent_inputs[:4],
-                        "countedInputs": len(later_serials),
-                        "reportedInputs": len(video_entries(later))}
+                    repairs.append({"phase": label, "paths": faulty,
+                        "publishers": harness["publishers"],
+                        "pathProgress": harness["pathProgress"][:5]})
+                    for index in faulty:
+                        rtsp.restart_publisher(index)
+                    unresolved = measure_window(30)
+                if repairs:
+                    evidence["inputWaitFixtureRepair"] = repairs
                 evidence.setdefault("programPixelInputWait", []).append({
-                    "phase": label, "waitedMs": int((time.monotonic() - waited) * 1000),
-                    "windows": windows, "watchedInputs": len(counted_serials(state())),
-                    "playingWithoutFrameCount": silent_inputs[:4]})
+                    "phase": label, "waitedMs": int((time.monotonic() - started) * 1000),
+                    "watchedInputs": len(counted_serials(state())),
+                    "fixtureRepairs": [entry["paths"] for entry in repairs]})
                 if unresolved is not None:
                     evidence["inputWaitOffendingNames"] = sorted({str(item.get("name") or "")[:48]
-                        for item in silent_inputs if str(item.get("name") or "")})[:8]
+                        for item in unresolved.get("playingWithoutFrameCount", [])
+                        if str(item.get("name") or "")})[:8]
                     raise AssertionError(label + ": no watched video input delivered a newer frame inside a "
                         "measured 2500 ms window (the host refreshes its health counters "
                         "every 2 s): " + json.dumps(unresolved, sort_keys=True)[:900])
