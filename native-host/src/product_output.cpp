@@ -153,11 +153,22 @@ QString output_preflight_error(obs_output_t *output, const QString &stage,
 		: stage + QStringLiteral("-encoder-initialize-failed: ") + detail;
 }
 
+QString relay_log_tail(const QByteArray &bytes)
+{
+	// The relay's own last words are the only evidence of a refusal. Keep them
+	// short and neutralize URL markers so a support bundle stays free of URLs.
+	QString text = QString::fromUtf8(bytes).simplified().left(240);
+	return text.replace(QStringLiteral("://"), QStringLiteral(":/"));
+}
+
 QString media_mtx_config(int api_port, int rtsp_port, int whip_port, int udp_port)
 {
 	return QStringLiteral(
+		// MediaMTX accepts only stdout, file and syslog here; the pinned v1.18.2 relay
+		// refused this private config with "invalid log destination: stderr" and exited
+		// before opening its API listener, which the host then reported as a timeout.
 		"logLevel: warn\n"
-		"logDestinations: [stderr]\n"
+		"logDestinations: [stdout]\n"
 		"authMethod: internal\n"
 		"authInternalUsers:\n"
 		"  - user: any\n"
@@ -314,13 +325,24 @@ struct ProductProgramOutputImpl {
 			stream_error = error = "mediamtx-start-failed";
 			return false;
 		}
+		// Drain everything the relay writes while waiting: a filled OS pipe would
+		// block the child, and its own words are the only evidence of a refusal.
+		QByteArray relay_log;
 		QElapsedTimer readiness;
 		readiness.start();
 		while (readiness.elapsed() < 10000) {
-			if (media_mtx.state() == QProcess::NotRunning) {
-				const QString tail = QString::fromUtf8(media_mtx.readAll()).simplified().left(160);
-				stream_error = tail.isEmpty() ? "mediamtx-exited" : "mediamtx-exited: " + tail;
-				error = "mediamtx-exited";
+			relay_log.append(media_mtx.readAll());
+			if (relay_log.size() > 4096)
+				relay_log.remove(0, relay_log.size() - 4096);
+			// QProcess only notices a child exit through the event loop, and this wait
+			// runs inside a UI action, so the process handle is checked directly. An
+			// unobserved exit previously turned a refused config into "mediamtx-timeout".
+			if (media_mtx.waitForFinished(0)) {
+				relay_log.append(media_mtx.readAll());
+				const QString detail = relay_log_tail(relay_log);
+				stream_error = detail.isEmpty() ? QStringLiteral("mediamtx-exited")
+					: QStringLiteral("mediamtx-exited: ") + detail;
+				error = QStringLiteral("mediamtx-exited");
 				return false;
 			}
 			QTcpSocket probe;
@@ -335,8 +357,12 @@ struct ProductProgramOutputImpl {
 			}
 			wait_ms(100);
 		}
+		relay_log.append(media_mtx.readAll());
 		stop_media_mtx();
-		stream_error = error = "mediamtx-timeout";
+		relay_log.append(media_mtx.readAll());
+		const QString detail = relay_log_tail(relay_log);
+		stream_error = error = detail.isEmpty() ? QStringLiteral("mediamtx-timeout")
+			: QStringLiteral("mediamtx-timeout: ") + detail;
 		return false;
 	}
 	bool start_recording(QString &error, quint32 audio_tracks)

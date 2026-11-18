@@ -194,8 +194,31 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn('QStringLiteral("http://127.0.0.1:%1/program/whip").arg(whip_port)', source)
         start = source[source.index("bool start_media_mtx"):source.index("bool start_recording")]
         for refusal in ("mediamtx-unavailable", "mediamtx-port-failed", "mediamtx-directory-failed",
-                        "mediamtx-config-failed", "mediamtx-start-failed", "mediamtx-timeout"):
-            self.assertIn('stream_error = error = "%s"' % refusal, start)
+                        "mediamtx-config-failed", "mediamtx-start-failed", "mediamtx-exited",
+                        "mediamtx-timeout"):
+            self.assertIn('"%s"' % refusal, start)
+        # A refusal has to carry the relay's own last words. QProcess only notices a
+        # child exit through the event loop, and this wait runs inside a UI action,
+        # so an unobserved exit turned a rejected configuration into a bare
+        # "mediamtx-timeout" in run 44366851677.
+        self.assertIn("waitForFinished(0)", start)
+        self.assertIn("relay_log_tail", start)
+        self.assertIn("relay_log.append(media_mtx.readAll())", start)
+
+    def test_program_output_relay_log_destination_is_accepted(self):
+        """The private Program relay must only use log destinations the pinned MediaMTX accepts.
+
+        MediaMTX v1.18.2 accepts stdout, file and syslog. The relay config used
+        logDestinations: [stderr], printed "ERR: invalid log destination: stderr"
+        and exited before opening any listener, which the host reported as
+        mediamtx-timeout (run 44366851677). The shipped gateway config, which runs
+        in production, uses stdout; the private relay now matches it.
+        """
+        source = (ROOT / "native-host/src/product_output.cpp").read_text(encoding="utf-8")
+        self.assertIn('"logDestinations: [stdout]\\n"', source)
+        self.assertNotIn("[stderr]", source)
+        gateway = (ROOT / "gateway/mediamtx.yml").read_text(encoding="utf-8")
+        self.assertIn("logDestinations: [stdout]", gateway)
 
     def test_build_symbols_are_stripped_before_the_manifest(self):
         builder = (ROOT / "desktop/scripts/build-obs-native.ps1").read_text(encoding="utf-8")
