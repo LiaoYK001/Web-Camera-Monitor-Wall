@@ -1,12 +1,54 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 159 · 2026-11-18T14:58:48+08:00（UTC+08）
+> 快照版本 166 · 2026-11-18T15:44:56+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #166 · 2026-11-18T15:44:56+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`R2-003`
+- 记录：rc.31 派发：#67 head e20dd28（掩码修复+启动预检+selectedAudioTracks+采集身份重试）；rc.27/rc.30 录像启动失败与 rc.29 投影窗口身份失效均已定位到具体阶段
+- 证据：无新增验收证据
+- 源码：`82bf19ff0151204ff6813f54bedcffddc6ae4889`
+## #165 · 2026-11-18T15:44:56+08:00 · update
+
+- Agent：`deepseek-v51-20261118-01`；任务：`R2-003`
+- 记录：定位并修复 Program 录像/推流静默启动失败根因：audio_output_tracks() 跳过被静音的相机源，声明 audioInputs 的场景因此掩码恒为0，AV muxer/WHIP 在 can_begin_data_capture 内无错误拒绝。现分别读取相机源与混音源掩码，无路由音频时在默认总线挂静音轨；新增启动预检与 selectedAudioTracks 证据；像素采集在句柄失效时按新身份重试一次。
+- 证据：codex/v51-r3-output e20dd28 已推送；rc.31 run 44261174753 派发（rc.31 未被 Tag/Release 占用）；rc.27/rc.30 回执 recordingError=recording-start-failed 且 last_error 为空；rc.29 在 program-after-take 出现 window-identity 失效
+- 源码：`82bf19ff0151204ff6813f54bedcffddc6ae4889`
+## #164 · 2026-11-18T15:41:30+08:00 · update
+
+- Agent：`codex-ci-download-mktemp-20261118`；任务：`COORD-008`
+- 记录：已在 AGENTS.md 写入中英双语 CI 下载目录规则和 Bash 示例
+- 证据：AGENTS.md:42；Bash 使用 gh 替身验证两次执行得到不同空目录，带空格的产物名和目录值保持为独立参数；git diff --check 通过
+- 源码：`82bf19ff0151204ff6813f54bedcffddc6ae4889`
+## #163 · 2026-11-18T15:41:01+08:00 · claim
+
+- Agent：`codex-ci-download-mktemp-20261118`；任务：`COORD-008`
+- 记录：仅修改 AGENTS.md 的 CI 下载约定，保留已有未提交修改
+- 证据：无新增验收证据
+- 源码：`82bf19ff0151204ff6813f54bedcffddc6ae4889`
+## #162 · 2026-11-18T15:41:01+08:00 · add
+
+- Agent：`codex-ci-download-mktemp-20261118`；任务：`COORD-008`
+- 记录：用户要求将 CI 下载避免递归强制删除的做法加入 AGENTS.md
+- 证据：无新增验收证据
+- 源码：`82bf19ff0151204ff6813f54bedcffddc6ae4889`
+## #161 · 2026-11-18T15:03:17+08:00 · update
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-007`
+- 记录：#70 再次同步到 #67 最新 head（32e8d18），远端 head 现为 4664251；本机契约测试仍全通过。
+- 证据：.worktrees/v51-backup@4664251；test_complete_supervisor PASS、test_encrypted_backup 10/10、test_native_updater 3 PASS
+- 源码：`82bf19ff0151204ff6813f54bedcffddc6ae4889`
+## #160 · 2026-11-18T15:03:17+08:00 · update
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：静态复核发现并修好两处门禁缺陷：逐轨偏移等待条件对可能缺失的 audioSources 条目直接 .get 会抛 AttributeError（改为显式探针重试）；停止后资源对照把场景逐轨混音 ffmpeg.exe 也断言为空（改为 MediaMTX 必须为 0 且场景混音进程集合与推流前一致）。另在 Linux 用 ffmpeg 实解码复现 tone_amplitude：存在≈4095、不存在≈0、gain 0.2 比 0.200。
+- 证据：head 32e8d18；rc.30 run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44255867749；本机 /tmp/tonecheck 双轨与单轨文件解码对照
+- 源码：`82bf19ff0151204ff6813f54bedcffddc6ae4889`
 ## #159 · 2026-11-18T14:58:48+08:00 · update
 
 - Agent：`deepseek-v51-20261118-01`；任务：`V51-008`

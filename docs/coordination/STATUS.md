@@ -1,7 +1,7 @@
 # 当前进度 / Current status
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 159 · 2026-11-18T14:58:48+08:00（UTC+08）
+> 快照版本 166 · 2026-11-18T15:44:56+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -25,7 +25,7 @@
 
 | 阶段 | 已关闭/登记任务 | 当前状态 |
 | --- | --- | --- |
-| COORD 多 Agent 协作基础 | 7/7 | 完成 |
+| COORD 多 Agent 协作基础 | 8/8 | 完成 |
 | R0 冻结基线与差距清单 | 4/4 | 完成 |
 | PREVIEW v4.5 Windows x64 原生监看预览交付 | 4/4 | 完成 |
 | R1 原生产品闭环与授权 | 2/2 | 完成 |
@@ -45,6 +45,6 @@
 - `R3-003` P2 · 回接事件、检测、go2rtc 与网站来源可选组件。下一步：真实网站/直播、检测 provider/叠层最终像素、MQTT/HA 通知与重启恢复。
 - `R3-004` P2 · 回接远端、离线同步、问题中心和诊断。下一步：逐项关闭 REMOTE/OFFLINE/OPS，远端兼容不等于恢复 Android 发版。
 - `V51-006` P1 · 接通稳定打包身份与验收文件单一契约 / wire stable packaging identity with one acceptance-file contract。下一步：合入 #67/#68 后 rebase 本分支并转正式审查；真实 latest.yml 上传与集中验收回执仍待执行
-- `V51-008` P1 · 把 Program 合成输出验收落到用户实际收到的产物 / accept Program output from the delivered recording and stream。下一步：读取 rc.27/rc.29 结果；失败按具体断言修复后用新编号复跑。
+- `V51-008` P1 · 把 Program 合成输出验收落到用户实际收到的产物 / accept Program output from the delivered recording and stream。下一步：读 rc.27（旁证）与 rc.29/rc.30 结果；rc.29 预期会在偏移门禁因空引用失败，只取此前门禁的旁证。
 
 原始依据：[完整任务书](../windows-webobs-wall-release-plan-2026-11-11.md)、[功能矩阵](../windows-native-feature-parity.md)、[逐轮执行记录](../windows-obs-parity-execution.md)、[v4.5 范围](../release-notes-v4.5.md)。

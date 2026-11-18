@@ -1,7 +1,7 @@
 # 详细执行路线图 / Execution roadmap
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 159 · 2026-11-18T14:58:48+08:00（UTC+08）
+> 快照版本 166 · 2026-11-18T15:44:56+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -20,6 +20,7 @@
 - **AUDIT-001 · 完成**：核查rc.1发布证据及完整候选缺口 / audit rc.1 release and integration gaps；依赖：无。验收：核对公开资产/源码/Windows门禁，独立检查迁移与更新实现，区分未实现和仅待实机；不改产品/公开Release
 - **HANDOFF-003 · 完成**：交接v5.1接续开发与正式交付 / hand off v5.1 completion；依赖：无。验收：单文件含最新代码/PR/运行身份、已改/未做/风险、认领命令和v5.1完整发布任务；释放本会话V51-002便于下一Agent接手；不修改产品或发布
 - **HANDOFF-004 · 完成**：编写 DeepSeek 的 v5.1 成品执行指南 / write the v5.1 completion guide；依赖：无。验收：核对最新源码、PR 和 Windows 失败回执，给出可执行定位、分支顺序、完整功能与发布验收，不接管进行中开发
+- **COORD-008 · 完成**：记录 CI 下载临时目录约定 / document temporary directories for CI downloads；依赖：无。验收：AGENTS.md 指定每次 CI 下载使用 mktemp -d 和带引号的下载路径，不清空旧目录或改变 Codex 审批配置
 
 ## R0 · 冻结基线与差距清单
 
