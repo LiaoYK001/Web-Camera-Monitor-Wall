@@ -263,6 +263,45 @@ class LoopbackRtsp:
             time.sleep(0.5)
         raise RuntimeError("Loopback RTSP stream did not return after restart")
 
+    def _packet_flow(self, url: str) -> tuple[int, float | None]:
+        """Count video packets in a short live window and return the newest presentation stamp."""
+        try:
+            probe = subprocess.run([str(self.ffprobe), "-v", "error", "-rtsp_transport", "tcp",
+                                    "-select_streams", "v:0", "-show_entries", "packet=pts",
+                                    "-read_intervals", "%+#12", "-of", "csv=p=0", url],
+                                   capture_output=True, text=True, timeout=10)
+        except subprocess.TimeoutExpired:
+            return (0, None)
+        if probe.returncode != 0:
+            return (0, None)
+        stamps = []
+        for line in probe.stdout.splitlines():
+            try:
+                stamps.append(float(line.strip()))
+            except ValueError:
+                continue
+        return (len(stamps), max(stamps) if stamps else None)
+
+    def path_progress(self) -> list[dict]:
+        """Probe every published path twice and report whether packets actually advance.
+
+        Opening a path only proves MediaMTX still answers it. A frozen final-pixel slot has to
+        distinguish "the fixture stopped pushing packets" from "the product stopped decoding
+        them", so each path is sampled over a short live window on either side of a gap. A
+        looping fixture can rewind its presentation stamp, so flow is decided by packet counts
+        and the stamp delta is reported separately.
+        """
+        report = []
+        for index, url in enumerate(self.urls):
+            first, first_pts = self._packet_flow(url)
+            time.sleep(0.8)
+            second, second_pts = self._packet_flow(url)
+            report.append({"index": index, "packets": [first, second],
+                           "ptsDelta": (round(second_pts - first_pts, 3)
+                                        if first_pts is not None and second_pts is not None else None),
+                           "flowing": first > 0 and second > 0})
+        return report
+
     def stop(self) -> None:
         for publisher in self.publishers:
             if publisher is not None and publisher.poll() is None:
