@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 241,
-  "updated_at": "2026-11-19T02:55:31+08:00",
+  "revision": 242,
+  "updated_at": "2026-11-19T03:16:24+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1294,12 +1294,13 @@
         "run 44356064395 receipts /tmp/rc52.Vf3r；本地 MediaMTX 1.18.2 验证：活路径 oldestPts 3600→14791 flowing=true，杀发布进程后 packets=[0,0] flowing=false；py_compile 通过；native-host/tests/test_build_contract.py 45 OK",
         "run 44364213218 编译日志 11_Compile…txt 第 2914/2918 行 C2039；本机 python3 -m py_compile 通过；rc.54 run 44366334192 已取消（含不可靠的 pts 规则）；栈头 8b09fa3/7169e21/985226a/5b8a9ac/f78e76e/bc7dc97。",
         "本机用同一 v1.18.2 二进制复现：改前 ERR+exit1，改后 API/RTSP/WHIP 就绪且 WHIP 返回真实握手错误；test_build_contract.py 46 项通过；提交 ea2d704（PR #67）",
-        "run 44373450534 conclusion=cancelled；run 44374662264 in_progress sha 738a62a"
+        "run 44373450534 conclusion=cancelled；run 44374662264 in_progress sha 738a62a",
+        "PR #67 head b003ae7; run 44374662264 in progress (rc.57, sha 738a62a)"
       ],
       "blocker": "",
       "next_step": "rc.52 结果决定下一步：若停滞输入名与逐路包数证明回环仍流动而 Program 专用输入零帧，则需在宿主做有界媒体重开；否则按 #67→#70→#71→#74 顺序合并并复跑 rc.53。",
-      "updated_at": "2026-11-19T02:55:12+08:00",
-      "last_note": "rc.56（run 44373450534）派发后在下线前取消：其树仍含旧的启动器硬杀停机代码，安装门禁必然在 installed-legacy-import/installed-lan-entry 失败。改从含修复的 #74 头 738a62a 派发 rc.57。"
+      "updated_at": "2026-11-19T03:16:24+08:00",
+      "last_note": "Program 发布传输收敛为回环 RTMP：固定 Windows OBS 树以 -DENABLE_WEBRTC=OFF 构建且锁定 vcpkg 无 LibDataChannel，安装态没有 whip_custom/whip_output（rc.16 运行时清单有 rtmp-services.dll/obs-outputs.dll，无 obs-webrtc.dll），故下一次失败是 stream-service-unavailable。现用 rtmp_custom+rtmp_output+ffmpeg_aac 发布到同一按需私有 MediaMTX，中继对外 RTSP+WHEP；发布 URL 无 app 段、key=program，用固定 v1.18.2 实测路径为 program（RTSP 回读 h264+aac，视频包持续前进），带 app 段则变成 program/program 且中继关闭发布。门禁新增传输=WHEP 端点应答断言，构建契约拒绝 whip_* 并要求 rtmp_*，本机 47/47 通过。OBS 侧 WHIP 直推仍记为缺口。/ Program publishing now uses loopback RTMP (rtmp_custom+rtmp_output+ffmpeg_aac) into the same private relay because the pinned Windows OBS tree builds with -DENABLE_WEBRTC=OFF and the locked vcpkg archive has no LibDataChannel, so whip_custom/whip_output do not exist in the installed host; verified against the pinned relay that a URL without an app segment plus key program maps to path program (RTSP reads h264+aac) while an app segment produced program/program and the relay closed the publish. Gate adds transport and WHEP-endpoint assertions, build contracts now refuse whip_* and require rtmp_*, 47/47 pass locally; direct OBS WHIP stays a documented gap."
     },
     {
       "id": "COORD-008",
@@ -4253,6 +4254,18 @@
       "note": "共用停机助手 window_close 由本任务维护，供安装态门禁复用",
       "evidence": [],
       "git_revision": "544bb39a11b49eba982d5cbb6f7e18dc60773fba"
+    },
+    {
+      "sequence": 242,
+      "at": "2026-11-19T03:16:24+08:00",
+      "agent": "deepseek-v51-20261118-01",
+      "task": "V51-008",
+      "action": "log",
+      "note": "Program 发布传输收敛为回环 RTMP：固定 Windows OBS 树以 -DENABLE_WEBRTC=OFF 构建且锁定 vcpkg 无 LibDataChannel，安装态没有 whip_custom/whip_output（rc.16 运行时清单有 rtmp-services.dll/obs-outputs.dll，无 obs-webrtc.dll），故下一次失败是 stream-service-unavailable。现用 rtmp_custom+rtmp_output+ffmpeg_aac 发布到同一按需私有 MediaMTX，中继对外 RTSP+WHEP；发布 URL 无 app 段、key=program，用固定 v1.18.2 实测路径为 program（RTSP 回读 h264+aac，视频包持续前进），带 app 段则变成 program/program 且中继关闭发布。门禁新增传输=WHEP 端点应答断言，构建契约拒绝 whip_* 并要求 rtmp_*，本机 47/47 通过。OBS 侧 WHIP 直推仍记为缺口。/ Program publishing now uses loopback RTMP (rtmp_custom+rtmp_output+ffmpeg_aac) into the same private relay because the pinned Windows OBS tree builds with -DENABLE_WEBRTC=OFF and the locked vcpkg archive has no LibDataChannel, so whip_custom/whip_output do not exist in the installed host; verified against the pinned relay that a URL without an app segment plus key program maps to path program (RTSP reads h264+aac) while an app segment produced program/program and the relay closed the publish. Gate adds transport and WHEP-endpoint assertions, build contracts now refuse whip_* and require rtmp_*, 47/47 pass locally; direct OBS WHIP stays a documented gap.",
+      "evidence": [
+        "PR #67 head b003ae7; run 44374662264 in progress (rc.57, sha 738a62a)"
+      ],
+      "git_revision": "7749d77e05942dda0441aa7c6bcb338ce93c0c0d"
     }
   ]
 }

@@ -1,7 +1,7 @@
 # 当前交接 / Current handoff
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 241 · 2026-11-19T02:55:31+08:00（UTC+08）
+> 快照版本 242 · 2026-11-19T03:16:24+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -22,6 +22,6 @@
 
 ## 最近一次同步
 
-共用停机助手 window_close 由本任务维护，供安装态门禁复用
+Program 发布传输收敛为回环 RTMP：固定 Windows OBS 树以 -DENABLE_WEBRTC=OFF 构建且锁定 vcpkg 无 LibDataChannel，安装态没有 whip_custom/whip_output（rc.16 运行时清单有 rtmp-services.dll/obs-outputs.dll，无 obs-webrtc.dll），故下一次失败是 stream-service-unavailable。现用 rtmp_custom+rtmp_output+ffmpeg_aac 发布到同一按需私有 MediaMTX，中继对外 RTSP+WHEP；发布 URL 无 app 段、key=program，用固定 v1.18.2 实测路径为 program（RTSP 回读 h264+aac，视频包持续前进），带 app 段则变成 program/program 且中继关闭发布。门禁新增传输=WHEP 端点应答断言，构建契约拒绝 whip_* 并要求 rtmp_*，本机 47/47 通过。OBS 侧 WHIP 直推仍记为缺口。/ Program publishing now uses loopback RTMP (rtmp_custom+rtmp_output+ffmpeg_aac) into the same private relay because the pinned Windows OBS tree builds with -DENABLE_WEBRTC=OFF and the locked vcpkg archive has no LibDataChannel, so whip_custom/whip_output do not exist in the installed host; verified against the pinned relay that a URL without an app segment plus key program maps to path program (RTSP reads h264+aac) while an app segment produced program/program and the relay closed the publish. Gate adds transport and WHEP-endpoint assertions, build contracts now refuse whip_* and require rtmp_*, 47/47 pass locally; direct OBS WHIP stays a documented gap.
 
 以任务中的验收条件决定完成；没有 Windows/硬件/发布证据时保持对应事项开放。
