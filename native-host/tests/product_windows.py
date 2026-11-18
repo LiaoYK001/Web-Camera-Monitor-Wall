@@ -580,58 +580,92 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 program_scene=program_scene, program_media=program_media)
             checkpoint("pixels-" + label + "-observed")
             if program_scene is not None:
-                # A cut TAKE retires and re-creates owned sources while the wall keeps
-                # running, so the capture window can straddle that switch and report a
-                # frozen slot for a wall that is mid-switch. The host's own per-input
-                # health counters (frame serial and time since the last serial change)
-                # must show the inputs OBS itself reports as playing before the pixel
-                # assertion starts, and the input count is read from the state because a
-                # Program Scene legitimately owns more inputs than the five-input wall.
-                # rc.47 timed out here for a different reason than a stall: the wait
-                # covered *every* input, including the Program-owned source the TAKE had
-                # just created, whose first media frame can legitimately take longer than
-                # the wait. That is OBS's media-open state, not a frozen tile. Inputs OBS
-                # does not report as showing, active and PLAYING are now recorded instead
-                # of awaited, and a tile that really never paints still fails the pixel
+                # A Program apply re-creates the wall Scene and its owned items, so a
+                # capture window that starts mid-swap sees a tile whose last frame is
+                # simply old. rc.47 (run 44332749108), rc.48 (run 44332713711) and rc.50
+                # (run 44339344891) proved the counter-only form of this wait cannot
+                # decide anything: the host refreshes its per-input health only every two
+                # seconds, so `stalledMs` is quantized to that tick, and a source that OBS
+                # reports as PLAYING but that has not delivered a single video callback yet
+                # keeps `serial` at 0 for longer than any wait. Neither is a frozen tile.
+                # Measure real progress instead: two snapshots at least 2.5 s apart must
+                # show a newer frame counter for every bound wall input and for every input
+                # OBS reports as showing, active and PLAYING *that has already counted
+                # frames*. Inputs that are still opening, or that report PLAYING without
+                # ever delivering a frame, are named in the receipt instead of being
+                # awaited; a tile that really never repaints still fails the pixel
                 # assertion below with the in-window serial evidence attached.
-                def unawaited_inputs(snapshot):
-                    entries = [entry for entry in snapshot.get("videoInputs", []) if isinstance(entry, dict)]
-                    playing = [entry for entry in entries if entry.get("showing") is True
-                        and entry.get("active") is True and entry.get("mediaState") == 1]
-                    if len(playing) < 5:
-                        return {"reason": "fewer than five inputs are showing and PLAYING",
-                            "entries": [{"uuid": str(entry.get("uuid") or ""),
-                                "serial": entry.get("serial"), "stalledMs": entry.get("stalledMs"),
-                                "showing": entry.get("showing"), "active": entry.get("active"),
-                                "mediaState": entry.get("mediaState")} for entry in entries[:8]]}
-                    stagnant = [entry for entry in playing
-                        if type(entry.get("serial")) is not int or int(entry["serial"]) <= 0
-                        or type(entry.get("stalledMs")) is not int
-                        or int(entry["stalledMs"]) < 0 or int(entry["stalledMs"]) > 2000]
-                    if not stagnant:
-                        return None
-                    return {"reason": "a PLAYING input reports no advancing frame counter",
-                        "offending": [{"uuid": str(entry.get("uuid") or ""),
-                            "serial": entry.get("serial"), "stalledMs": entry.get("stalledMs"),
-                            "mediaState": entry.get("mediaState"),
-                            "firstFrame": (type(entry.get("serial")) is int
-                                and int(entry["serial"]) <= 0)} for entry in stagnant[:6]]}
-                def inputs_advancing(snapshot):
-                    entries = [entry for entry in snapshot.get("videoInputs", []) if isinstance(entry, dict)]
-                    playing = [entry for entry in entries if entry.get("showing") is True
-                        and entry.get("active") is True and entry.get("mediaState") == 1]
-                    if len(playing) < 5 or unawaited_inputs(snapshot) is not None:
-                        return None
-                    return {"inputs": len(entries), "awaited": len(playing),
-                        "notPlayingYet": len(entries) - len(playing),
-                        "worstStalledMs": max(int(entry["stalledMs"]) for entry in playing)}
-                waited = time.monotonic()
-                advancing = wait_for(lambda: inputs_advancing(state()),
-                    lambda: (label + ": the host did not report its playing inputs advancing: "
-                        + json.dumps(unawaited_inputs(state()), sort_keys=True)[:700]),
-                    timeout=25)
-                evidence.setdefault("programPixelInputWait", []).append(
-                    {"phase": label, "waitedMs": int((time.monotonic() - waited) * 1000), **advancing})
+                def video_entries(snapshot):
+                    return [entry for entry in snapshot.get("videoInputs", []) if isinstance(entry, dict)]
+
+                def counted_serials(snapshot):
+                    # An audio-only mix source has no video callback and a source whose
+                    # media has not produced a frame yet has never been incremented, so
+                    # only a counter that has actually counted can be asked to advance.
+                    return {str(entry.get("uuid") or ""): int(entry["serial"])
+                        for entry in video_entries(snapshot)
+                        if type(entry.get("serial")) is int and 0 < int(entry["serial"]) < 10 ** 15}
+
+                def rendered_input_ids(snapshot):
+                    # The captured windows are the wall preview and the Program projector,
+                    # so the inputs that have to move are the wall's own bound sources plus
+                    # whatever OBS reports as actively showing and PLAYING.
+                    bound = {str(binding.get("sourceUuid") or "")[:8]
+                        for binding in snapshot.get("bindings", []) if isinstance(binding, dict)}
+                    playing = {str(entry.get("uuid") or "") for entry in video_entries(snapshot)
+                        if entry.get("showing") is True and entry.get("active") is True
+                        and entry.get("mediaState") == 1}
+                    return bound, playing
+
+                def describe(entry):
+                    return {"uuid": str(entry.get("uuid") or ""),
+                        "name": str(entry.get("name") or "")[:48],
+                        "serial": entry.get("serial"), "mediaState": entry.get("mediaState"),
+                        "showing": entry.get("showing"), "active": entry.get("active"),
+                        "removed": entry.get("removed")}
+
+                waited, windows, unresolved = time.monotonic(), 0, None
+                silent_inputs: list = []
+                while time.monotonic() - waited < 30:
+                    first = state()
+                    first_serials = counted_serials(first)
+                    bound_ids, playing_ids = rendered_input_ids(first)
+                    expected = bound_ids | (playing_ids & set(first_serials))
+                    # PLAYING with a counter that never left zero is the interesting case,
+                    # so it is recorded every window even though it is not awaited here.
+                    silent_inputs = [describe(entry) for entry in video_entries(first)
+                        if entry.get("showing") is True and entry.get("active") is True
+                        and entry.get("mediaState") == 1 and str(entry.get("uuid") or "") not in first_serials]
+                    time.sleep(2.5)
+                    later = state()
+                    later_serials = counted_serials(later)
+                    windows += 1
+                    bound_later, _ = rendered_input_ids(later)
+                    missing = sorted(expected - set(later_serials))
+                    stagnant = [{"uuid": uuid, "before": first_serials.get(uuid),
+                                 "after": later_serials.get(uuid)}
+                        for uuid in sorted(expected & set(later_serials))
+                        if int(later_serials[uuid]) <= int(first_serials[uuid])]
+                    if len(bound_later) < 5:
+                        missing.append("<fewer-than-five-wall-bindings>")
+                    if not missing and not stagnant:
+                        unresolved = None
+                        break
+                    unresolved = {"windowMs": 2500, "windows": windows,
+                        "missingOrNewInputs": missing[:6], "stagnantInputs": stagnant[:6],
+                        "playingWithoutFrameCount": silent_inputs[:4],
+                        "countedInputs": len(later_serials),
+                        "reportedInputs": len(video_entries(later))}
+                evidence.setdefault("programPixelInputWait", []).append({
+                    "phase": label, "waitedMs": int((time.monotonic() - waited) * 1000),
+                    "windows": windows, "watchedInputs": len(counted_serials(state())),
+                    "playingWithoutFrameCount": silent_inputs[:4]})
+                if unresolved is not None:
+                    evidence["inputWaitOffendingNames"] = sorted({str(item.get("name") or "")[:48]
+                        for item in silent_inputs if str(item.get("name") or "")})[:8]
+                    raise AssertionError(label + ": no watched video input delivered a newer frame inside a "
+                        "measured 2500 ms window (the host refreshes its health counters "
+                        "every 2 s): " + json.dumps(unresolved, sort_keys=True)[:900])
             if blank:
                 assert observed.get("phase") == "locked" and observed.get("mediaSources") == 0
             elif observed.get("sessionBound") is not True:
@@ -2280,7 +2314,13 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             obs_markers = ("Switched to Preview/Program mode", "Switched to regular Preview mode",
                 "Failed to initialize", "Failed to create", "QWidget", "QObject", "QLayout",
                 "Shutting down", "All scene data cleared", "Number of remaining allocations",
-                "Disconnected. Reconnecting", "Reconnected.", "MP: Failed to open media")
+                "Disconnected. Reconnecting", "Reconnected.", "MP: Failed to open media",
+                # A source can report PLAYING while its decoder never emits a frame; these
+                # are media_playback's own words for that, so the receipt can separate
+                # "opened but silent" from "never opened".
+                "MP: Failed to open video decoder", "MP: Failed to find video codec",
+                "MP: Could not initialize audio or video", "MP: av_read_frame failed",
+                "MP: Failed to seek")
             obs_logs = [path for path in (profile / "native-profile/obs-studio/logs").glob("*.txt")
                 if not path.is_symlink() and path.is_file() and path.stat().st_mtime >= boot_started_at - 2]
             evidence["currentBootObsLogPresent"] = bool(obs_logs)
@@ -2331,6 +2371,44 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                             clean = clean.replace(private_value, "<private>")
                         marker_lines[marker] = clean[:160]
                 evidence["currentBootObsMarkerLines"] = marker_lines
+                # An input that OBS reports PLAYING but that never delivers a frame is only
+                # explainable from the media side of the log. Keep the lines that name an
+                # offending source, or that media_playback wrote about an open/read failure.
+                wanted_names = [name for name in evidence.get("inputWaitOffendingNames", [])[:6] if name]
+                input_lines = []
+                for line in tail.splitlines():
+                    clean = re.sub(r"(?:rtsp|rtsps|udp|http|https)://\S+", "<url>", line)
+                    for private_value in (str(private), str(runtime), str(profile)):
+                        clean = clean.replace(private_value, "<private>")
+                    clean = clean[:160]
+                    if any(name in line for name in wanted_names) or "MP: " in line:
+                        input_lines.append(clean)
+                if input_lines:
+                    evidence["inputWaitLogLines"] = input_lines[-10:]
+            fixture_log = private / "rtsp-test.log"
+            if rtsp is not None and fixture_log.is_file() and not fixture_log.is_symlink():
+                # The loopback publishers and MediaMTX are harness state. A reader that opens
+                # a path but receives no packets is a fixture/transport stall, not a product
+                # defect, so the sanitized tail belongs in the receipt. URLs and the run token
+                # are replaced; only loopback path names remain, which are synthetic.
+                with fixture_log.open("rb") as source:
+                    source.seek(max(0, fixture_log.stat().st_size - 65536))
+                    raw = source.read().decode("utf-8", errors="replace")
+                token = ""
+                if rtsp.urls:
+                    tail_of_url = rtsp.urls[0].split("/8554/")[-1]
+                    parts = tail_of_url.split("-")
+                    token = parts[1] if len(parts) > 1 else ""
+                server_lines = []
+                for line in raw.splitlines():
+                    clean = line.replace(token, "<token>") if token else line
+                    clean = re.sub(r"(?:rtsp|rtsps|udp|http|https)://\S+", "<url>", clean)
+                    for private_value in (str(private), str(runtime), str(profile)):
+                        clean = clean.replace(private_value, "<private>")
+                    clean = clean.strip()[:160]
+                    if clean:
+                        server_lines.append(clean)
+                evidence["fixtureServerLogTail"] = server_lines[-10:]
             markers = ("ModuleNotFoundError", "ImportError", "PermissionError", "FileNotFoundError",
                        "RuntimeError", "AttributeError", "ValueError", "control exited during startup",
                        "control health deadline exceeded", "a required product service exited", "saved control port is unavailable")

@@ -518,16 +518,21 @@ class ProductWindow final : public QWidget {
 		struct MediaHealth {
 			bool showing;
 			bool active;
+			bool removed;
 			int media_state;
+			QString name;
 		};
 		std::map<std::string, MediaHealth> media_showing;
 		obs_enum_all_sources([](void *context, obs_source_t *source) {
 			const char *uuid = obs_source_get_uuid(source);
 			const char *id = obs_source_get_unversioned_id(source);
-			if (uuid && id && std::string_view(id) == "ffmpeg_source")
+			if (uuid && id && std::string_view(id) == "ffmpeg_source") {
+				const char *name = obs_source_get_name(source);
 				static_cast<std::map<std::string, MediaHealth> *>(context)->emplace(
 					uuid, MediaHealth{obs_source_showing(source), obs_source_active(source),
-						int(obs_source_media_get_state(source))});
+						obs_source_removed(source), int(obs_source_media_get_state(source)),
+						name ? QString::fromUtf8(name).left(48) : QString()});
+			}
 			return true;
 		}, &media_showing);
 		QJsonArray video_inputs;
@@ -541,7 +546,13 @@ class ProductWindow final : public QWidget {
 				{"stalledMs", health.sampled ? qint64(health_now - health.changed_ms) : qint64(-1)},
 				{"showing", found != media_showing.end() ? found->second.showing : false},
 				{"active", found != media_showing.end() ? found->second.active : false},
-				{"mediaState", found != media_showing.end() ? found->second.media_state : 0}});
+				{"mediaState", found != media_showing.end() ? found->second.media_state : 0},
+				// Which owned Media Source this counter belongs to and whether OBS has
+				// already marked it removed: an input that reports PLAYING but never
+				// delivers a frame is only decidable once the receipt says which source
+				// it is. Product-generated names only (never a camera URL).
+				{"name", found != media_showing.end() ? found->second.name : QString()},
+				{"removed", found != media_showing.end() ? found->second.removed : false}});
 		}
 		state.insert("videoInputs", video_inputs);
 		const auto count_items = [](obs_scene_t *scene) {
