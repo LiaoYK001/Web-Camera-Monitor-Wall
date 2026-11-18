@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 import shutil
 
@@ -30,13 +31,16 @@ REQUIRED = (
 
 
 def finalize(repo: Path, source: Path, runtime: Path, version: str, product: bool = False, native_preview: bool = False, complete: bool = False,
-             stable: bool = False, acceptance: Path | None = None) -> dict:
+             stable: bool = False, acceptance: Path | None = None, repository: str | None = None,
+             source_revision: str | None = None) -> dict:
     if native_preview and (not product or version != "4.5.0"):
         raise ValueError("preview delivery requires the authorized v4.5 product profile")
     if stable and complete:
         raise ValueError("stable release and internal candidate profiles are mutually exclusive")
     if stable and not product:
         raise ValueError("stable delivery requires the integrated product profile")
+    if stable and "-rc." in (version or ""):
+        raise ValueError("stable delivery cannot stage a candidate version")
     if not native_preview and not complete and not stable and (not version or "-dev." not in version):
         raise ValueError("Only an explicitly development-tagged prototype may be staged")
     if not runtime.is_dir() or runtime.is_symlink() or (runtime / "webobs-native-prototype.json").exists():
@@ -94,7 +98,11 @@ def finalize(repo: Path, source: Path, runtime: Path, version: str, product: boo
     if stable:
         if acceptance is None:
             raise ValueError("stable delivery requires the recorded acceptance file")
-        apply_acceptance(manifest, acceptance)
+        if not isinstance(source_revision, str) or re.fullmatch(r"[a-f0-9]{40}", source_revision) is None:
+            raise ValueError("stable delivery requires the 40-character reviewed source revision")
+        if not repository:
+            raise ValueError("stable delivery requires the release repository")
+        apply_acceptance(manifest, acceptance, repository=repository, source_revision=source_revision)
     if native_preview:
         configure_preview(manifest)
         shutil.copy2(repo / "docs/windows-v4.5-quickstart.md", runtime / "START-HERE.md")
@@ -115,8 +123,11 @@ if __name__ == "__main__":
     parser.add_argument("--stable", action="store_true")
     parser.add_argument("--acceptance", type=Path,
                         help="recorded acceptance file required with --stable")
+    parser.add_argument("--repository", help="release repository the acceptance receipt belongs to")
+    parser.add_argument("--source-revision", help="reviewed 40-character revision the acceptance receipt belongs to")
     args = parser.parse_args()
     manifest = finalize(args.repo.resolve(), args.source.resolve(), args.runtime.resolve(), args.version,
                         args.product, args.native_preview, args.complete, args.stable,
-                        args.acceptance)
+                        args.acceptance, args.repository,
+                        (args.source_revision or "").lower() or None)
     print(json.dumps(manifest, indent=2))

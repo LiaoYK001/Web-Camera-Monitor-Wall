@@ -22,6 +22,8 @@ import stage
 import update_manifest as manifest_writer
 PRODUCT_PATCH = ROOT / "native-host/patches/obs-32.1.2-product-frontend.patch"
 RECEIPT = "docs/qualification/windows-v5.1-release-2026-11-18.json"
+REPOSITORY = "LiaoYK001/Web-Camera-Monitor-Wall"
+REVISION = "3" * 40
 
 
 def load(name: str, relative: str):
@@ -52,7 +54,8 @@ def fixture_runtime(root: Path) -> tuple[Path, Path, Path]:
 
 
 def acceptance_file(directory: Path, version: str, label: str = "accepted", **overrides) -> Path:
-    payload = {"schema": 1, "version": version, "productIntegration": True,
+    payload = {"schema": 1, "version": version, "repository": REPOSITORY,
+               "sourceRevision": REVISION, "productIntegration": True,
                "installationQualified": True, "legacyUpgradeQualified": True,
                "fullFeatureMigrationQualified": True,
                "qualificationReceipt": RECEIPT, "targetMachine": "i9-13900HX / RTX 4090 Laptop"}
@@ -79,7 +82,8 @@ def exercise():
         repo, source, runtime = fixture_runtime(base / "stage")
         accepted = acceptance_file(base, "5.1.0")
         manifest = stage.finalize(repo, source, runtime, "5.1.0", product=True, stable=True,
-                                  acceptance=accepted)
+                                  acceptance=accepted, repository=REPOSITORY,
+                                  source_revision=REVISION)
         assert manifest["releaseProfile"] == "native-complete-stable"
         assert manifest["releaseTag"] == "v5.1"
         assert manifest["stableUpdaterEnabled"] is True and manifest["candidate"] is False
@@ -99,7 +103,7 @@ def exercise():
                 ("without-product", dict(stable=True, acceptance=accepted),
                  "requires the integrated product profile"),
                 ("candidate-version", dict(product=True, stable=True, acceptance=accepted),
-                 "another version"),
+                 "cannot stage a candidate version"),
                 ("both-profiles", dict(product=True, complete=True, stable=True, acceptance=accepted),
                  "mutually exclusive")):
             staged_repo, staged_source, staged_runtime = fixture_runtime(base / f"reject-{label}")
@@ -110,8 +114,29 @@ def exercise():
         partial = acceptance_file(base, "5.1.0", label="partial", installationQualified=False)
         staged_repo, staged_source, staged_runtime = fixture_runtime(base / "reject-partial")
         refuses(lambda: stage.finalize(staged_repo, staged_source, staged_runtime, "5.1.0",
-                                       product=True, stable=True, acceptance=partial),
+                                       product=True, stable=True, acceptance=partial,
+                                       repository=REPOSITORY, source_revision=REVISION),
                 "missing recorded gates")
+        # Staging a stable runtime must already bind the reviewed source, not
+        # only the later publication step.
+        unbound_repo, unbound_source, unbound_runtime = fixture_runtime(base / "reject-unbound-revision")
+        refuses(lambda: stage.finalize(unbound_repo, unbound_source, unbound_runtime, "5.1.0",
+                                       product=True, stable=True, acceptance=accepted,
+                                       repository=REPOSITORY),
+                "requires the 40-character reviewed source revision")
+        foreign_repo, foreign_source, foreign_runtime = fixture_runtime(base / "reject-foreign-repository")
+        refuses(lambda: stage.finalize(foreign_repo, foreign_source, foreign_runtime, "5.1.0",
+                                       product=True, stable=True, acceptance=accepted,
+                                       repository="someone-else/repository",
+                                       source_revision=REVISION),
+                "belongs to another repository")
+        shifted_repo, shifted_source, shifted_runtime = fixture_runtime(base / "reject-shifted-revision")
+        refuses(lambda: stage.finalize(shifted_repo, shifted_source, shifted_runtime, "5.1.0",
+                                       product=True, stable=True,
+                                       acceptance=acceptance_file(base, "5.1.0", label="other-revision",
+                                                                  sourceRevision="2" * 40),
+                                       repository=REPOSITORY, source_revision=REVISION),
+                "belongs to another source revision")
 
         payload = b"MZ" + b"stable installer" * 400
         stable_installer = base / "WebOBS-Wall-5.1.0-windows-x64-SETUP.exe"
@@ -120,11 +145,28 @@ def exercise():
         refuses(lambda: manifest_writer.main(["--installer", str(stable_installer),
                                              "--version", "5.1.0", "--output", str(output)]),
                 "requires --acceptance")
-        assert manifest_writer.main(["--installer", str(stable_installer), "--version", "5.1.0",
-                                     "--output", str(output), "--acceptance", str(accepted)]) == 0
         refuses(lambda: manifest_writer.main(["--installer", str(stable_installer), "--version", "5.1.0",
-                                             "--output", str(output), "--acceptance", str(partial)]),
+                                             "--output", str(output), "--acceptance", str(accepted)]),
+                "requires --source-revision")
+        refuses(lambda: manifest_writer.main(["--installer", str(stable_installer), "--version", "5.1.0",
+                                             "--output", str(output), "--acceptance", str(accepted),
+                                             "--source-revision", REVISION[:20]]),
+                "requires --source-revision")
+        refuses(lambda: manifest_writer.main(["--installer", str(stable_installer), "--version", "5.1.0",
+                                             "--output", str(output), "--acceptance", str(accepted),
+                                             "--source-revision", REVISION]),
+                "requires --repository")
+        refuses(lambda: manifest_writer.main(["--installer", str(stable_installer), "--version", "5.1.0",
+                                             "--output", str(output), "--acceptance", str(partial),
+                                             "--source-revision", REVISION, "--repository", REPOSITORY]),
                 "missing recorded gates")
+        refuses(lambda: manifest_writer.main(["--installer", str(stable_installer), "--version", "5.1.0",
+                                             "--output", str(output), "--acceptance", str(accepted),
+                                             "--source-revision", "2" * 40, "--repository", REPOSITORY]),
+                "belongs to another source revision")
+        assert manifest_writer.main(["--installer", str(stable_installer), "--version", "5.1.0",
+                                     "--output", str(output), "--acceptance", str(accepted),
+                                     "--source-revision", REVISION, "--repository", REPOSITORY]) == 0
         text = output.read_text(encoding="utf-8")
         digest = base64.b64encode(hashlib.sha512(payload).digest()).decode("ascii")
         assert "version: 5.1.0" in text and digest in text and f"size: {len(payload)}" in text

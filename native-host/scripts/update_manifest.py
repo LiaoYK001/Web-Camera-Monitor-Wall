@@ -27,6 +27,8 @@ def main(argv=None):
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--acceptance", type=Path,
                         help="recorded acceptance file required for a stable release version")
+    parser.add_argument("--repository", help="release repository the acceptance receipt belongs to")
+    parser.add_argument("--source-revision", help="reviewed 40-character revision the acceptance receipt belongs to")
     arguments = parser.parse_args(argv)
     if not re.fullmatch(r"\d+\.\d+\.\d+(?:-rc\.[0-9]+)?", arguments.version):
         raise SystemExit("version must be three-part, optionally with a -rc.N suffix")
@@ -37,8 +39,14 @@ def main(argv=None):
     if not candidate:
         if arguments.acceptance is None:
             raise SystemExit("stable update metadata requires --acceptance with recorded acceptance")
+        if not re.fullmatch(r"[a-f0-9]{40}", (arguments.source_revision or "").lower() or ""):
+            raise SystemExit("stable update metadata requires --source-revision of the reviewed commit")
+        if not arguments.repository:
+            raise SystemExit("stable update metadata requires --repository of the release repository")
         try:
-            accepted = read_acceptance(arguments.acceptance, version=arguments.version)
+            accepted = read_acceptance(arguments.acceptance, version=arguments.version,
+                                       repository=arguments.repository,
+                                       source_revision=(arguments.source_revision or "").lower())
         except ValueError as error:
             raise SystemExit(f"stable update metadata rejected: {error}") from error
     release_tag = tag_for_version(arguments.version)
@@ -70,6 +78,7 @@ def main(argv=None):
                "installer": installer.name, "size": size, "sha512": encoded}
     if accepted:
         payload["qualificationReceipt"] = accepted["qualificationReceipt"]
+        payload["sourceRevision"] = (arguments.source_revision or "").lower()
     print(json.dumps(payload))
     return 0
 
