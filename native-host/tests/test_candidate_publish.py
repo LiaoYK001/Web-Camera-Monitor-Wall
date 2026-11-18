@@ -294,6 +294,55 @@ def exercise():
         refuses(lambda: stable_publish(empty_revision),
                 "does not record its source revision")
 
+        # The chain must be provable up to a pending release: every gate runs, nothing is
+        # written to disk and no upload call happens. That is how a candidate is verified
+        # before the user's centralized acceptance exists, without publishing anything.
+        pending_runner = Runner()
+        pending_installer, pending_manifest = build(directory, candidate_version, label="pending")
+        pending = module.publish(pending_installer, pending_manifest, candidate_version,
+                                 "LiaoYK001/Web-Camera-Monitor-Wall", REVISION, notes,
+                                 confirm=False, final=False, runner=pending_runner,
+                                 verify_only=True)
+        assert pending["planned"] is True and pending["tag"] == "v5.1.0-rc.26", pending
+        assert pending["prerelease"] is True and pending["confirmationRequired"] is True
+        assert pending["sha256"] == module.sha256(pending_installer) \
+            and pending["bytes"] == pending_installer.stat().st_size
+        assert not any(call[:2] == ["release", "create"] for call in pending_runner.calls), \
+            "verify-only must not upload"
+        assert not (pending_installer.parent / "SHA256SUMS.txt").exists(), \
+            "verify-only wrote a checksum file instead of staying pending"
+
+        pending_stable = module.publish(stable_installer, stable_manifest, stable_version,
+                                        "LiaoYK001/Web-Camera-Monitor-Wall", REVISION, notes,
+                                        confirm=False, final=True, acceptance=receipt,
+                                        runner=Runner(compare="ahead"), verify_only=True)
+        assert pending_stable["planned"] is True and pending_stable["tag"] == "v5.1"
+        assert pending_stable["prerelease"] is False
+        assert pending_stable["qualificationReceipt"].startswith("docs/qualification/")
+
+        # Pending verification still refuses the same defects as a real publication.
+        refuses(lambda: module.publish(tampered_installer, tampered_manifest, candidate_version,
+                                       "LiaoYK001/Web-Camera-Monitor-Wall", REVISION, notes,
+                                       confirm=False, final=False, runner=Runner(),
+                                       verify_only=True), "does not match the frozen installer bytes")
+        refuses(lambda: module.publish(installer, manifest, candidate_version,
+                                       "LiaoYK001/Web-Camera-Monitor-Wall", REVISION, notes,
+                                       confirm=False, final=False, runner=Runner(existing_tag=True),
+                                       verify_only=True), "tag already exists")
+        refuses(lambda: module.publish(installer, manifest, candidate_version,
+                                       "LiaoYK001/Web-Camera-Monitor-Wall", REVISION, notes,
+                                       confirm=False, final=False, runner=Runner(existing_release=True),
+                                       verify_only=True), "release already exists")
+        refuses(lambda: module.publish(stable_installer, stable_manifest, stable_version,
+                                       "LiaoYK001/Web-Camera-Monitor-Wall", REVISION, notes,
+                                       confirm=False, final=True, runner=Runner(compare="ahead"),
+                                       verify_only=True), "--acceptance")
+        refuses(lambda: module.publish(stable_installer, stable_manifest, stable_version,
+                                       "LiaoYK001/Web-Camera-Monitor-Wall", REVISION, notes,
+                                       confirm=False, final=True, acceptance=receipt,
+                                       runner=Runner(compare="diverged"), verify_only=True),
+                "reachable from reviewed main")
+
         policy = policy_module
         assert policy.tag_for_version(stable_version) == "v5.1"
         assert policy.tag_for_version("5.1.2") == "v5.1.2"
@@ -303,7 +352,7 @@ def exercise():
         assert accepted["qualificationReceipt"].startswith("docs/qualification/")
         assert accepted["legacyUpgradeQualified"] is True
     print("PASS candidate Tags come from the shared policy; stable publication requires "
-          "recorded acceptance and a reviewed main revision")
+          "recorded acceptance and a reviewed main revision; pending verification runs every gate")
 
 
 if __name__ == "__main__":

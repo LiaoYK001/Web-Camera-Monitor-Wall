@@ -137,8 +137,16 @@ def gh(*arguments: str, capture: bool = False, check: bool = True) -> subprocess
 
 def publish(installer: Path, manifest: Path, version: str, repository: str,
             source_revision: str, notes: Path, *, confirm: bool, final: bool,
-            acceptance: Path | None = None, runner=gh) -> dict:
-    if not confirm:
+            acceptance: Path | None = None, runner=gh, verify_only: bool = False) -> dict:
+    """Verify a publication or perform it.
+
+    ``verify_only`` runs every gate - frozen bytes against ``latest.yml``, the shared
+    Tag mapping, the acceptance receipt and ``main`` ancestry for a stable build, and
+    the never-overwrite checks - then reports the planned release without writing
+    anything or calling ``gh release create``. That is how the release chain is proved
+    up to a pending release before the user's centralized acceptance closes.
+    """
+    if not verify_only and not confirm:
         raise PublishError("explicit confirmation is required")
     if not re.fullmatch(r"\d+\.\d+\.\d+(?:-rc\.[0-9]+)?", version):
         raise PublishError("version must be three-part, optionally with a -rc.N suffix")
@@ -166,6 +174,15 @@ def publish(installer: Path, manifest: Path, version: str, repository: str,
         raise PublishError("tag already exists; never overwrite it")
     if final:
         require_main_ancestry(runner, repository, source_revision)
+    if verify_only:
+        result = {"schema": 1, "planned": True, "tag": tag, "prerelease": not final,
+                  "version": version, "installer": installer.name,
+                  "bytes": installer.stat().st_size, "sha256": sha256(installer),
+                  "sha512": metadata["sha512"], "sourceRevision": source_revision,
+                  "confirmationRequired": not confirm}
+        if receipt:
+            result["qualificationReceipt"] = receipt
+        return result
     checksum = installer.parent / "SHA256SUMS.txt"
     checksum.write_text(f"{sha256(installer)}  {installer.name}\n", encoding="ascii")
     label = "正式发布 / stable release" if final else "完整候选 / complete candidate"
@@ -195,12 +212,14 @@ def main() -> int:
     parser.add_argument("--final", action="store_true")
     parser.add_argument("--acceptance", type=Path,
                         help="JSON acceptance receipt required for --final")
+    parser.add_argument("--verify-only", action="store_true",
+                        help="prove every gate and report the pending release without publishing")
     arguments = parser.parse_args()
     try:
         result = publish(arguments.installer, arguments.manifest, arguments.version,
                          arguments.repository, arguments.source_revision, arguments.notes,
                          confirm=arguments.confirm, final=arguments.final,
-                         acceptance=arguments.acceptance)
+                         acceptance=arguments.acceptance, verify_only=arguments.verify_only)
     except (PublishError, OSError) as error:
         print(f"candidate publication failed: {error}", file=sys.stderr)
         return 1
