@@ -32,6 +32,9 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+from window_close import close_closable_windows
 
 
 def load_contract(runtime):
@@ -127,6 +130,7 @@ def exercise(runtime, report):
         "remoteDeviceQualified": False, "lanHttpsQualified": False, "lanHttpsSkipReason": "",
         "addresses": [], "port": 0}
     process = None
+    frontend_pid = 0
     port = 18443 + secrets.randbelow(2000)
     account = {"username": "lan-owner", "password": secrets.token_urlsafe(24)}
 
@@ -145,24 +149,41 @@ def exercise(runtime, report):
         return wait_for(ready, "native entry did not start its required services")
 
     def launch(profile):
-        nonlocal process
+        nonlocal process, frontend_pid
         environment = dict(os.environ)
         environment["WEBOBS_PRODUCT_TEST_ROOT"] = str(profile)
         process = subprocess.Popen([str(entry)], env=environment, stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return start(profile, environment)
+        status = start(profile, environment)
+        frontend = next((item for item in status.get("services", [])
+                         if item.get("name") == "frontend" and isinstance(item.get("pid"), int)), None)
+        assert frontend is not None, "native entry did not report its frontend process"
+        frontend_pid = int(frontend["pid"])
+        return status
 
     def stop(profile):
-        nonlocal process
+        nonlocal process, frontend_pid
         if process is None:
             return
-        process.terminate()
+        # Terminating the launcher closes its kill-on-close Job and kills the
+        # supervisor with it, so the ordered shutdown that writes phase "stopped"
+        # would never run. Closing the product window is what the supervisor's own
+        # stop does and what a user does.
+        assert frontend_pid, "native entry did not report a frontend process"
+        if not close_closable_windows([frontend_pid]):
+            process.kill()
+            process.wait(timeout=20)
+            process = None
+            raise AssertionError("native entry exposed no closable product window")
         try:
-            process.wait(timeout=30)
+            process.wait(timeout=90)
         except subprocess.TimeoutExpired:
             process.kill()
-            process.wait(timeout=10)
+            process.wait(timeout=15)
+            process = None
+            raise AssertionError("closing the product window did not shut the entry down")
         process = None
+        frontend_pid = 0
         deadline = time.monotonic() + 25
         while time.monotonic() < deadline:
             value = read_json(profile / "run/native-status.json") if (profile / "run/native-status.json").is_file() else {}
