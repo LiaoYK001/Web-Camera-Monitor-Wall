@@ -689,6 +689,18 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             baseline = None
             started = time.monotonic()
             for index in range(minutes):
+                # Keep the synthetic feed healthy: a publisher process can exit while looping
+                # a fixture file, and then the watched inputs stall through no fault of the
+                # product. Restarting harness publishers does not touch the product tree.
+                dead = [position for position, publisher in enumerate(rtsp.publishers)
+                    if publisher is None or publisher.poll() is not None]
+                if dead:
+                    evidence.setdefault("fixturePublisherWatch", []).append(
+                        {"phase": f"soak-minute-{index + 1}", "dead": dead})
+                    for position in dead:
+                        rtsp.restart_publisher(position)
+                assert rtsp.server is not None and rtsp.server.poll() is None, \
+                    "the loopback RTSP server exited during soak (harness fault, not the product)"
                 assert ui("video-progress", sources=5, stalled=0), \
                     f"a watched input stopped delivering frames during soak minute {index + 1}"
                 metrics = process_tree_metrics()
