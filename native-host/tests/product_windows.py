@@ -1503,8 +1503,12 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     {"track": 0, "gain": 1, "muted": False, "syncOffsetMs": 300},
                     {"track": 1, "gain": 1, "muted": False, "syncOffsetMs": -200}])
                 apply_program_scene(offset_scene, 2)
-                offset_entry = wait_for(lambda: program_audio_entry("fixture-alt-offset.fixture-alt-source")
-                    if program_audio_entry("fixture-alt-offset.fixture-alt-source").get("available") else None,
+                def offset_ready():
+                    # The entry is legitimately absent while the previous Program
+                    # source retires, so probe it instead of dereferencing None.
+                    entry = program_audio_entry("fixture-alt-offset.fixture-alt-source")
+                    return entry if entry and entry.get("available") else None
+                offset_entry = wait_for(offset_ready,
                     "offset Scene mix source did not become available", timeout=20)
                 assert offset_entry.get("syncOffset") == -200_000_000, \
                     f"negative per-track offset did not normalize into the mix source ({offset_entry.get('syncOffset')})"
@@ -1520,7 +1524,11 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 phase = "program-whip-disconnect"
                 # WHIP relay loss: killing the product's own private MediaMTX child
                 # must surface a concrete disconnect instead of a permanently
-                # "connected" publisher, and the next start must recover.
+                # "connected" publisher, and the next start must recover. The Scene
+                # audio mixers are separate owned helpers, so record them first and
+                # require the same set afterwards instead of demanding no FFmpeg at all.
+                scene_mixers = sorted(pid for pid, name in child_processes(powershell, int(state()["pid"]))
+                    if name == "ffmpeg.exe")
                 relay_children = [pid for pid, name in child_processes(powershell, int(state()["pid"]))
                     if name == "mediamtx.exe"]
                 assert relay_children == [], "MediaMTX survived the normal publisher stop"
@@ -1559,9 +1567,14 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 wait_for(lambda: state().get("programOutput", {}).get("streaming") is False and
                     state().get("programOutput", {}).get("mediaMtxRunning") is False,
                     "recovered publisher did not release MediaMTX after stopping", timeout=30)
-                residual = sorted({name for pid, name in child_processes(powershell, int(state()["pid"]))
-                    if name in ("mediamtx.exe", "ffmpeg.exe")})
-                assert residual == [], f"Program output left helper processes after stopping: {residual}"
+                after_stop = child_processes(powershell, int(state()["pid"]))
+                leaked_relay = sorted(pid for pid, name in after_stop if name == "mediamtx.exe")
+                mixers_after = sorted(pid for pid, name in after_stop if name == "ffmpeg.exe")
+                assert leaked_relay == [], \
+                    f"Program output kept the private MediaMTX relay after stopping: {leaked_relay}"
+                assert mixers_after == scene_mixers, \
+                    f"stopping Program output changed the Scene audio mixers ({scene_mixers} -> {mixers_after})"
+                evidence["sceneAudioMixers"] = mixers_after
                 evidence["checks"].extend(["whip-relay-loss-is-reported-and-recoverable",
                     "program-output-helpers-are-released-after-stop"])
                 checkpoint("program-output-resources-released")
