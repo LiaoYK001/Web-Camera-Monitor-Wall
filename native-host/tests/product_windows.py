@@ -451,7 +451,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     readable.append(probe.returncode == 0)
                 except subprocess.TimeoutExpired:
                     readable.append(False)
-            return {"publishers": publishers, "readable": readable}
+            return {"publishers": publishers, "readable": readable, "pathProgress": rtsp.path_progress()}
 
         def check_pixels(label, *, blank=False, repeat_first=False, reverse=False, expected_media=None,
                 projector_orders=None, quick_order=None, program_scene=None, program_media=None,
@@ -603,6 +603,9 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                         "temporalProgress": result.get("temporalProgress"),
                         "progressError": str(result.get("progressError") or "")[:120],
                         "publisherState": harness["publishers"], "unreadablePaths": unreadable,
+                        "pathProgress": harness["pathProgress"],
+                        "stalledPaths": [entry["index"] for entry in harness["pathProgress"]
+                                         if entry["flowing"] is False],
                         # A frozen slot is either a source that stopped delivering frames
                         # or a Scene that no longer renders the item. The product reports
                         # both, so the receipt says which one this was.
@@ -613,13 +616,14 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                             "uuid": str(binding.get("sourceUuid") or "")[:8]}
                             for binding in observed.get("bindings", [])[:8]
                             if isinstance(binding, dict)]}
-                    if (dead or unreadable) and fixture_retry:
+                    stalled = [entry["index"] for entry in harness["pathProgress"] if entry["flowing"] is False]
+                    if (dead or unreadable or stalled) and fixture_retry:
                         # The synthetic fixture itself dropped out: restart every dead publisher,
                         # prove the host resumes decoding, then re-run this exact pixel phase
                         # once. A product-side stall with a healthy fixture still fails below.
                         evidence["fixtureRestartedAfterPixelFailure"] = {"phase": label,
-                            "deadPublishers": dead, "unreadablePaths": unreadable}
-                        for index in sorted(set(dead + unreadable)):
+                            "deadPublishers": dead, "unreadablePaths": unreadable, "stalledPaths": stalled}
+                        for index in sorted(set(dead + unreadable + stalled)):
                             rtsp.restart_publisher(index)
                         wait_for(lambda: ui("video-progress", sources=5, stalled=0),
                             "restarted loopback fixture did not resume frame progress", timeout=60)
