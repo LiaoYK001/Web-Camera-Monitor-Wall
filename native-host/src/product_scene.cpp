@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <map>
 #include <tuple>
 #include <utility>
@@ -87,8 +88,11 @@ void audio_meter_callback(void *param, const float magnitude[MAX_AUDIO_CHANNELS]
 	(void)input_peak;
 	float value = -120.0f;
 	for (int channel = 0; channel < MAX_AUDIO_CHANNELS; ++channel)
-		if (peak[channel] > 0.0f)
-			value = (std::max)(value, obs_mul_to_db(peak[channel]));
+		// OBS's volmeter already reports dBFS. The audio may be flowing while
+		// every peak is negative; treating it as a linear multiplier would
+		// discard all real levels and leave the product meter at -120.
+		if (std::isfinite(peak[channel]))
+			value = (std::max)(value, peak[channel]);
 	static_cast<std::atomic<float> *>(param)->store(value);
 }
 #endif
