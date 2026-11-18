@@ -25,20 +25,24 @@ void pause(int ms)
 }
 
 struct Fixture {
-	QTcpServer server;
+	// The listener is heap-owned so a test can close it: destroying QTcpServer releases the
+	// listening socket on every Qt 6 version, which is what the dead-switch case needs.
+	std::unique_ptr<QTcpServer> server = std::make_unique<QTcpServer>();
 	QByteArray requests;
 	int connections = 0, next_code = 200;
 	QByteArray next_body = R"({"enabled":false,"port":18443,"urls":[],"running":false,"pendingRestart":false})";
 	bool oversized = false, send_json = true, failed = false;
 	Fixture()
 	{
-		require(server.listen(QHostAddress::LocalHost, 0), "fixture listen failed");
-		QObject::connect(&server, &QTcpServer::newConnection, &server, [this] {
-			while (auto *socket = server.nextPendingConnection()) {
+		require(server->listen(QHostAddress::LocalHost, 0), "fixture listen failed");
+		QObject::connect(server.get(), &QTcpServer::newConnection, server.get(), [this] {
+			while (server) {
+				auto *socket = server->nextPendingConnection();
+				if (!socket) break;
 				++connections;
 				auto bytes = std::make_shared<QByteArray>();
 				QObject::connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
-				QObject::connect(socket, &QTcpSocket::readyRead, &server, [this, socket, bytes] {
+				QObject::connect(socket, &QTcpSocket::readyRead, server.get(), [this, socket, bytes] {
 					bytes->append(socket->readAll());
 					const auto end = bytes->indexOf("\r\n\r\n");
 					if (end < 0) return;
@@ -59,7 +63,8 @@ struct Fixture {
 			}
 		});
 	}
-	int port() const { return server.serverPort(); }
+	void close() { server.reset(); }
+	int port() const { return server ? server->serverPort() : 0; }
 };
 
 QUrl endpoint(int port)
