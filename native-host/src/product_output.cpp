@@ -196,7 +196,13 @@ struct ProductProgramOutputImpl {
 	QProcess media_mtx;
 	Output recording_output;
 	Encoder recording_video;
-	Encoder recording_audio;
+	// One AAC encoder per selected OBS output audio track. Encoder creation has
+	// to match obs_source_get_audio_mixers(); a fixed track 0 would record
+	// silence whenever the Scene selects another bus.
+	Encoder recording_audio[6];
+	int recording_audio_count = 0;
+	quint32 recording_tracks = 0;
+	quint32 streaming_tracks = 0;
 	Output whip_output;
 	Encoder whip_video;
 	Encoder whip_audio;
@@ -214,7 +220,10 @@ struct ProductProgramOutputImpl {
 	{
 		recording_output.reset();
 		recording_video.reset();
-		recording_audio.reset();
+		for (int track = 0; track < 6; ++track)
+			recording_audio[track].reset();
+		recording_audio_count = 0;
+		recording_tracks = 0;
 	}
 	void release_streaming()
 	{
@@ -298,7 +307,7 @@ struct ProductProgramOutputImpl {
 		error = "mediamtx-timeout";
 		return false;
 	}
-	bool start_recording(QString &error)
+	bool start_recording(QString &error, quint32 audio_tracks)
 	{
 		if (recording) return error = "recording-active", false;
 		recording_error.clear();
@@ -326,18 +335,6 @@ struct ProductProgramOutputImpl {
 		}
 		recording_video.reset(video);
 		obs_encoder_set_video(recording_video.value, obs_get_video());
-		obs_data_t *audio_settings = obs_data_create();
-		obs_data_set_int(audio_settings, "bitrate", 128);
-		obs_encoder_t *audio = obs_audio_encoder_create("ffmpeg_aac", "WebOBS Program recording AAC",
-			audio_settings, 0, nullptr);
-		obs_data_release(audio_settings);
-		if (!audio) {
-			release_recording();
-			error = "recording-audio-encoder-unavailable";
-			return false;
-		}
-		recording_audio.reset(audio);
-		obs_encoder_set_audio(recording_audio.value, obs_get_audio());
 		obs_data_t *settings = obs_data_create();
 		obs_data_set_string(settings, "path", temporary_path.toUtf8().constData());
 		obs_data_set_bool(settings, "allow_overwrite", true);
@@ -351,7 +348,33 @@ struct ProductProgramOutputImpl {
 		}
 		recording_output.reset(output);
 		obs_output_set_video_encoder(recording_output.value, recording_video.value);
-		obs_output_set_audio_encoder(recording_output.value, recording_audio.value, 0);
+		obs_data_t *audio_settings = obs_data_create();
+		obs_data_set_int(audio_settings, "bitrate", 128);
+		for (int track = 0; track < 6; ++track) {
+			if (!(audio_tracks & (1u << track)))
+				continue;
+			const QString label = ("WebOBS Program recording AAC track "
+				+ QString::number(track + 1)).toUtf8().constData();
+			obs_encoder_t *audio = obs_audio_encoder_create("ffmpeg_aac", label, audio_settings,
+				size_t(track), nullptr);
+			if (!audio) {
+				obs_data_release(audio_settings);
+				release_recording();
+				error = "recording-audio-encoder-unavailable";
+				return false;
+			}
+			obs_encoder_set_audio(audio, obs_get_audio());
+			obs_output_set_audio_encoder(recording_output.value, audio, size_t(recording_audio_count));
+			recording_audio[track].reset(audio);
+			++recording_audio_count;
+		}
+		obs_data_release(audio_settings);
+		if (audio_tracks && recording_audio_count == 0) {
+			release_recording();
+			error = "recording-audio-encoder-unavailable";
+			return false;
+		}
+		recording_tracks = audio_tracks;
 		if (!obs_output_start(recording_output.value)) {
 			const QString detail = bounded_error(obs_output_get_last_error(recording_output.value));
 			release_recording();
@@ -430,7 +453,7 @@ struct ProductProgramOutputImpl {
 		recording_ready = true;
 		return true;
 	}
-	bool start_streaming(QString &error)
+	bool start_streaming(QString &error, quint32 audio_tracks)
 	{
 		if (streaming) return error = "streaming-active", false;
 		stream_error.clear();
@@ -464,19 +487,33 @@ struct ProductProgramOutputImpl {
 		}
 		whip_video.reset(video);
 		obs_encoder_set_video(whip_video.value, obs_get_video());
-		obs_data_t *audio_settings = obs_data_create();
-		obs_data_set_int(audio_settings, "bitrate", 96);
-		obs_encoder_t *audio = obs_audio_encoder_create("ffmpeg_opus", "WebOBS Program WHIP Opus",
-			audio_settings, 0, nullptr);
-		obs_data_release(audio_settings);
-		if (!audio) {
-			release_streaming();
-			stop_media_mtx();
-			error = "stream-audio-encoder-unavailable";
-			return false;
+		// WHIP carries one audio track. Publish the lowest Program track rather
+		// than track 0, which is empty whenever the Scene selects another bus.
+		int selected_track = 0;
+		for (int track = 0; track < 6; ++track) {
+			if (audio_tracks & (1u << track)) {
+				selected_track = track;
+				break;
+			}
 		}
-		whip_audio.reset(audio);
-		obs_encoder_set_audio(whip_audio.value, obs_get_audio());
+		if (audio_tracks) {
+			obs_data_t *audio_settings = obs_data_create();
+			obs_data_set_int(audio_settings, "bitrate", 96);
+			const QString label = ("WebOBS Program WHIP Opus track "
+				+ QString::number(selected_track + 1)).toUtf8().constData();
+			obs_encoder_t *audio = obs_audio_encoder_create("ffmpeg_opus", label, audio_settings,
+				size_t(selected_track), nullptr);
+			obs_data_release(audio_settings);
+			if (!audio) {
+				release_streaming();
+				stop_media_mtx();
+				streaming_tracks = 0;
+				error = "stream-audio-encoder-unavailable";
+				return false;
+			}
+			whip_audio.reset(audio);
+			obs_encoder_set_audio(whip_audio.value, obs_get_audio());
+		}
 		obs_output_t *output = obs_output_create("whip_output", "WebOBS Program WHIP output",
 			nullptr, nullptr);
 		if (!output) {
@@ -487,7 +524,8 @@ struct ProductProgramOutputImpl {
 		}
 		whip_output.reset(output);
 		obs_output_set_video_encoder(whip_output.value, whip_video.value);
-		obs_output_set_audio_encoder(whip_output.value, whip_audio.value, 0);
+		if (whip_audio.value)
+			obs_output_set_audio_encoder(whip_output.value, whip_audio.value, 0);
 		obs_output_set_service(whip_output.value, whip_service.value);
 		if (!obs_output_start(whip_output.value)) {
 			const QString detail = bounded_error(obs_output_get_last_error(whip_output.value));
@@ -498,6 +536,7 @@ struct ProductProgramOutputImpl {
 			return false;
 		}
 		streaming = true;
+		streaming_tracks = audio_tracks;
 		stream_clock.start();
 		return true;
 	}
@@ -513,6 +552,7 @@ struct ProductProgramOutputImpl {
 		}
 		release_streaming();
 		streaming = false;
+		streaming_tracks = 0;
 		stop_media_mtx();
 		return true;
 	}
@@ -537,9 +577,9 @@ ProductProgramOutput::ProductProgramOutput(QString data_root)
 
 ProductProgramOutput::~ProductProgramOutput() = default;
 
-bool ProductProgramOutput::start_recording(QString &error)
+bool ProductProgramOutput::start_recording(QString &error, quint32 audio_tracks)
 {
-	return impl_->start_recording(error);
+	return impl_->start_recording(error, audio_tracks);
 }
 
 bool ProductProgramOutput::stop_recording(QString &error)
@@ -547,9 +587,9 @@ bool ProductProgramOutput::stop_recording(QString &error)
 	return impl_->stop_recording(error);
 }
 
-bool ProductProgramOutput::start_streaming(QString &error)
+bool ProductProgramOutput::start_streaming(QString &error, quint32 audio_tracks)
 {
-	return impl_->start_streaming(error);
+	return impl_->start_streaming(error, audio_tracks);
 }
 
 bool ProductProgramOutput::stop_streaming(QString &error)
@@ -580,6 +620,7 @@ ProductProgramOutputStatus ProductProgramOutput::status() const
 	value.stream_connected = impl_->streaming && impl_->whip_output.value &&
 		obs_output_get_total_frames(impl_->whip_output.value) > 0;
 	value.media_mtx_running = impl_->media_mtx.state() == QProcess::Running;
+	value.audio_tracks = impl_->recording ? impl_->recording_tracks : impl_->streaming_tracks;
 	value.stream_publish_url = impl_->stream_publish_url;
 	value.stream_playback_url = impl_->stream_playback_url;
 	value.stream_error = impl_->stream_error;

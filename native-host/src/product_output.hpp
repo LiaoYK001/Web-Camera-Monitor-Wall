@@ -16,6 +16,9 @@ struct ProductProgramOutputStatus {
 	bool streaming = false;
 	bool stream_connected = false;
 	bool media_mtx_running = false;
+	// OBS output audio-track mask the active output actually encodes. Zero means
+	// the applied Program carries no audio, so the file/stream is video only.
+	quint32 audio_tracks = 0;
 	QString stream_publish_url;
 	QString stream_playback_url;
 	QString stream_error;
@@ -33,9 +36,13 @@ public:
 	ProductProgramOutput(const ProductProgramOutput &) = delete;
 	ProductProgramOutput &operator=(const ProductProgramOutput &) = delete;
 
-	bool start_recording(QString &error);
+	// audio_tracks is the OBS output audio-track mask of the applied Program
+	// scene. Encoders are created for exactly those tracks; an encoder pinned to
+	// track 0 would record or publish silence whenever a Scene selects another
+	// track while the meter still shows a signal.
+	bool start_recording(QString &error, quint32 audio_tracks);
 	bool stop_recording(QString &error);
-	bool start_streaming(QString &error);
+	bool start_streaming(QString &error, quint32 audio_tracks);
 	bool stop_streaming(QString &error);
 	void shutdown();
 	ProductProgramOutputStatus status() const;

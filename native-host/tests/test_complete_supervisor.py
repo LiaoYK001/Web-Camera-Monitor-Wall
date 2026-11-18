@@ -54,9 +54,10 @@ def exercise():
             environment = supervisor.environment
             assert environment["WEBOBS_NVR_ENABLED"] == "true"
             assert environment["WEBOBS_GO2RTC_ENABLED"] == "true"
-            # Composite is advertised only in the complete product; the native
-            # host still starts MediaMTX and the WHIP output on demand.
-            assert environment["WEBOBS_COMPOSITE_ENABLED"] == "true"
+            # webobsd must remain Direct-only: composite_enabled flips the control
+            # server into OBS composition and it fails to start on the native
+            # runtime. Program recording/WHIP belong to the native host instead.
+            assert environment["WEBOBS_COMPOSITE_ENABLED"] == "false"
             assert Path(environment["WEBOBS_FFMPEG_PATH"]).name == "ffmpeg.exe"
             assert Path(environment["WEBOBS_FFMPEG_PATH"]).parent.name == "bin"
             assert Path(environment["WEBOBS_FFPROBE_PATH"]).name == "ffprobe.exe"
