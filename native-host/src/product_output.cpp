@@ -236,6 +236,8 @@ struct ProductProgramOutputImpl {
 	int recording_audio_count = 0;
 	quint32 recording_tracks = 0;
 	quint32 streaming_tracks = 0;
+	// The mask actually encoded into the retained finished recording.
+	quint32 completed_tracks = 0;
 	Output whip_output;
 	Encoder whip_video;
 	Encoder whip_audio;
@@ -383,6 +385,10 @@ struct ProductProgramOutputImpl {
 			return false;
 		}
 		recording_output.reset(output);
+		// OBS feeds an output from its mixer mask; the default mask delivers only
+		// bus 0, which is silent whenever the Scene routes the Program mix to
+		// another bus. Declare the buses actually encoded, as the OBS frontend does.
+		obs_output_set_mixers(recording_output.value, size_t(tracks));
 		obs_output_set_video_encoder(recording_output.value, recording_video.value);
 		obs_data_t *audio_settings = obs_data_create();
 		obs_data_set_int(audio_settings, "bitrate", 128);
@@ -501,6 +507,9 @@ struct ProductProgramOutputImpl {
 		const qint64 seconds = (recording_clock.elapsed() + 999) / 1000;
 		recording_bytes = QFileInfo(temporary_path).size();
 		completed_seconds = seconds;
+		// release_recording() drops the encoders, so remember which buses the
+		// finished file actually encoded before tearing them down.
+		const quint32 encoded_tracks = recording_tracks;
 		release_recording();
 		recording = false;
 		QFileInfo source(temporary_path);
@@ -521,6 +530,7 @@ struct ProductProgramOutputImpl {
 			}
 			final_path = fallback;
 			recording_ready = true;
+			completed_tracks = encoded_tracks;
 			recording_error = "recording-remux-unavailable";
 			return true;
 		}
@@ -541,6 +551,7 @@ struct ProductProgramOutputImpl {
 		QFile::remove(temporary_path);
 		recording_bytes = QFileInfo(final_path).size();
 		recording_ready = true;
+		completed_tracks = encoded_tracks;
 		return true;
 	}
 	bool start_streaming(QString &error, quint32 audio_tracks)
@@ -614,6 +625,7 @@ struct ProductProgramOutputImpl {
 			return false;
 		}
 		whip_output.reset(output);
+		obs_output_set_mixers(whip_output.value, size_t(1u << selected_track));
 		obs_output_set_video_encoder(whip_output.value, whip_video.value);
 		obs_output_set_audio_encoder(whip_output.value, whip_audio.value, 0);
 		obs_output_set_service(whip_output.value, whip_service.value);
@@ -721,7 +733,11 @@ ProductProgramOutputStatus ProductProgramOutput::status() const
 	value.stream_connected = impl_->streaming && impl_->whip_output.value &&
 		obs_output_get_total_frames(impl_->whip_output.value) > 0;
 	value.media_mtx_running = impl_->media_mtx.state() == QProcess::Running;
-	value.audio_tracks = impl_->recording ? impl_->recording_tracks : impl_->streaming_tracks;
+	// While a recording runs this is the mask being encoded; once it finished it
+	// stays with the retained file so the receipt can state what the user's MP4
+	// actually contains instead of reporting zero after the encoders are gone.
+	value.audio_tracks = impl_->recording ? impl_->recording_tracks :
+		(impl_->streaming ? impl_->streaming_tracks : impl_->completed_tracks);
 	value.stream_publish_url = impl_->stream_publish_url;
 	value.stream_playback_url = impl_->stream_playback_url;
 	value.stream_error = impl_->stream_error;
