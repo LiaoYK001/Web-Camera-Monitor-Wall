@@ -69,6 +69,42 @@ class BackupTests(unittest.TestCase):
             with self.assertRaisesRegex(backup.BackupError, "confirmation"):
                 backup.restore(root / "webobs", archive, key, self.sodium, False)
 
+    def test_native_profile_is_restored_with_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            config = root / "webobs"
+            config.mkdir()
+            (config / "scene.json").write_text('{"schemaVersion":5}\n', encoding="utf-8")
+            native = root / "native-profile"
+            workspace = native / ("obs-studio/plugin_config/webobs-native-host/workspace-" + "a" * 32 + ".json")
+            workspace.parent.mkdir(parents=True)
+            workspace.write_text('{"schema":2,"sceneId":"fixture"}\n', encoding="utf-8")
+            key = root / "key"
+            key.write_bytes(bytes(range(32)))
+            archive = backup.create(config, root / "backups", key, self.sodium, native)
+            workspace.write_text('{"schema":2,"sceneId":"mutated"}\n', encoding="utf-8")
+            (config / "scene.json").write_text('{"schemaVersion":4}\n', encoding="utf-8")
+            rollback = backup.restore(config, archive, key, self.sodium, True, native)
+            self.assertTrue(rollback.is_dir())
+            self.assertEqual(workspace.read_text(encoding="utf-8"), '{"schema":2,"sceneId":"fixture"}\n')
+            self.assertEqual((config / "scene.json").read_text(encoding="utf-8"), '{"schemaVersion":5}\n')
+
+    def test_config_only_archive_keeps_existing_native_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            config = root / "webobs"
+            config.mkdir()
+            (config / "scene.json").write_text('{"schemaVersion":5}\n', encoding="utf-8")
+            key = root / "key"
+            key.write_bytes(bytes(range(32)))
+            archive = backup.create(config, root / "backups", key, self.sodium)
+            native = root / "native-profile"
+            native.mkdir()
+            (native / "user.ini").write_text("[BasicWindow]\nPreviewProgramMode=true\n", encoding="utf-8")
+            backup.restore(config, archive, key, self.sodium, True, native)
+            self.assertEqual((native / "user.ini").read_text(encoding="utf-8"),
+                             "[BasicWindow]\nPreviewProgramMode=true\n")
+
     def test_nonlocal_backup_uses_pinned_s3_module_and_digest_key(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

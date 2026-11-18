@@ -163,8 +163,29 @@ def sqlite_snapshot(source: pathlib.Path, destination: pathlib.Path) -> None:
         source_db.close()
 
 
+def stage_tree(source_root: pathlib.Path, staging: pathlib.Path, schema: str,
+               excluded_parts: set[str] = frozenset()) -> None:
+    staging.mkdir()
+    manifest = {"format": 1, "createdAt": int(time.time()), "schema": schema, "files": []}
+    for source in safe_files(source_root):
+        relative = source.relative_to(source_root)
+        if excluded_parts.intersection(relative.parts):
+            continue
+        destination = staging / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if source.suffix in {".db", ".sqlite3"}:
+            sqlite_snapshot(source, destination)
+        else:
+            shutil.copyfile(source, destination)
+        os.chmod(destination, 0o600)
+        manifest["files"].append({"path": relative.as_posix(), "size": destination.stat().st_size,
+                                  "sha256": file_sha256(destination)})
+    (staging / "backup-manifest.json").write_text(
+        json.dumps(manifest, separators=(",", ":"), sort_keys=True) + "\n", encoding="utf-8")
+
+
 def create(config_root: pathlib.Path, backup_root: pathlib.Path, key_file: pathlib.Path,
-           sodium: SodiumStream) -> pathlib.Path:
+           sodium: SodiumStream, native_profile: pathlib.Path | None = None) -> pathlib.Path:
     backup_root.mkdir(parents=True, exist_ok=True, mode=0o700)
     if backup_root.is_symlink():
         raise BackupError("backup root is unsafe")
@@ -172,24 +193,17 @@ def create(config_root: pathlib.Path, backup_root: pathlib.Path, key_file: pathl
     output = backup_root / f"webobs-config-{timestamp}-{uuid.uuid4().hex[:8]}.wobk"
     with tempfile.TemporaryDirectory(prefix=".webobs-backup-", dir=backup_root) as directory:
         staging = pathlib.Path(directory) / "webobs"
-        staging.mkdir()
-        manifest = {"format": 1, "createdAt": int(time.time()), "schema": "v2-M7", "files": []}
-        for source in safe_files(config_root):
-            relative = source.relative_to(config_root)
-            destination = staging / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            if source.suffix in {".db", ".sqlite3"}:
-                sqlite_snapshot(source, destination)
-            else:
-                shutil.copyfile(source, destination)
-            os.chmod(destination, 0o600)
-            manifest["files"].append({"path": relative.as_posix(), "size": destination.stat().st_size,
-                                      "sha256": file_sha256(destination)})
-        (staging / "backup-manifest.json").write_text(
-            json.dumps(manifest, separators=(",", ":"), sort_keys=True) + "\n", encoding="utf-8")
+        stage_tree(config_root, staging, "v2-M7")
+        native_staging = None
+        if native_profile is not None and native_profile.is_dir() and not native_profile.is_symlink():
+            native_staging = pathlib.Path(directory) / "webobs-native-profile"
+            stage_tree(native_profile, native_staging, "native-profile-v1",
+                       frozenset({"logs", "crashes", "Crashpad"}))
         tar_path = pathlib.Path(directory) / "snapshot.tar.gz"
         with tarfile.open(tar_path, "w:gz", format=tarfile.PAX_FORMAT) as archive:
             archive.add(staging, arcname="webobs", recursive=True)
+            if native_staging is not None:
+                archive.add(native_staging, arcname="webobs-native-profile", recursive=True)
         temporary = output.with_name(f".{output.name}.tmp")
         with tar_path.open("rb") as source, temporary.open("xb") as destination:
             sodium.encrypt(source, destination, read_key(key_file))
@@ -235,7 +249,8 @@ def verify_tree(root: pathlib.Path) -> None:
 
 
 def restore(config_root: pathlib.Path, archive_path: pathlib.Path, key_file: pathlib.Path,
-            sodium: SodiumStream, confirmed: bool) -> pathlib.Path:
+            sodium: SodiumStream, confirmed: bool,
+            native_profile: pathlib.Path | None = None) -> pathlib.Path:
     if not confirmed or not archive_path.is_file() or archive_path.is_symlink():
         raise BackupError("restore confirmation and a regular backup file are required")
     parent = config_root.parent
@@ -247,11 +262,13 @@ def restore(config_root: pathlib.Path, archive_path: pathlib.Path, key_file: pat
             sodium.decrypt(source, destination, read_key(key_file))
         extracted = temporary_root / "extract"
         extracted.mkdir()
+        native_candidate = None
         with tarfile.open(tar_path, "r:gz") as bundle:
             for member in bundle.getmembers():
                 path = pathlib.PurePosixPath(member.name)
                 if path.is_absolute() or ".." in path.parts or member.issym() or member.islnk() or \
-                        not (member.isdir() or member.isfile()) or not path.parts or path.parts[0] != "webobs":
+                        not (member.isdir() or member.isfile()) or not path.parts or \
+                        path.parts[0] not in {"webobs", "webobs-native-profile"}:
                     raise BackupError("backup archive member is unsafe")
                 target = extracted.joinpath(*path.parts)
                 if member.isdir():
@@ -266,16 +283,44 @@ def restore(config_root: pathlib.Path, archive_path: pathlib.Path, key_file: pat
                     os.chmod(target, 0o600)
         candidate = extracted / "webobs"
         verify_tree(candidate)
+        native_candidate = extracted / "webobs-native-profile"
+        if native_candidate.exists():
+            verify_tree(native_candidate)
+        else:
+            native_candidate = None
         activated = parent / f".webobs-restore-{uuid.uuid4().hex}"
         shutil.copytree(candidate, activated)
+        activated_native = None
+        if native_candidate is not None:
+            if native_profile is None:
+                # An old caller that does not name the native profile must not
+                # silently replace a directory it did not intend to touch.
+                native_candidate = None
+            else:
+                native_profile = pathlib.Path(native_profile)
+                activated_native = native_profile.parent / f".webobs-native-restore-{uuid.uuid4().hex}"
+                shutil.copytree(native_candidate, activated_native)
         rollback = parent / f".webobs-rollback-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}"
         if config_root.exists():
             os.replace(config_root, rollback)
+        native_rollback = None
+        if activated_native is not None:
+            native_rollback = native_profile.parent / \
+                f".webobs-native-rollback-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}"
+            if native_profile.exists():
+                os.replace(native_profile, native_rollback)
         try:
             os.replace(activated, config_root)
+            if activated_native is not None:
+                os.replace(activated_native, native_profile)
         except Exception:
             if rollback.exists() and not config_root.exists():
                 os.replace(rollback, config_root)
+            if activated_native is not None and native_rollback is not None:
+                if native_profile.exists():
+                    shutil.rmtree(native_profile)
+                if native_rollback.exists():
+                    os.replace(native_rollback, native_profile)
             raise
         return rollback
 
@@ -338,7 +383,9 @@ def schedule(config_root: pathlib.Path, backup_root: pathlib.Path, key_file: pat
             job = cluster_request(port, token, "/backup-jobs/claim", {}).get("job")
         if job is not None:
             try:
-                output = create(config_root, backup_root, key_file, sodium)
+                output = create(config_root, backup_root, key_file, sodium,
+                                pathlib.Path(os.environ["WEBOBS_BACKUP_NATIVE_PROFILE"])
+                                if os.environ.get("WEBOBS_BACKUP_NATIVE_PROFILE") else None)
                 digest = file_sha256(output)
                 if job.get("targetId") != "local":
                     digest = upload_s3(output, str(job.get("targetId", "")))
@@ -352,7 +399,9 @@ def schedule(config_root: pathlib.Path, backup_root: pathlib.Path, key_file: pat
                         "state": "failed", "errorCode": code,
                     })
         if time.monotonic() >= next_scheduled:
-            create(config_root, backup_root, key_file, sodium)
+            create(config_root, backup_root, key_file, sodium,
+                   pathlib.Path(os.environ["WEBOBS_BACKUP_NATIVE_PROFILE"])
+                   if os.environ.get("WEBOBS_BACKUP_NATIVE_PROFILE") else None)
             next_scheduled = time.monotonic() + 15 * 60
         STOP.wait(2)
 
@@ -362,20 +411,23 @@ def main() -> None:
     parser.add_argument("action", choices={"create", "restore", "schedule"})
     parser.add_argument("archive", nargs="?")
     parser.add_argument("--config-root", default=os.environ.get("WEBOBS_BACKUP_CONFIG_ROOT", "/config/webobs"))
+    parser.add_argument("--native-profile-root", default=os.environ.get("WEBOBS_BACKUP_NATIVE_PROFILE", ""))
     parser.add_argument("--backup-root", default=os.environ.get("WEBOBS_BACKUP_ROOT", "/backups"))
     parser.add_argument("--key-file", default=os.environ.get("WEBOBS_BACKUP_KEY_FILE", "/run/secrets/webobs_backup_key"))
     args = parser.parse_args()
     config_root, backup_root, key_file = map(pathlib.Path, (args.config_root, args.backup_root, args.key_file))
-    if any(not path.is_absolute() for path in (config_root, backup_root, key_file)):
+    native_profile = pathlib.Path(args.native_profile_root) if args.native_profile_root else None
+    if any(not path.is_absolute() for path in (config_root, backup_root, key_file)) or \
+            (native_profile is not None and not native_profile.is_absolute()):
         raise SystemExit("backup paths must be absolute")
     sodium = SodiumStream()
     if args.action == "create":
-        create(config_root, backup_root, key_file, sodium)
+        create(config_root, backup_root, key_file, sodium, native_profile)
     elif args.action == "restore":
         if not args.archive:
             raise SystemExit("restore requires an encrypted archive")
         restore(config_root, pathlib.Path(args.archive), key_file, sodium,
-                os.environ.get("WEBOBS_RESTORE_CONFIRM") == "replace-config")
+                os.environ.get("WEBOBS_RESTORE_CONFIRM") == "replace-config", native_profile)
     else:
         install_owner_shutdown(STOP.set)
         schedule(config_root, backup_root, key_file, sodium)
