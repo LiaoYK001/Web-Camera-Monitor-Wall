@@ -55,6 +55,9 @@ public static class ProductTestWindow {
                 'webobsFixedProjector2' { '固定场景投影 2' }
                 'webobsCloseProjectors' { '关闭固定投影' }
                 'webobsProgramProjector' { '打开 Program 投影' }
+                'webobsRecordProgram' { '录制 Program' }
+                'webobsStreamProgram' { '推流 Program' }
+                'webobsOutputHealth' { $kind = [System.Windows.Automation.ControlType]::Text; '' }
                 'webobsHostStats' { 'OBS 宿主统计' }
                 'webobsManageDevices' { '设备与来源管理' }
                 'webobsManageAudio' { '音频与监听' }
@@ -223,6 +226,8 @@ public static class ProductTestWindow {
         }
         'projector-close' { Invoke-Control 'webobsCloseProjectors' }
         'program-projector' { Invoke-Control 'webobsProgramProjector' }
+        'record-program' { Invoke-Control 'webobsRecordProgram' }
+        'stream-program' { Invoke-Control 'webobsStreamProgram' }
         'projector-window-close' {
             # OBSProjector does not expose a reliable UIA WindowPattern.Close
             # action on Windows. Exercise the same WM_CLOSE path as the title bar.

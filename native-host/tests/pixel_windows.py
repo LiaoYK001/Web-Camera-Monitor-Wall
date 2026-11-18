@@ -159,9 +159,10 @@ class LoopbackRtsp:
             mediamtx = locked_mediamtx(private, offline)
             eol = chr(10)
             config = private / "mediamtx.yml"
-            # The loopback fixture owns only RTSP. Its default API/WebRTC
-            # listeners would collide with unrelated product or runner ports
-            # and can make MediaMTX exit before the fixture becomes readable.
+            # The loopback fixture owns only RTSP. Leaving MediaMTX's default
+            # API/WebRTC listeners enabled would collide with the product's own
+            # on-demand Program publisher on 8889/9997, with unrelated runner
+            # ports, or make the streaming gate observe the fixture.
             config.write_text(eol.join(["logLevel: warn", "api: false", "webrtc: false",
                               "hls: false", "rtmp: false", "srt: false",
                               "rtspAddress: 127.0.0.1:8554", "paths:", "  all_others:"]) + eol,

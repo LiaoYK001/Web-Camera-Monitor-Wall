@@ -1,6 +1,7 @@
 #include "product_window.hpp"
 #include "product_bootstrap.hpp"
 #include "product_http_client.hpp"
+#include "product_output.hpp"
 #include "product_scene.hpp"
 #include "renderer_device_qt.hpp"
 #include "layout.hpp"
@@ -38,6 +39,7 @@
 #include <QSpinBox>
 #include <QStandardItemModel>
 #include <QScrollArea>
+#include <QStringList>
 #include <QThread>
 #include <QTimer>
 #include <QUrl>
@@ -120,6 +122,10 @@ class ProductWindow final : public QWidget {
 	QPushButton *close_projectors_ = nullptr;
 	QPushButton *program_projector_button_ = nullptr;
 	QPointer<QWidget> program_projector_;
+	std::unique_ptr<ProductProgramOutput> program_output_;
+	QPushButton *record_program_ = nullptr;
+	QPushButton *stream_program_ = nullptr;
+	QLabel *output_health_ = nullptr;
 	QPushButton *stats_button_ = nullptr;
 	QPointer<QWidget> stats_window_;
 	std::array<bool, 2> projector_pending_{};
@@ -199,6 +205,73 @@ class ProductWindow final : public QWidget {
 		if (has_audio && !tearing_down_ && !user_id_.isEmpty())
 			observe_current_media();
 	}
+	void refresh_output_health()
+	{
+		if (!output_health_ || !program_output_) return;
+		const auto value = program_output_->status();
+		QStringList parts;
+		if (value.recording)
+			parts << tr("Program 录制中 %1 秒 · %2 MB")
+				.arg(value.recording_seconds)
+				.arg(QString::number(double(value.recording_bytes) / (1024.0 * 1024.0), 'f', 1));
+		else if (value.recording_ready)
+			parts << tr("最近 Program 录像已保存");
+		if (value.streaming)
+			parts << (value.stream_connected ? tr("Program 推流中") : tr("Program 推流连接中"));
+		if (!value.recording_error.isEmpty())
+			parts << tr("录像错误：%1").arg(value.recording_error);
+		if (!value.stream_error.isEmpty())
+			parts << tr("推流错误：%1").arg(value.stream_error);
+		output_health_->setText(parts.isEmpty() ? tr("Program 输出：空闲") : parts.join(" · "));
+		if (record_program_)
+			record_program_->setText(value.recording ? tr("停止 Program 录制") : tr("录制 Program"));
+		if (stream_program_)
+			stream_program_->setText(value.streaming ? tr("停止 Program 推流") : tr("推流 Program"));
+	}
+	void toggle_recording()
+	{
+		if (!program_output_ || user_id_.isEmpty()) return;
+		QString error;
+		const auto before = program_output_->status();
+		if (before.recording) {
+			if (!program_output_->stop_recording(error))
+				status_->setText(tr("Program 录像停止失败：%1").arg(error));
+			else
+				status_->setText(tr("Program 录像已保存：%1").arg(program_output_->status().recording_path));
+		} else {
+			if (!program_ || program_apply_state_ != "applied") {
+				status_->setText(tr("请先应用并确认 Program 场景，再开始录制。"));
+				return;
+			}
+			if (!program_output_->start_recording(error))
+				status_->setText(tr("Program 录像启动失败：%1").arg(error));
+			else
+				status_->setText(tr("Program 录制中，使用同一原生宿主输出。"));
+		}
+		refresh_output_health();
+	}
+	void toggle_streaming()
+	{
+		if (!program_output_ || user_id_.isEmpty()) return;
+		QString error;
+		const auto before = program_output_->status();
+		if (before.streaming) {
+			if (!program_output_->stop_streaming(error))
+				status_->setText(tr("Program 推流停止失败：%1").arg(error));
+			else
+				status_->setText(tr("Program 推流已停止，本机推流进程已释放。"));
+		} else {
+			if (!program_ || program_apply_state_ != "applied") {
+				status_->setText(tr("请先应用并确认 Program 场景，再开始推流。"));
+				return;
+			}
+			if (!program_output_->start_streaming(error))
+				status_->setText(tr("Program 推流启动失败：%1").arg(error));
+			else
+				status_->setText(tr("Program 正在通过本机 WHIP 推流。"));
+		}
+		refresh_output_health();
+	}
 	int media_source_count() const
 	{
 		int media_sources = 0;
@@ -238,6 +311,23 @@ class ProductWindow final : public QWidget {
 			{"monitorIsProgram", source && wall_ && source == obs_scene_get_source(wall_->scene)}};
 		obs_source_release(source);
 		return result;
+	}
+	QJsonObject program_output_state() const
+	{
+		if (!program_output_) return {};
+		const auto value = program_output_->status();
+		return QJsonObject{{"recording", value.recording},
+			{"recordingReady", value.recording_ready},
+			{"recordingPath", value.recording_path},
+			{"recordingError", value.recording_error},
+			{"recordingBytes", double(value.recording_bytes)},
+			{"recordingSeconds", double(value.recording_seconds)},
+			{"streaming", value.streaming},
+			{"streamConnected", value.stream_connected},
+			{"mediaMtxRunning", value.media_mtx_running},
+			{"streamPublishUrl", value.stream_publish_url},
+			{"streamPlaybackUrl", value.stream_playback_url},
+			{"streamError", value.stream_error}};
 	}
 	bool select_monitor(obs_scene_t *scene)
 	{
@@ -288,6 +378,7 @@ class ProductWindow final : public QWidget {
 		state.insert("programApplyState", program_apply_state_);
 		state.insert("programSyncPending", program_sync_pending_);
 		state.insert("program", program_state());
+		state.insert("programOutput", program_output_state());
 		QJsonArray audio_sources;
 		std::set<std::string> audio_seen;
 		const auto collect_audio = [&](const std::shared_ptr<ProductSceneGraph> &graph) {
@@ -1037,9 +1128,11 @@ class ProductWindow final : public QWidget {
 		heartbeat_pending_ = false;
 		applying_ = false;
 		user_id_.clear();
+		if (program_output_) program_output_->shutdown();
 		clear_media();
 		login_->setEnabled(true);
-		for (auto *button : {watch_, save_, logout_, refresh_, scene_watch_, stats_button_, program_projector_button_})
+		for (auto *button : {watch_, save_, logout_, refresh_, scene_watch_, stats_button_, program_projector_button_,
+			     record_program_, stream_program_})
 			if (button) button->setEnabled(false);
 		slot_count_->setEnabled(false);
 		camera_choices_->clear();
@@ -1129,7 +1222,7 @@ class ProductWindow final : public QWidget {
 					if (saved.value(role).isObject()) projector_placements_[role] = saved.value(role);
 			}
 			observe_state("authenticated");
-			for (auto *button : {watch_, logout_, refresh_, scene_watch_, stats_button_})
+			for (auto *button : {watch_, logout_, refresh_, scene_watch_, stats_button_, record_program_, stream_program_})
 				button->setEnabled(true);
 			status_->setText(tr("已登录，正在读取授权设备目录…"));
 			heartbeat_.start(2000);
@@ -1684,6 +1777,24 @@ public:
 		program_projector_button_->setToolTip(tr("显示 OBS 真实 Program 输出；TAKE 确认后才可用。"));
 		layout->addWidget(program_projector_button_);
 		connect(program_projector_button_, &QPushButton::clicked, this, [this] { open_program_projector(); });
+		if (!preview_delivery) {
+			program_output_ = std::make_unique<ProductProgramOutput>(
+				qEnvironmentVariable("WEBOBS_NATIVE_PROFILE_ROOT"));
+			record_program_ = new QPushButton(tr("录制 Program"), this);
+			record_program_->setObjectName("webobsRecordProgram");
+			record_program_->setToolTip(tr("由同一个 OBS 宿主把实际 Program 画面和混音录制为 MP4；无任务时不启动编码器。"));
+			layout->addWidget(record_program_);
+			connect(record_program_, &QPushButton::clicked, this, [this] { toggle_recording(); });
+			stream_program_ = new QPushButton(tr("推流 Program"), this);
+			stream_program_->setObjectName("webobsStreamProgram");
+			stream_program_->setToolTip(tr("按需启动本机 MediaMTX，并以 WHIP 发布实际 Program；停止后释放推流进程。"));
+			layout->addWidget(stream_program_);
+			connect(stream_program_, &QPushButton::clicked, this, [this] { toggle_streaming(); });
+			output_health_ = new QLabel(tr("Program 输出：空闲"), this);
+			output_health_->setObjectName("webobsOutputHealth");
+			output_health_->setWordWrap(true);
+			layout->addWidget(output_health_);
+		}
 		auto *manage = new QPushButton(tr("设备与来源管理"), this);
 		manage->setObjectName("webobsManageDevices");
 		layout->addWidget(manage);
@@ -1819,6 +1930,7 @@ public:
 		connect(&heartbeat_, &QTimer::timeout, this, [this] {
 			remember_open_projector_placements();
 			refresh_video_health();
+			refresh_output_health();
 			renew_projectors(); // Remains active while the main view resolves another scene.
 			if (heartbeat_pending_ || user_id_.isEmpty())
 				return;
@@ -1858,6 +1970,10 @@ public:
 		settlement_.stop();
 		retirement_.stop();
 		client_.reset();
+		if (program_output_) {
+			program_output_->shutdown();
+			program_output_.reset();
+		}
 		clear_media();
 		if (blank_scene_ && obs_initialized()) {
 			obs_source_remove(obs_scene_get_source(blank_scene_));
