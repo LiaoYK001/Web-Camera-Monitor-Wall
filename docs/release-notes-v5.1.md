@@ -34,7 +34,7 @@ The single control panel provides watch, save layout, refresh catalog, logout, s
 ## 相对 v5.0.0-rc.1 新增 / Added since v5.0.0-rc.1
 
 1. **多轨音频 / multi-track audio**：逐轨混音、监听、电平与逐轨静音/增益/偏移；Program 产物解码实际音轨。AAC/Opus 编码器创建改用具名 `QByteArray` 保存的编码器名与所选总线标签，修复非默认总线下“电平有信号、录制/推流静音”，OBS mixer 索引仍从零开始。
-2. **Program 合成输出 / Program composite output**：同一个宿主把实际 Program 画面与混音录成 MP4（MKV→MP4 流复制），并以 WHIP 经私有 MediaMTX 发布；无任务时不启动编码器或 MediaMTX，停止、断线、撤权、退出释放进程。验收落到实际收到的产物：录制文件与回环 WHIP 接收端解码确认选中总线音调、未选总线不串音、视频帧持续推进。
+2. **Program 合成输出 / Program composite output**：同一个宿主把实际 Program 画面与混音录成 MP4（MKV→MP4 流复制），并以 WHIP 经私有 MediaMTX 发布；无任务时不启动编码器或 MediaMTX，停止、断线、撤权、退出释放进程。验收落到实际收到的产物：录制文件与回环 WHIP 接收端解码确认选中总线音调、未选总线不串音、视频帧持续推进。 已知行为：节目混音子进程只有在 ffmpeg 打开相机输入之后才绑定本地端点，切换 Program 场景后音频需要数秒才可用；媒体源首开失败后按 1 秒重连恢复，录制与推流都会先等待混音真正出音，实测建立时长以 `programMixLeadIn` 记录在回执中，不隐藏。
 3. **备份一致性 / backup consistency**：双目录加密备份按成对交换收敛；中断的恢复在普通产品启动时、持有数据目录独占锁且创建配置与 OBS profile 之前处理并可重试；旧版仅含配置的备份保留现有原生档案。
 4. **真实 LAN/Web 入口 / real LAN entry**：开启后由打包 Caddy 提供 HTTPS，账号与逐相机权限不变；缺组件、端口占用或 TLS 失败时失败关闭，不降级明文 HTTP。启用共享时 go2rtc 的 WebRTC 监听绑 `0.0.0.0` 以便同网设备连接（刻意行为，管理面与内部媒体监听仍回环）。
 5. **支持包 / support bundle**：有界脱敏状态、计数与 OBS 标记统计，含 Program 输出与 LAN 的失败原因；不含摄像机地址、令牌、日志正文或媒体。
