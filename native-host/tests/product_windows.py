@@ -1276,26 +1276,31 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 code, _, studio = request("/api/v1/studio", studio, cookie=cookie, method="PUT",
                     revision=studio["revision"])
                 assert code == 200, "Studio did not accept the default-bus Program scene"
-                # Which half of the chain refused the Scene? The core decides
-                # programSupported/fingerprint; the native host reports the apply
-                # reason. Recording both keeps a product defect from being read as
-                # a timing problem.
-                code, _, native_studio = request("/api/v1/native/studio", cookie=cookie)
-                assert code == 200, "native Studio receipt did not read back the default-bus Program"
-                evidence["programDefaultBusNativeStudio"] = {key: native_studio.get(key)
-                    for key in ("revision", "programSceneId", "programEmpty", "programSupported",
-                                "programFingerprint")}
+                # Which half of the chain refused the Scene? The core stores the host's
+                # own Program apply receipt (state plus bounded error), so a product
+                # refusal cannot be read as a timing problem. The native transport
+                # endpoints are host-token only and are deliberately not used here.
+                def program_runtime():
+                    code, _, runtime_receipt = request("/api/v1/studio/runtime", cookie=cookie)
+                    if code != 200:
+                        return {"code": code}
+                    return {key: runtime_receipt.get(key) for key in
+                        ("native", "studioRevision", "programSceneId", "status", "targetRevision",
+                         "targetSceneId", "appliedRevision", "appliedSceneId", "error")}
+
+                evidence["programDefaultBusRuntimeReceipt"] = program_runtime()
 
                 def default_bus_applied():
                     value = state()
                     evidence["programDefaultBusApplyAttempt"] = apply_attempt(value)
+                    evidence["programDefaultBusRuntimeReceipt"] = program_runtime()
                     return value if (value.get("programSceneId") == "fixture-audio-default" and
                         value.get("programApplyState") == "applied" and
                         isinstance(value.get("program"), dict) and
                         value["program"].get("mediaSources") == 2) else None
                 wait_for(default_bus_applied,
                     "default-bus Program scene did not apply: core="
-                    + json.dumps(evidence["programDefaultBusNativeStudio"], sort_keys=True)[:220]
+                    + json.dumps(evidence["programDefaultBusRuntimeReceipt"], sort_keys=True)[:340]
                     + " host=" + json.dumps(evidence["programDefaultBusApplyAttempt"], sort_keys=True)[:400],
                     timeout=45)
                 checkpoint("program-default-bus-applied")
@@ -1404,14 +1409,14 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                             value.get("programApplyState") == "applied" and
                             isinstance(value.get("program"), dict) and
                             value["program"].get("mediaSources") == expected_media) else None
-                    code, _, native_studio = request("/api/v1/native/studio", cookie=cookie)
-                    assert code == 200
-                    receipt = {key: native_studio.get(key) for key in
-                        ("revision", "programSceneId", "programEmpty", "programSupported")}
-                    wait_for(scene_applied,
+                    def scene_applied_with_receipt():
+                        value = scene_applied()
+                        evidence["programRuntimeReceipt"] = program_runtime()
+                        return value
+                    wait_for(scene_applied_with_receipt,
                         f"native Program did not apply the {scene['id']} Scene: core="
-                        + json.dumps(receipt, sort_keys=True)[:200] + " host="
-                        + json.dumps(evidence.get("programApplyAttempt", {}), sort_keys=True)[:400],
+                        + json.dumps(evidence.get("programRuntimeReceipt", {}), sort_keys=True)[:340]
+                        + " host=" + json.dumps(evidence.get("programApplyAttempt", {}), sort_keys=True)[:400],
                         timeout=30)
 
                 def record_program_output(label):
