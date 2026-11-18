@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 211,
-  "updated_at": "2026-11-19T00:37:12+08:00",
+  "revision": 212,
+  "updated_at": "2026-11-19T00:50:50+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1241,12 +1241,13 @@
         ".worktrees/v51-combined 试合并后 test_complete_supervisor.py PASS（含 'converged the interrupted restore as completed'）、tests/test_encrypted_backup.py 10 OK、native-host/tests/test_native_updater.py 4 PASS",
         "rebase 后 PR #70 head 4d60479（base #67 535a9af），native-host/tests/backup_restore_windows.py 由 workflow 步骤执行，证据待 rc.41 run 44291812392",
         "git rebase a4d2512 clean；codex/v51-r4-backup-consistency=77958c3；gh pr 70 base=codex/v51-r3-output",
-        "PR#70 rebase 到新 #67 head（770b0e1，4 个自有提交无冲突）；tests/test_encrypted_backup.py 10 OK；native-host/tests/test_complete_supervisor.py PASS（含 'converged the interrupted restore as completed' 与二次 prepare 不被中断日志拒绝、无 run/restore-recovery.json）；复核 product_supervisor.prepare() 顺序：独占锁+protect 之后、创建 config/native-profile 目录与读取 user.ini 之前调用 recover_interrupted_restore()"
+        "PR#70 rebase 到新 #67 head（770b0e1，4 个自有提交无冲突）；tests/test_encrypted_backup.py 10 OK；native-host/tests/test_complete_supervisor.py PASS（含 'converged the interrupted restore as completed' 与二次 prepare 不被中断日志拒绝、无 run/restore-recovery.json）；复核 product_supervisor.prepare() 顺序：独占锁+protect 之后、创建 config/native-profile 目录与读取 user.ini 之前调用 recover_interrupted_restore()",
+        "commit be25901 on codex/v51-r4-backup-consistency; python3 tests/test_encrypted_backup.py 12 OK; same file against HEAD~1 service = 2 errors (falsifiable); test_complete_supervisor/test_native_updater/test_build_contract OK; run 44349201714 in_progress"
       ],
       "blocker": "",
       "next_step": "#67 合入 dev 后把 #70 base 改为 dev 并派发带 backup_restore_windows 门禁的 Windows 运行。",
-      "updated_at": "2026-11-18T20:54:19+08:00",
-      "last_note": "已确认普通产品启动接线满足要求；安装态门禁 backup_restore_windows.py 改为直接启动 bin/webobs-wall.exe 收敛，需 Windows 完整候选运行验证"
+      "updated_at": "2026-11-19T00:50:50+08:00",
+      "last_note": "审阅 #70 时发现并修掉恢复回滚的半对缺陷：recover_interrupted 的“配置未落盘”分支只把旧配置放回原位，却忽略同一交换窗口里已换出的旧 OBS 档案（journal 记录了 nativeRollback 却从未使用），普通启动因此会读到缺失的 OBS 档案，旧档案永远停在 .webobs-native-rollback-* 无人认领。现在回滚分支成对收回两半；若配置已落盘且后续启动重建了活动档案，改为把这些字节挪到 .webobs-native-parked-* 保存并落下与已落盘配置成对的档案副本（不再报 inconsistent 拒绝启动），恢复失败路径同样改为挪开而非 shutil.rmtree 删除活动档案。本机 tests/test_encrypted_backup.py 12 项通过且去掉本修复两项新测试即失败（可证伪）；安装态门禁 backup_restore_windows.py 新增第二个交换窗口（OBS 档案换出后、配置落盘前）终止真实恢复进程再从安装入口启动，断言两半回到旧对且不再有滞留 parked/rollback。已提交 be25901(#70) 并按顺序 rebase #71=b3653a4、#74=eb1c61f 后推送；rc.51 仍 pinned 在旧栈顶 2e7695d 运行中，不重复派发。剩余：读 rc.51 回执判定 Program 捕获窗口内的冻结槽位成因；两个交换窗口的 Windows 门禁结果需新 run 回执。"
     },
     {
       "id": "V51-008",
@@ -3843,6 +3844,18 @@
         "run 44339344891 receipt native-product-entry-ui.json; commit a92d11b; run 44349201714"
       ],
       "git_revision": "b7ab83060ca6f955cee461a2a3e17e2109b5ef63"
+    },
+    {
+      "sequence": 212,
+      "at": "2026-11-19T00:50:50+08:00",
+      "agent": "deepseek-v51-20261118-01",
+      "task": "V51-007",
+      "action": "log",
+      "note": "审阅 #70 时发现并修掉恢复回滚的半对缺陷：recover_interrupted 的“配置未落盘”分支只把旧配置放回原位，却忽略同一交换窗口里已换出的旧 OBS 档案（journal 记录了 nativeRollback 却从未使用），普通启动因此会读到缺失的 OBS 档案，旧档案永远停在 .webobs-native-rollback-* 无人认领。现在回滚分支成对收回两半；若配置已落盘且后续启动重建了活动档案，改为把这些字节挪到 .webobs-native-parked-* 保存并落下与已落盘配置成对的档案副本（不再报 inconsistent 拒绝启动），恢复失败路径同样改为挪开而非 shutil.rmtree 删除活动档案。本机 tests/test_encrypted_backup.py 12 项通过且去掉本修复两项新测试即失败（可证伪）；安装态门禁 backup_restore_windows.py 新增第二个交换窗口（OBS 档案换出后、配置落盘前）终止真实恢复进程再从安装入口启动，断言两半回到旧对且不再有滞留 parked/rollback。已提交 be25901(#70) 并按顺序 rebase #71=b3653a4、#74=eb1c61f 后推送；rc.51 仍 pinned 在旧栈顶 2e7695d 运行中，不重复派发。剩余：读 rc.51 回执判定 Program 捕获窗口内的冻结槽位成因；两个交换窗口的 Windows 门禁结果需新 run 回执。",
+      "evidence": [
+        "commit be25901 on codex/v51-r4-backup-consistency; python3 tests/test_encrypted_backup.py 12 OK; same file against HEAD~1 service = 2 errors (falsifiable); test_complete_supervisor/test_native_updater/test_build_contract OK; run 44349201714 in_progress"
+      ],
+      "git_revision": "29df4501720ebcd82b43f55cafa4c39a39194d27"
     }
   ]
 }

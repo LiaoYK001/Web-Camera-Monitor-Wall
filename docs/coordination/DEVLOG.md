@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 211 · 2026-11-19T00:37:12+08:00（UTC+08）
+> 快照版本 212 · 2026-11-19T00:50:50+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #212 · 2026-11-19T00:50:50+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-007`
+- 记录：审阅 #70 时发现并修掉恢复回滚的半对缺陷：recover_interrupted 的“配置未落盘”分支只把旧配置放回原位，却忽略同一交换窗口里已换出的旧 OBS 档案（journal 记录了 nativeRollback 却从未使用），普通启动因此会读到缺失的 OBS 档案，旧档案永远停在 .webobs-native-rollback-* 无人认领。现在回滚分支成对收回两半；若配置已落盘且后续启动重建了活动档案，改为把这些字节挪到 .webobs-native-parked-* 保存并落下与已落盘配置成对的档案副本（不再报 inconsistent 拒绝启动），恢复失败路径同样改为挪开而非 shutil.rmtree 删除活动档案。本机 tests/test_encrypted_backup.py 12 项通过且去掉本修复两项新测试即失败（可证伪）；安装态门禁 backup_restore_windows.py 新增第二个交换窗口（OBS 档案换出后、配置落盘前）终止真实恢复进程再从安装入口启动，断言两半回到旧对且不再有滞留 parked/rollback。已提交 be25901(#70) 并按顺序 rebase #71=b3653a4、#74=eb1c61f 后推送；rc.51 仍 pinned 在旧栈顶 2e7695d 运行中，不重复派发。剩余：读 rc.51 回执判定 Program 捕获窗口内的冻结槽位成因；两个交换窗口的 Windows 门禁结果需新 run 回执。
+- 证据：commit be25901 on codex/v51-r4-backup-consistency; python3 tests/test_encrypted_backup.py 12 OK; same file against HEAD~1 service = 2 errors (falsifiable); test_complete_supervisor/test_native_updater/test_build_contract OK; run 44349201714 in_progress
+- 源码：`29df4501720ebcd82b43f55cafa4c39a39194d27`
 ## #211 · 2026-11-19T00:37:12+08:00 · log
 
 - Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
