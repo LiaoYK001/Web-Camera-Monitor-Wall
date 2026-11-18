@@ -1,12 +1,30 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 212 · 2026-11-19T00:50:50+08:00（UTC+08）
+> 快照版本 215 · 2026-11-19T01:14:36+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #215 · 2026-11-19T01:14:36+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-007`
+- 记录：按新 #67 head 顺序 rebase：#70=307910f、#71=2560a52、#74=4a487d1，均 --force-with-lease 推送；rebase 后本机复跑 tests/test_encrypted_backup.py 12 OK 与 native-host/tests/test_complete_supervisor.py PASS（含恢复收敛断言）。
+- 证据：307910f/2560a52/4a487d1 pushed; suites re-run green
+- 源码：`19695a5dffb571ad4afdcc4d7889b69eb85677f5`
+## #214 · 2026-11-19T01:14:33+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：rc.51 回执给出新故障形状：program-before-take 里 Program 专用源 'WebOBS Program fixture-five.fixture-source-4' 连续 30 s 报告 showing/active/mediaState=PLAYING 而 serial 仍为 0，另有已计数输入停滞；旧回执把停滞输入与包计数证据截断，无法区分'合成回环停止推包'与'产品打开但不出帧'。因此给 #67 门禁增加判定与证据而不放宽像素断言：等待窗口失败后先实测五条回环路径（发布进程状态、ffprobe 可读性、两次包计数），只重启确实停止推包的路径并重新计时（最多两次）；路径仍在推包则直接失败，并把 stagnantInputs（uuid+前后 serial）、完整 videoInputs 快照、发布进程状态与 pathProgress 写进回执；PLAYING 且零回调持续 ≥8 s 判为真实停滞。本机 py_compile + native-host/tests/test_build_contract.py 45 OK + test_complete_supervisor.py PASS；Windows 证据待 rc.52（run 44356064395，ref codex/v51-r5-soak=4a487d1，version 5.1.0-rc.52）。
+- 证据：commit 4adff47 (PR #67); receipt /tmp/rc51.NjL1/native-product-entry-ui.json lastCheckpoint pixels-program-before-take-observed programPixelInputWait waitedMs 30077 windows 12 countedInputs 5
+- 源码：`19695a5dffb571ad4afdcc4d7889b69eb85677f5`
+## #213 · 2026-11-19T01:14:18+08:00 · add
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-013`
+- 记录：抽共享合成 ONVIF 设备并接入安装态门禁；Linux Registry 58 项仍通过，Windows 证据待回执。
+- 证据：PR #75 (codex/v51-r3-005-devices 35134da, base codex/v51-r5-soak); python3 tests/test_camera_registry.py 58 OK; smoke run of probe/sync/presets/ptz/autostop/snapshot green locally
+- 源码：`19695a5dffb571ad4afdcc4d7889b69eb85677f5`
 ## #212 · 2026-11-19T00:50:50+08:00 · log
 
 - Agent：`deepseek-v51-20261118-01`；任务：`V51-007`

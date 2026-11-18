@@ -1,7 +1,7 @@
 # 详细执行路线图 / Execution roadmap
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 212 · 2026-11-19T00:50:50+08:00（UTC+08）
+> 快照版本 215 · 2026-11-19T01:14:36+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -78,6 +78,7 @@
 - **V51-008 · 进行中**：把 Program 合成输出验收落到用户实际收到的产物 / accept Program output from the delivered recording and stream；依赖：无。验收：安装后应用里两路不同频率音调在录制文件与回环 WHIP 流中可解码：选中总线有预期音调、未选总线无串音、视频帧持续推进；逐轨静音/增益/偏移生效并如实区分配置到达与声学实测；录像目录失败与 WHIP 断线给出有界错误并回收编码器、服务与 MediaMTX；纯 RTSP 监看时不启动 Program 输出子进程；回执绑定源码 SHA 与安装包。
 - **V51-009 · 待开始**：接通原生产品真实 LAN/Web HTTPS 入口 / wire the real LAN HTTPS entry into the native product；依赖：无。验收：supervisor 读取持久化 LAN 开关、私有 IPv4 与端口，生成来源允许列表与 Caddy 配置并作为受管子进程运行；状态回执给出 https URL、证书路径与仅展示的防火墙命令；Linux 单元校验配置/来源/JSON，Windows 安装态验证真实局域网访问
 - **V51-010 · 进行中**：修已安装 LAN 门禁的首账号流程与无私网地址诚实降级 / fix installed LAN gate first-account flow and honest no-private-address degradation；依赖：无。验收：门禁按真实产品流程先经回环 /api/v1/auth/setup 创建首账号（201）并证明重复注册 409，之后 LAN 与回环用同一账号建立独立会话；无私有 IPv4 的运行器记录 lanHttpsQualified=false + skipReason，且仍证明不启动监听、无 URL、本机消费端可用；安装脚本复制回执真实值而非写死 true；不把未实测的第二设备/交换机/Caddy 目标机安装写成通过
+- **V51-013 · 待开始**：用安装态门禁实跑 ONVIF 设备操作与权限拒绝 / exercise ONVIF device operations in the installed gate；依赖：无。验收：安装后的 Windows 产品通过自身鉴权 API 完成 ONVIF probe/创建/sync/预置位/云台（设备侧 Timeout 与自动 Stop 到达设备）/抓拍，scoped viewer 的云台与抓拍请求 403 且设备侧不增长动作与字节读取；合成 SOAP 设备不得写成真机验收。
 
 ## R4 · 旧数据迁移、更新与生命周期
 

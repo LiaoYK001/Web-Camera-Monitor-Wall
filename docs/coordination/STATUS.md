@@ -1,7 +1,7 @@
 # 当前进度 / Current status
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 212 · 2026-11-19T00:50:50+08:00（UTC+08）
+> 快照版本 215 · 2026-11-19T01:14:36+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -30,7 +30,7 @@
 | PREVIEW v4.5 Windows x64 原生监看预览交付 | 4/4 | 完成 |
 | R1 原生产品闭环与授权 | 2/2 | 完成 |
 | R2 完整 Studio、监控墙和声音 | 3/5 | 未关闭 |
-| R3 业务能力回接和按需组件 | 0/7 | 未关闭 |
+| R3 业务能力回接和按需组件 | 0/8 | 未关闭 |
 | R4 旧数据迁移、更新与生命周期 | 2/5 | 未关闭 |
 | R5 性能、体积与稳定性 | 0/2 | 未关闭 |
 | R6 冻结完整 Release 候选 | 1/5 | 未关闭 |
@@ -47,5 +47,6 @@
 - `R3-004` P2 · 回接远端、离线同步、问题中心和诊断。下一步：逐项关闭 REMOTE/OFFLINE/OPS，远端兼容不等于恢复 Android 发版。
 - `V51-006` P1 · 接通稳定打包身份与验收文件单一契约 / wire stable packaging identity with one acceptance-file contract。下一步：合入 #67/#68 后 rebase 本分支并转正式审查；真实 latest.yml 上传与集中验收回执仍待执行
 - `V51-009` P0 · 接通原生产品真实 LAN/Web HTTPS 入口 / wire the real LAN HTTPS entry into the native product。下一步：#67 合入后 rebase 到 dev 并补原生窗口开关；随后随完整候选派发一次带该门禁的 Windows 运行
+- `V51-013` P1 · 用安装态门禁实跑 ONVIF 设备操作与权限拒绝 / exercise ONVIF device operations in the installed gate。下一步：rc.52 绿并合并 #67/#70/#71/#74 进 dev 后，用一次带 #75 的完整候选运行验证设备操作阶段，再双语合并 #75。
 
 原始依据：[完整任务书](../windows-webobs-wall-release-plan-2026-11-11.md)、[功能矩阵](../windows-native-feature-parity.md)、[逐轮执行记录](../windows-obs-parity-execution.md)、[v4.5 范围](../release-notes-v4.5.md)。
