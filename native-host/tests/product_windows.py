@@ -1339,6 +1339,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 assert selected == 2, \
                     f"applied Program Scene reported audio track mask {selected}; expected 2 (audioTrack 2)"
                 evidence["programSelectedAudioTrackMask"] = selected
+                wait_program_mix_audible("program-take")
                 assert ui("record-program")
                 wait_for(lambda: state().get("programOutput", {}).get("recording") is True,
                     "native Program recording did not start", timeout=20)
@@ -1476,6 +1477,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 # private MediaMTX only while streaming. RTSP playback proves
                 # the packets reached a real consumer, not just an active flag.
                 phase = "program-streaming"
+                wait_program_mix_audible("program-streaming")
                 assert ui("stream-program")
                 def streaming_ready():
                     value = state().get("programOutput", {})
