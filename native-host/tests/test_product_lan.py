@@ -254,7 +254,7 @@ class SupervisorEntryTests(unittest.TestCase):
             self.assertEqual(supervisor.environment["WEBOBS_CONTROL_ALLOWED_ORIGINS"],
                 "http://127.0.0.1:55123")
 
-    def test_busy_lan_port_stops_the_start_instead_of_serving_http(self):
+    def test_busy_lan_port_closes_the_entry_and_keeps_local_monitoring(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             product_lan.write_setting(root, True, 19443)
@@ -263,9 +263,18 @@ class SupervisorEntryTests(unittest.TestCase):
                 raise OSError("only one usage of each socket address")
 
             supervisor = self.stub(root, ["192.168.1.20"], reserve=busy)
-            with self.assertRaises(RuntimeError):
-                supervisor.prepare_lan(55123)
-            self.assertEqual(supervisor.failure_reason, "lan-port-unavailable")
+            supervisor.prepare_lan(55123)
+            receipt = supervisor.lan_status()
+            self.assertIs(receipt["enabled"], True)
+            self.assertEqual(receipt["urls"], [])
+            self.assertEqual(receipt["reason"], "lan-port-unavailable")
+            self.assertIs(receipt["running"], False)
+            self.assertEqual(supervisor.failure_reason, "")
+            # Nothing may be widened toward the network while the entry is refused.
+            self.assertEqual(supervisor.environment["WEBOBS_CONTROL_ALLOWED_ORIGINS"],
+                "http://127.0.0.1:55123")
+            self.assertNotIn("WEBOBS_PWA_MEDIA_ALLOWED_ORIGINS", supervisor.environment)
+            self.assertNotIn("WEBOBS_GO2RTC_WEBRTC_BIND", supervisor.environment)
             self.assertFalse((root / "run/lan-caddy.json").exists())
 
     def test_switch_persists_the_setting_and_marks_the_restart(self):

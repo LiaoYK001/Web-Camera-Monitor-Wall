@@ -639,16 +639,28 @@ class ProductSupervisor:
             self.lan.control_origins(self.origin, value))
         if not value["urls"]:
             return
+        # Reserve the HTTPS port before widening any origin or WebRTC bind. A busy
+        # port stops this entry only: local loopback monitoring is what users already
+        # depend on, so a conflicting port must not refuse every product launch. The
+        # receipt keeps enabled=true with a bounded reason and no URL, and nothing is
+        # exposed beyond loopback while the entry is refused.
+        try:
+            self.lan_lease = self.reserve_lan_port(value["serving"][0], value["port"])
+        except OSError:
+            value = dict(value, serving=[], urls=[], certificate="", configuration=None,
+                         firewallCommands=[], reason="lan-port-unavailable")
+            with self.lan_lock:
+                self.lan_value = value
+            self.environment["WEBOBS_CONTROL_ALLOWED_ORIGINS"] = ",".join(
+                self.lan.control_origins(self.origin, value))
+            print("LAN sharing is enabled but the HTTPS port is already in use; "
+                  "the entry stays closed and local monitoring continues", flush=True)
+            return
         self.environment["WEBOBS_PWA_MEDIA_ALLOWED_ORIGINS"] = ",".join(self.lan.media_origins(value))
         # Composite playback from another machine needs candidates a remote
         # browser can reach; Direct RTSP monitoring keeps its loopback-only binds.
         self.environment["WEBOBS_GO2RTC_WEBRTC_BIND"] = "0.0.0.0"
         self.environment["WEBOBS_GO2RTC_WEBRTC_HOSTS"] = ",".join(value["serving"])
-        try:
-            self.lan_lease = self.reserve_lan_port(value["serving"][0], value["port"])
-        except OSError:
-            self.failure_reason = "lan-port-unavailable"
-            raise RuntimeError("the LAN HTTPS port is already in use") from None
         self.lan_config = self.root / "run/lan-caddy.json"
         self.lan_config.parent.mkdir(parents=True, exist_ok=True)
         temporary = None
