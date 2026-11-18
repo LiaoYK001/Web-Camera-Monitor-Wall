@@ -920,8 +920,9 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     "canvas": {"width": 1920, "height": 1080, "backgroundColor": "#000000"},
                     "sources": [{"id": "fixture-alt-source", "kind": "camera", "name": "Program alt camera",
                         "cameraId": "fixture-1", "profileId": "main", "hardwareDecode": "auto",
-                        "muted": True, "volume": 1, "syncOffsetMs": 0, "monitoring": "off", "audioTrack": 1,
-                        "audioInputs": []}],
+                        "muted": False, "volume": 0.75, "syncOffsetMs": 0, "monitoring": "off", "audioTrack": 2,
+                        "audioInputs": [{"track": 0, "gain": 1, "muted": False, "syncOffsetMs": 0},
+                            {"track": 1, "gain": 0.5, "muted": False, "syncOffsetMs": 0}]}],
                     "items": [{"id": "fixture-alt-item", "sourceId": "fixture-alt-source", "x": 0, "y": 0,
                         "width": 1920, "height": 1080, "scaleMode": "contain",
                         "crop": {"top": 0, "right": 0, "bottom": 0, "left": 0},
@@ -966,9 +967,12 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 checkpoint("program-take-committed")
                 wait_for(lambda: state().get("programSceneId") == "fixture-alt" and
                     state().get("programApplyState") == "applied" and
-                    state().get("program", {}).get("mediaSources") == 1,
+                    state().get("program", {}).get("mediaSources") == 2 and
+                    any(item.get("sourceId") == "fixture-alt-source" and item.get("available") is True and
+                        item.get("peakDbfs", -120) > -60 for item in state().get("audioSources", [])),
                     "native Program did not switch to the TAKE target", timeout=20)
                 checkpoint("program-take-applied")
+                evidence["checks"].append("nonempty-audio-inputs-native-mix-peak")
                 after_take = state().get("program", {}).get("sceneUuid")
                 assert isinstance(after_take, str) and after_take != before_take, "TAKE reused the previous Program scene"
                 time.sleep(1)  # Allow the cut TAKE and source retirement to settle.
@@ -979,7 +983,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     "Program runtime receipt did not match the committed TAKE"
                 checkpoint("program-runtime-receipt")
                 check_pixels("program-after-take", quick_order=[1, 2, 3, 4, 5],
-                    expected_media=6, program_scene="fixture-alt", program_media=1,
+                    expected_media=7, program_scene="fixture-alt", program_media=2,
                     projector_orders={"program-projector": "quick-1"})
                 checkpoint("program-after-pixels")
                 checkpoint("program-projector-close")

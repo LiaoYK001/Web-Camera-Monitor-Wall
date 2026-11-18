@@ -322,8 +322,15 @@ def make_fixtures(private: Path, ffmpeg: Path, ffprobe: Path, node: str, *, all_
             video_args = ["-c:v", "libx265", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
                           "-x265-params", f"pools=1:frame-threads=1:keyint=10:min-keyint=10:scenecut=0:b-adapt=0:bframes={requested_b_frames}:log-level=error"]
         command = [str(ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-f", "rawvideo",
-                   "-pixel_format", "rgb24", "-video_size", "320x180", "-framerate", "10", "-i", str(raw),
-                   "-an", *video_args, "-f", "matroska", str(video)]
+                   "-pixel_format", "rgb24", "-video_size", "320x180", "-framerate", "10", "-i", str(raw)]
+        if channel == 0:
+            command += ["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=8",
+                        "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=8",
+                        "-map", "0:v:0", "-map", "1:a:0", "-map", "2:a:0",
+                        "-c:a", "aac", "-b:a", "64k", "-shortest"]
+        else:
+            command += ["-an"]
+        command += [*video_args, "-f", "matroska", str(video)]
         subprocess.run(command, check=True, capture_output=True, timeout=90)
         probe = subprocess.run([str(ffprobe), "-v", "error", "-select_streams", "v:0", "-read_intervals", "%+#32",
                                 "-show_entries", "stream=codec_name,width,height,has_b_frames:frame=pict_type",
@@ -333,10 +340,21 @@ def make_fixtures(private: Path, ffmpeg: Path, ffprobe: Path, node: str, *, all_
         specification = {"codec": codec, "width": 320, "height": 180, "requestedBFrames": requested_b_frames}
         if not probe_matches_fixture(streams, specification):
             raise AssertionError("Encoded fixture codec/dimensions/reordering did not match its specification")
+        audio_tracks = 0
+        if channel == 0:
+            audio_probe = subprocess.run(
+                [str(ffprobe), "-v", "error", "-select_streams", "a", "-show_entries",
+                 "stream=index,codec_type,codec_name", "-of", "json", str(video)],
+                check=True, capture_output=True, text=True, timeout=20)
+            audio_streams = json.loads(audio_probe.stdout).get("streams", [])
+            if len(audio_streams) != 2 or any(item.get("codec_type") != "audio" for item in audio_streams):
+                raise AssertionError("Encoded multi-track fixture did not contain two audio tracks")
+            audio_tracks = 2
         pictures, b_pictures = picture_counts(document.get("frames"), requested_b_frames > 0)
         fixtures.append({"channel": channel + 1, "codec": codec, "width": 320, "height": 180,
                          "requestedBFrames": requested_b_frames, "hasBFrames": streams[0]["has_b_frames"],
                          "probedPictureCount": pictures, "probedBPictureCount": b_pictures,
+                         "audioTracks": audio_tracks,
                          "sha256": hashlib.sha256(video.read_bytes()).hexdigest()})
         # Raw targets are exact files just created by this function under the
         # caller's new fixed private directory, never a computed user path.

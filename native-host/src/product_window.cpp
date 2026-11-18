@@ -152,8 +152,11 @@ class ProductWindow final : public QWidget {
 	void refresh_video_health()
 	{
 		std::map<std::string, ProductVideoProgress> inputs;
+		bool has_audio = false;
 		auto collect = [&](const std::shared_ptr<ProductSceneGraph> &graph) {
-			if (graph) for (const auto &input : graph->video_progress()) inputs.emplace(input.uuid, input);
+			if (!graph) return;
+			has_audio = has_audio || !graph->audio_progress().empty();
+			for (const auto &input : graph->video_progress()) inputs.emplace(input.uuid, input);
 		};
 		collect(wall_);
 		collect(program_);
@@ -179,6 +182,8 @@ class ProductWindow final : public QWidget {
 		if (inputs.empty()) video_health_->setText(tr("视频输入：未监看"));
 		else video_health_->setText(tr("视频输入：%1 路，已收帧 %2，近期推进 %3，停滞 %4，状态未知 %5。")
 			.arg(inputs.size()).arg(received).arg(progressing).arg(stalled).arg(unavailable));
+		if (has_audio && !tearing_down_ && !user_id_.isEmpty())
+			observe_current_media();
 	}
 	int media_source_count() const
 	{
@@ -194,9 +199,14 @@ class ProductWindow final : public QWidget {
 	{
 		std::set<std::string> inputs;
 		if (wall_) inputs.insert(wall_->uuids.begin(), wall_->uuids.end());
+		if (wall_) inputs.insert(wall_->audio_uuids.begin(), wall_->audio_uuids.end());
 		if (program_) inputs.insert(program_->uuids.begin(), program_->uuids.end());
+		if (program_) inputs.insert(program_->audio_uuids.begin(), program_->audio_uuids.end());
 		for (const auto &view : projectors_)
-			if (view && view->window) inputs.insert(view->graph->uuids.begin(), view->graph->uuids.end());
+			if (view && view->window) {
+				inputs.insert(view->graph->uuids.begin(), view->graph->uuids.end());
+				inputs.insert(view->graph->audio_uuids.begin(), view->graph->audio_uuids.end());
+			}
 		return inputs.size();
 	}
 	QJsonObject program_state() const
@@ -264,6 +274,24 @@ class ProductWindow final : public QWidget {
 		state.insert("programApplyState", program_apply_state_);
 		state.insert("programSyncPending", program_sync_pending_);
 		state.insert("program", program_state());
+		QJsonArray audio_sources;
+		std::set<std::string> audio_seen;
+		const auto collect_audio = [&](const std::shared_ptr<ProductSceneGraph> &graph) {
+			if (!graph)
+				return;
+			for (const auto &audio : graph->audio_progress()) {
+				if (!audio_seen.insert(audio.source_id).second)
+					continue;
+				audio_sources.append(QJsonObject{{"sourceId", QString::fromStdString(audio.source_id)},
+					{"available", audio.available}, {"peakDbfs", double(audio.peak_dbfs)}});
+			}
+		};
+		collect_audio(wall_);
+		collect_audio(program_);
+		for (const auto &view : projectors_)
+			if (view && view->window)
+				collect_audio(view->graph);
+		state.insert("audioSources", audio_sources);
 		state.insert("startupStudioDeferred", frontend_->property("webobsStudioDeferredToProduct").toBool());
 		state.insert("restoreGuardHits", frontend_->property("webobsRestoreGuardHits").toInt());
 		state.insert("refusedCollection", frontend_->property("webobsRefusedCollection").toString());
