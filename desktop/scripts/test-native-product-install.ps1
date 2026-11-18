@@ -136,6 +136,10 @@ try {
     }
     $before = Get-ProfileFingerprint
     if ($complete) {
+        $phase = 'installed-lan-entry'
+        & $python -B (Join-Path $repoRoot 'native-host/tests/lan_entry_windows.py') --runtime $installed --report (Join-Path $buildRoot 'native-product-lan.json')
+        if ($LASTEXITCODE -ne 0) { throw 'Installed LAN/Web HTTPS entry gate failed.' }
+        $report.lanEntryQualified = $true
         $phase = 'same-machine-upgrade'
         $match = [regex]::Match($version, '^(5\.[01]\.0-rc\.)([0-9]+)$')
         if (-not $match.Success) { throw 'Complete candidate version is not rc.N.' }

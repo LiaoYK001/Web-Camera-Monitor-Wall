@@ -257,6 +257,7 @@ jobs:
             build/obs-native-ci/native-product-restore-pair.json
             build/obs-native-ci/native-product-installed-ui.json
             build/obs-native-ci/native-product-nsis.json
+            build/obs-native-ci/native-product-lan.json
             build/obs-native-ci/native-product-updater.json
             build/obs-native-ci/native-product-upgraded-ui.json
             build/obs-native-ci/runtime/product-components.json
