@@ -1771,9 +1771,12 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     "default-bus Program recording lost one of the two fixture pitches"
                 evidence["checks"].append("program-recording-default-and-nondefault-bus-both-audible")
                 checkpoint("program-default-bus-recording-decoded")
-                # WHIP publishing uses the same Program OBS output and owns a
-                # private MediaMTX only while streaming. RTSP playback proves
-                # the packets reached a real consumer, not just an active flag.
+                # Program publishing uses the same Program OBS output and owns
+                # a private MediaMTX only while streaming. The host publishes
+                # over loopback RTMP (the pinned Windows OBS tree has no
+                # WebRTC plugin) and the relay republishes the mix. RTSP
+                # playback proves the packets reached a real consumer, not just
+                # an active flag.
                 phase = "program-streaming"
                 wait_program_mix_audible("program-streaming")
                 assert ui("stream-program")
@@ -1783,9 +1786,10 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                         value.get("streamConnected") is True and
                         isinstance(value.get("streamPlaybackUrl"), str)) else None
                 def streaming_failure():
-                    # MediaMTX and the WHIP output report their refusal in the host's own
-                    # output state; without this the gate would only say "did not start".
-                    return ("native Program WHIP publishing did not start: host="
+                    # MediaMTX and the publish output report their refusal in the
+                    # host's own output state; without this the gate would only
+                    # say "did not start".
+                    return ("native Program publishing did not start: host="
                         + json.dumps(state().get("programOutput", {}), sort_keys=True)[:700])
                 streamed = wait_for(streaming_ready, streaming_failure, timeout=40)
                 playback_url = streamed["streamPlaybackUrl"]
@@ -1807,19 +1811,19 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 assert stream_streams, "published Program stream is not readable"
                 assert any(stream.get("codec_type") == "video" and stream.get("codec_name") == "h264"
                     for stream in stream_streams), "published Program has no H.264 video"
-                assert any(stream.get("codec_type") == "audio" and stream.get("codec_name") == "opus"
-                    for stream in stream_streams), "published Program has no Opus audio"
-                # An Opus stream header is not audible evidence. Decode the real
+                assert any(stream.get("codec_type") == "audio" and stream.get("codec_name") == "aac"
+                    for stream in stream_streams), "published Program has no AAC audio"
+                # An AAC stream header is not audible evidence. Decode the real
                 # consumer and require both fixture pitches inside the band split.
                 assert streamed.get("audioTracks") == 1, \
-                    f"WHIP publisher encoded mask {streamed.get('audioTracks')}, expected the default bus 1"
+                    f"Program publisher encoded mask {streamed.get('audioTracks')}, expected the default bus 1"
                 published_low = pixel_windows.band_rms(ffmpeg, playback_url, 0, lowpass=600)
                 published_high = pixel_windows.band_rms(ffmpeg, playback_url, 0, highpass=660)
                 evidence["programStreamBandRms"] = {"below600Hz": published_low,
                     "above660Hz": published_high, "audioTrackMask": streamed.get("audioTracks")}
                 assert published_low > 150 and published_high > 150, \
                     "published Program audio lost one of the two fixture pitches"
-                evidence["checks"].append("program-whip-decodes-both-fixture-pitches")
+                evidence["checks"].append("program-publish-decodes-both-fixture-pitches")
                 stream_frames = subprocess.run([str(runtime / "bin/ffprobe.exe"), "-v", "error",
                     "-rtsp_transport", "tcp", "-select_streams", "v:0", "-read_intervals", "%+#20",
                     "-show_entries", "frame=pts_time", "-of", "json", playback_url],
@@ -1830,7 +1834,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 wait_for(lambda: state().get("programOutput", {}).get("streaming") is False and
                     state().get("programOutput", {}).get("mediaMtxRunning") is False,
                     "native Program publisher did not release MediaMTX", timeout=30)
-                evidence["checks"].append("program-composite-whip-stream")
+                evidence["checks"].append("program-composite-publish-stream")
                 checkpoint("program-streaming-stopped")
                 # --- Received-output audio acceptance ---------------------------
                 # Everything below decodes what the user actually receives: the
@@ -2045,8 +2049,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     "appliedInputs": applied}
                 evidence["checks"].append("per-track-sync-offsets-reach-the-applied-mixer")
                 checkpoint("program-track-offset-applied")
-                phase = "program-whip-disconnect"
-                # WHIP relay loss: killing the product's own private MediaMTX child
+                phase = "program-publish-disconnect"
+                # Publish relay loss: killing the product's own private MediaMTX child
                 # must surface a concrete disconnect instead of a permanently
                 # "connected" publisher, and the next start must recover. The Scene
                 # audio mixers are separate owned helpers, so record them first and
@@ -2057,25 +2061,25 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     if name == "mediamtx.exe"]
                 assert relay_children == [], "MediaMTX survived the normal publisher stop"
                 assert ui("stream-program")
-                recovered_stream = wait_for(streaming_ready, "Program WHIP did not start for the disconnect probe",
+                recovered_stream = wait_for(streaming_ready, "Program publishing did not start for the disconnect probe",
                     timeout=40)
                 relay_children = [pid for pid, name in child_processes(powershell, int(state()["pid"]))
                     if name == "mediamtx.exe"]
                 remember_owned_pids(relay_children)
                 assert len(relay_children) == 1, \
                     f"Program streaming owned {len(relay_children)} MediaMTX children, expected one"
-                evidence["whipRelayPid"] = relay_children[0]
+                evidence["publishRelayPid"] = relay_children[0]
                 terminate_process(powershell, relay_children[0])
                 wait_for(lambda: state().get("programOutput", {}).get("streaming") is False and
-                    str(state().get("programOutput", {}).get("streamError", "")).startswith("whip-") and
+                    str(state().get("programOutput", {}).get("streamError", "")).startswith("publish-") and
                     state().get("programOutput", {}).get("mediaMtxRunning") is False,
-                    "killing the private MediaMTX relay did not surface a WHIP disconnect", timeout=30)
-                evidence["whipDisconnectError"] = str(state().get("programOutput", {}).get("streamError"))[:120]
+                    "killing the private MediaMTX relay did not surface a publish disconnect", timeout=30)
+                evidence["publishDisconnectError"] = str(state().get("programOutput", {}).get("streamError"))[:120]
                 disconnected_url = recovered_stream.get("streamPlaybackUrl")
-                checkpoint("program-whip-disconnect-reported")
+                checkpoint("program-publish-disconnect-reported")
                 assert ui("stream-program")
                 restarted_stream = wait_for(streaming_ready,
-                    "Program WHIP could not start again after a relay loss", timeout=40)
+                    "Program publishing could not start again after a relay loss", timeout=40)
                 assert restarted_stream.get("streamConnected") is True, \
                     "restarted publisher never delivered frames again"
                 assert restarted_stream.get("streamPlaybackUrl") != disconnected_url, \
@@ -2099,7 +2103,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 assert mixers_after == scene_mixers, \
                     f"stopping Program output changed the Scene audio mixers ({scene_mixers} -> {mixers_after})"
                 evidence["sceneAudioMixers"] = mixers_after
-                evidence["checks"].extend(["whip-relay-loss-is-reported-and-recoverable",
+                evidence["checks"].extend(["publish-relay-loss-is-reported-and-recoverable",
                     "program-output-helpers-are-released-after-stop"])
                 checkpoint("program-output-resources-released")
                 phase = "support-bundle"

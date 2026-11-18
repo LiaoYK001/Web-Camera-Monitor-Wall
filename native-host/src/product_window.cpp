@@ -288,7 +288,7 @@ class ProductWindow final : public QWidget {
 			if (!program_output_->start_streaming(error, program_->audio_output_tracks()))
 				status_->setText(tr("Program 推流启动失败：%1").arg(error));
 			else
-				status_->setText(tr("Program 正在通过本机 WHIP 推流。"));
+				status_->setText(tr("Program 正在通过本机 MediaMTX 以 RTSP/WHEP 发布。"));
 		}
 		refresh_output_health();
 	}
@@ -337,6 +337,7 @@ class ProductWindow final : public QWidget {
 		output.remove("recordingError");
 		output.remove("streamPublishUrl");
 		output.remove("streamPlaybackUrl");
+		output.remove("streamPlaybackWhep");
 		output.remove("streamError");
 		const QStringList markers{"Switched to Preview/Program mode", "Switched to regular Preview mode",
 			"Failed to initialize", "Failed to create", "QWidget", "QObject", "QLayout",
@@ -455,6 +456,8 @@ class ProductWindow final : public QWidget {
 			{"mediaMtxRunning", value.media_mtx_running},
 			{"streamPublishUrl", value.stream_publish_url},
 			{"streamPlaybackUrl", value.stream_playback_url},
+			{"streamPlaybackWhep", value.stream_playback_whep},
+			{"streamTransport", value.stream_transport},
 			{"streamError", value.stream_error},
 			// audioTracks is what the running output encodes; selectedAudioTracks is
 			// the mask the applied Program Scene actually routes right now, so an
@@ -2120,7 +2123,7 @@ public:
 			connect(record_program_, &QPushButton::clicked, this, [this] { toggle_recording(); });
 			stream_program_ = new QPushButton(tr("推流 Program"), this);
 			stream_program_->setObjectName("webobsStreamProgram");
-			stream_program_->setToolTip(tr("按需启动本机 MediaMTX，并以 WHIP 发布实际 Program；停止后释放推流进程。"));
+			stream_program_->setToolTip(tr("按需启动本机 MediaMTX，以 RTMP 接收 Program 并对外提供 RTSP/WHEP；停止后释放推流进程。"));
 			layout->addWidget(stream_program_);
 			connect(stream_program_, &QPushButton::clicked, this, [this] { toggle_streaming(); });
 			output_health_ = new QLabel(tr("Program 输出：空闲"), this);
