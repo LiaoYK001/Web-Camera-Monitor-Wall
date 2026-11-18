@@ -1,0 +1,92 @@
+{
+  "schema": 1,
+  "kind": "windows-v51-update-migration-qualification",
+  "version": "5.1.0-rc.16",
+  "internalUpgradeVersion": "5.1.0-rc.17",
+  "sourceRevision": "472f3fe5cddf90f304801aab4dccd4765b0076f2",
+  "windowsRun": 44194328169,
+  "runUrl": "https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44194328169",
+  "conclusion": "success",
+  "scope": "GitHub-hosted Windows Server 2022; source-built complete product, synthetic RTSP fixtures, actual installed updater/NSIS and same-machine qualification upgrade; not target hardware, real cameras or OBS parity",
+  "counts": {
+    "portableProductChecks": 55,
+    "installedProductChecks": 55,
+    "upgradedProductChecks": 55,
+    "restoreIsolationChecks": 9
+  },
+  "installer": {
+    "name": "WebOBS-Wall-5.1.0-rc.16-windows-x64-SETUP.exe",
+    "bytes": 212162215,
+    "sha256": "12039948205f915de180eb0a84f74d0b51ef3fd737a30234851305dbe4242dbd",
+    "sha512Base64": "ShwfX1bxsrKJ5/wrxU/ADIs/jZWOhzPQV5Npf1DV2Z7uCnNfltQkfkkl+8cWHV0PKv/jsYy2elHJkF++5MVgpg==",
+    "publicationForbidden": false
+  },
+  "updater": {
+    "passed": true,
+    "loopbackFeedOnly": true,
+    "sameSourceQualificationFixture": true,
+    "changedCacheRejected": true,
+    "independentMaintenanceRuntime": true,
+    "maintenanceCleaned": true,
+    "maintenanceRuntimeBytes": 24301794,
+    "downloadVerified": true,
+    "backupCreated": true,
+    "actualNsisExecuted": true,
+    "actualRuntimeVersionChanged": true,
+    "encryptedRestoreVerified": true
+  },
+  "installation": {
+    "registeredVersion": "5.1.0-rc.17",
+    "upgradeVersion": "5.1.0-rc.17",
+    "sameMachineUpgradeQualified": true,
+    "installedUpdaterQualified": true,
+    "upgradedEntryQualified": true,
+    "freshInstalledEntryQualified": true,
+    "profileFingerprintBeforeCount": 30,
+    "profileFingerprintAfterCount": 30,
+    "retainedProfileUnchanged": true,
+    "unknownFilesRetained": true,
+    "retentionScope": "durable profile files excluding run/backups, logs/crashes/sentinels and SQLite WAL sidecars",
+    "shortcutReader": "IShellLinkW/GetPath/GetArguments",
+    "shortcutTargetMatches": true,
+    "shortcutArgumentsEmpty": true
+  },
+  "installedFootprint": {
+    "scope": "isolated-nsis-install-before-first-start",
+    "logicalBytes": 794579783,
+    "mainStreamAllocationBytes": 806620488,
+    "fileCount": 6972,
+    "directoryCountIncludingRoot": 956
+  },
+  "mediaAndLifecycle": {
+    "mediaQualified": true,
+    "mediaScope": "synthetic-five-hevc-final-preview-pixels",
+    "hardwareDecodeVerified": false,
+    "fullFeatureMigrationQualified": false,
+    "programTakeAndProjectorsVerified": true,
+    "normalCloseExitCode": 0,
+    "launcherCrashCleanupVerified": true,
+    "restoreIsolationVerified": true
+  },
+  "boundaries": [
+    "No physical target-machine five-camera, audio-device, multi-monitor/DPI, per-stream hardware-decode or two-hour stability evidence.",
+    "Synthetic HEVC fixtures and GitHub-hosted Windows are not real-camera or OBS A/B performance qualification.",
+    "The user's own legacy 4.x/v4.5 profile has not been migrated in this run; fullFeatureMigrationQualified remains false.",
+    "Nonempty multi-track audio, OBS composite recording/streaming to files/remote services, LAN/Caddy remote access and all analytics overlay pixels remain open work.",
+    "rc.16/rc.17 are internal qualification versions; no Release, tag, Latest update or stable feed was created."
+  ],
+  "rawReceiptSha256": {
+    "native-product-entry-ui.json": "bc390ad388e2c889f03299a5ad16899d884caa3adadc3271c0039c068983f784",
+    "native-product-installed-ui.json": "82e76520bdf6aaa640627e773bb37f189a9c0f8625ac7d07b4cb07c2754c2c38",
+    "native-product-upgraded-ui.json": "2c63ec0baf51c2dfd2630c7c19a0b9f66c9e573ae4177b10fa146cece1f87a78",
+    "native-product-restore.json": "4799b33628dee7e61b037baf2aa673aa8880e2567de4f051e31e32fdff7a7db5",
+    "native-product-updater.json": "f94b08d9348a2af9792f4011332f527cdb5076c08f7dc0946a79a264ae54c82a",
+    "native-product-nsis.json": "d9cabf26e873cff441aa06f875532a071b15e367a6fab84c5b036fdc136799e3",
+    "product-components.json": "27a577600d66ac86943272b9ae404d3e65bd9f3fd2f18e22b64ee513ccf24355",
+    "native-media-runtime-inventory.json": "d6efabee919addd46ef2821aa188bceeb5ffba06290b6276dc42aefb1a2fd55b"
+  },
+  "artifacts": {
+    "candidateArtifactId": 14382565631,
+    "receiptsArtifactId": 14380989381
+  }
+}

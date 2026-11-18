@@ -1,5 +1,19 @@
 # Windows WebOBS Wall 功能迁移矩阵 / Feature parity matrix
 
+## 2026-11-17 v5.1修复进展 / v5.1 hardening
+
+用户将下一正式交付目标指定为v5.1，主要Windows验证使用该版本。rc.1的安装/媒体回执保留，但不称完整功能已完成。源码修复v4.5工作区的真实插件路径和目标profile路径，账号配置/工作区以整目录提交，失败回退允许重试；原生更新器在执行前/备份后重新验证缓存文件大小/SHA-512，拒绝不可用/回退更新及必要备份缺失，并按数字比较预发布版本。现有及新增本机SQLite/文件/HTTP负向回归通过；新的Windows安装、完整迁移/更新链、声音/输出/远端等仍需后续证据，不关闭整个R4。
+
+The v5.1 source fixes actual preview workspace paths and transactional profile publication, rehashes cached installers before execution, and compares prerelease numeric identifiers correctly. Local integration/regression passes do not qualify a new Windows installer, full migration or the remaining product features.
+
+R2-004源码新增按账号workspace保存的固定/Program投影窗口位置、屏幕、大小及全屏偏好；重新打开时复用OBS窗口并按Qt逻辑坐标恢复，原屏幕缺失则夹到可见桌面并窗口回退；移动事件去抖写入，无新增常驻采样。Qt几何边界回归与完整product_window语法检查通过，Windows实际位置保存/关闭/重开门禁已加入但尚待新source运行。固定Scene媒体自动恢复和物理DPI/显示器故障仍开放，不关闭完整R2-004。
+
+2026-11-18 最新 Windows 更新/迁移门禁：[run 44194328169](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44194328169) 在源码 `472f3fe5cddf90f304801aab4dccd4765b0076f2` 上 success，内部版本 `5.1.0-rc.16`。实际便携/安装态/升级后产品门禁各 **55/55**，认证前恢复隔离 **9/9**；已安装更新器实际完成同源码 `rc.16 → rc.17` loopback 下载、损坏缓存拒绝、独立维护解释器、加密备份、真实 NSIS 执行、版本切换和恢复验证。升级后 durable profile 指纹 **30/30** 一致；卸载保留 profile/录像/未知文件，快捷方式与注册项清理。安装器 **212,162,215 B**，SHA-256 `12039948205f915de180eb0a84f74d0b51ef3fd737a30234851305dbe4242dbd`；首启前安装树 **794,579,783 logical / 806,620,488 allocation B**、6,972 文件。
+
+该 run 仍是内部候选，不是正式 v5.1 Release、稳定 feed 或目标机/OBS 性能资格。非空逐轨音频、由同一原生宿主产生的 Program 合成录像/推流、LAN/Caddy 远端、完整旧档案迁移、物理多屏/DPI/音频/硬解和两小时长稳仍未关闭；`fullFeatureMigrationQualified=false`、`hardwareDecodeVerified=false`。详见[脱敏资格摘要](qualification/windows-v51-update-gates-2026-11-18.json)。
+
+The latest Windows update/migration gate passed on source 472f3fe5: 55/55 portable, installed and upgraded checks plus 9/9 restore isolation, an actual rc.16-to-rc.17 installed updater/NSIS cycle with encrypted backup and restore, and a 30/30 durable-profile fingerprint match. The 212,162,215-byte installer is an internal qualification artifact, not a stable v5.1 release or target-device/OBS performance qualification. Nonempty multi-track audio, native Program composite recording/streaming, remote access, full legacy-profile migration and physical device qualification remain open.
+
 2026-11-11。基线 `codex/windows-native-monitor@4678f3a`，PR #53 面向 `dev`。旧完整 Windows 产品与已发布原型分别核对，用户反馈 dev.53 原生画面正常，最终完整产品的性能和个人数据升级待集中验收。
 
 执行依据为 [完整任务书](windows-webobs-wall-release-plan-2026-11-11.md)。状态按“旧实现可用、原生未接线”“接线开发中”“自动化通过”“最终设备待验收”记录，每项保留实际入口和证据。

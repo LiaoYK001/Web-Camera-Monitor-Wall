@@ -26,6 +26,7 @@ JSON_FILES = ("scene.json", "studio.json", "nvr.json", "archive.json", "desktop.
 DIRECTORIES = ("keys", "camera-secrets", "notification-secrets", "secrets", "go2rtc")
 PREVIEW_WORKSPACE = re.compile(r"^workspace-([a-f0-9]{32})\.json$")
 RECEIPT = "native-migration.json"
+WORKSPACE_DIRECTORY = Path("native-profile/obs-studio/plugin_config/webobs-native-host")
 
 
 class MigrationError(Exception):
@@ -101,10 +102,10 @@ def copy_preview_workspaces(preview_profile: Path, staging: Path) -> list[str]:
             raise MigrationError("v4.5 workspace is invalid") from None
         if not isinstance(value, dict) or value.get("schema") not in (1, 2):
             raise MigrationError("v4.5 workspace has an unsupported schema")
-        target = staging / "native-profile" / item.name
+        target = staging / WORKSPACE_DIRECTORY / item.name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(item, target)
-        copied.append("native-profile/" + item.name)
+        copied.append((WORKSPACE_DIRECTORY / item.name).as_posix())
     return copied
 
 
@@ -142,17 +143,34 @@ def migrate(source: Path, destination: Path, *, confirm_stopped: bool,
             include_backup_key: bool, include_preview_workspaces: bool = False) -> dict:
     if os.name != "nt":
         os.umask(0o077)
+    # Check before resolve: resolving first would hide a linked destination.
+    for path in (source.absolute(), destination.absolute()):
+        for item in (path, *path.parents):
+            if item.is_symlink() or (item.exists() and
+                    getattr(item.lstat(), "st_file_attributes", 0) & 0x400):
+                raise MigrationError("migration paths must not contain links")
     source, destination = source.resolve(), destination.resolve()
     if not confirm_stopped:
         raise MigrationError("legacy product must be stopped and confirmed")
     if not source.is_dir() or source.is_symlink():
         raise MigrationError("legacy config directory is unavailable")
-    if destination.exists() and (not destination.is_dir() or any(destination.iterdir())):
-        raise MigrationError("destination profile is not empty")
-    if destination == source or source in destination.parents or destination in source.parents:
+    if destination.name != "config":
+        raise MigrationError("destination must be a new native config directory")
+    profile = destination.parent
+    if profile.exists():
+        if not profile.is_dir():
+            raise MigrationError("destination profile is not empty")
+        # Import is a first-start operation, never a merge with an active profile.
+        for item in profile.iterdir():
+            if item != destination or not item.is_dir() or any(item.iterdir()):
+                raise MigrationError("destination profile is not empty")
+    if profile == source or source in profile.parents or profile in source.parents:
         raise MigrationError("destination must be a separate new profile")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=".webobs-migration-", dir=destination.parent))
+    profile.parent.mkdir(parents=True, exist_ok=True)
+    staged_profile = Path(tempfile.mkdtemp(prefix=".webobs-migration-", dir=profile.parent))
+    staging = staged_profile / "config"
+    staging.mkdir()
+    previous_empty_profile = None
     files = []
     try:
         for name in JSON_FILES:
@@ -172,7 +190,8 @@ def migrate(source: Path, destination: Path, *, confirm_stopped: bool,
                 files.append(name + "/")
         preview_workspaces = []
         if include_preview_workspaces:
-            preview_workspaces = copy_preview_workspaces(source.parent / "native-profile", staging)
+            preview_workspaces = copy_preview_workspaces(source.parent / WORKSPACE_DIRECTORY,
+                                                        staged_profile)
             files.extend(preview_workspaces)
         if not files:
             raise MigrationError("legacy profile contains no supported product data")
@@ -187,8 +206,8 @@ def migrate(source: Path, destination: Path, *, confirm_stopped: bool,
             except (OSError, UnicodeError, ValueError):
                 recordings = None
         if recordings is None:
-            profile = os.environ.get("USERPROFILE")
-            recordings = Path(profile) / "Videos" / "WebOBS" if profile else None
+            user_profile = os.environ.get("USERPROFILE")
+            recordings = Path(user_profile) / "Videos" / "WebOBS" if user_profile else None
         key_migrated = False
         if include_backup_key:
             key = dpapi_key(source.parent / "backup-key.dpapi")
@@ -205,9 +224,23 @@ def migrate(source: Path, destination: Path, *, confirm_stopped: bool,
         }
         (staging / "native-migration.json").write_text(
             json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-        destination.mkdir(parents=True, exist_ok=True)
-        for item in sorted(staging.iterdir()):
-            shutil.move(str(item), str(destination / item.name))
+        # Publish config and plugin workspaces together. There is no per-file
+        # promotion that could leave an imported account without its layout.
+        if profile.exists():
+            previous_empty_profile = Path(tempfile.mkdtemp(prefix=".webobs-empty-profile-",
+                                                          dir=profile.parent))
+            previous_empty_profile.rmdir()
+            os.replace(profile, previous_empty_profile)
+        try:
+            os.replace(staged_profile, profile)
+        except OSError:
+            if previous_empty_profile is not None:
+                os.replace(previous_empty_profile, profile)
+                previous_empty_profile = None
+            raise
+        if previous_empty_profile is not None:
+            shutil.rmtree(previous_empty_profile)
+            previous_empty_profile = None
         receipt = {
             "schema": 1, "status": "migrated", "kind": "native-legacy-config-migration",
             "files": len(files), "backupKeyMigrated": key_migrated,
@@ -216,11 +249,8 @@ def migrate(source: Path, destination: Path, *, confirm_stopped: bool,
             "sourcePreserved": True, "applied": True,
         }
         return receipt
-    except Exception:
-        shutil.rmtree(staging, ignore_errors=True)
-        raise
     finally:
-        shutil.rmtree(staging, ignore_errors=True)
+        shutil.rmtree(staged_profile, ignore_errors=True)
 
 
 def main(argv=None):

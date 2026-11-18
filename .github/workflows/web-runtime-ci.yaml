@@ -202,7 +202,9 @@ jobs:
       - name: Patch integrity, confirmation and real updater fallback / 补丁校验确认与更新回退
         shell: pwsh
         run: |
-          pnpm --dir desktop audit --audit-level=low
+          # GHSA-fc5q-39xc-vjpf has no published fixed picomatch release.
+          # The local patch mitigates the build-time path; revisit on upstream release.
+          pnpm --dir desktop audit --audit-level=low --ignore GHSA-fc5q-39xc-vjpf
           if ($LASTEXITCODE -ne 0) { throw 'Desktop dependency audit failed' }
           pnpm --dir desktop test
           if ($LASTEXITCODE -ne 0) { throw 'Desktop contracts failed' }
@@ -258,7 +260,9 @@ jobs:
           python3 ./clients/tests/test_local_gate_receipts.py
           cd web
           pnpm install --frozen-lockfile
-          pnpm audit --audit-level=low
+          # GHSA-fc5q-39xc-vjpf has no published fixed picomatch release.
+          # The local patch mitigates the build-time path; revisit on upstream release.
+          pnpm audit --audit-level=low --ignore GHSA-fc5q-39xc-vjpf
           pnpm go2rtc:ui
           pnpm test:go2rtc-assets
           pnpm typecheck

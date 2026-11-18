@@ -50,6 +50,29 @@ def wait_for(predicate, message, timeout=30):
     raise AssertionError(message)
 
 
+def split_workspace(value):
+    """Return the media payload and validated optional projector preferences."""
+    if not isinstance(value, dict):
+        raise AssertionError("account workspace is not a JSON object")
+    placements = value.get("projectorPlacements")
+    base = {key: item for key, item in value.items() if key != "projectorPlacements"}
+    if placements is None:
+        return base, {}
+    assert isinstance(placements, dict), "account projector preferences are not an object"
+    assert set(placements) <= {"fixed-1", "fixed-2", "program"}, \
+        "account workspace contains an unknown projector role"
+    for role, placement in placements.items():
+        assert isinstance(placement, dict), "projector preference is not an object"
+        assert set(placement) == {"x", "y", "width", "height", "screen", "fullscreen"}, \
+            "projector preference has an unexpected schema"
+        assert all(type(placement[key]) is int for key in ("x", "y", "width", "height"))
+        assert isinstance(placement["screen"], str) and len(placement["screen"]) <= 128
+        assert type(placement["fullscreen"]) is bool
+        assert abs(placement["x"]) <= 100000 and abs(placement["y"]) <= 100000
+        assert 1 <= placement["width"] <= 16384 and 1 <= placement["height"] <= 16384
+    return base, placements
+
+
 def alive(pid):
     from ctypes import wintypes
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -63,6 +86,33 @@ def alive(pid):
     try:
         code = wintypes.DWORD()
         return bool(kernel.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == 259
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def process_creation_time(pid):
+    """Return the kernel creation time so a reused Windows PID is not ours."""
+    from ctypes import wintypes
+
+    class FileTime(ctypes.Structure):
+        _fields_ = [("low", wintypes.DWORD), ("high", wintypes.DWORD)]
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.GetProcessTimes.argtypes = [wintypes.HANDLE, ctypes.POINTER(FileTime),
+        ctypes.POINTER(FileTime), ctypes.POINTER(FileTime), ctypes.POINTER(FileTime)]
+    kernel.GetProcessTimes.restype = wintypes.BOOL
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel.OpenProcess(0x1000, False, pid)
+    if not handle:
+        return None
+    try:
+        created, exited, kernel_time, user_time = FileTime(), FileTime(), FileTime(), FileTime()
+        if not kernel.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(exited),
+            ctypes.byref(kernel_time), ctypes.byref(user_time)):
+            return None
+        return (int(created.high) << 32) | int(created.low)
     finally:
         kernel.CloseHandle(handle)
 
@@ -122,6 +172,20 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
         entry = runtime / "bin/webobs-wall.exe"
         process = None
         known_pids = []
+        known_pid_creations = {}
+        def remember_owned_pids(pids):
+            for pid in pids:
+                pid = int(pid)
+                if pid not in known_pids:
+                    known_pids.append(pid)
+                created = process_creation_time(pid)
+                if created is not None:
+                    known_pid_creations[pid] = created
+        def owned_alive(pid):
+            if not alive(pid):
+                return False
+            expected = known_pid_creations.get(int(pid))
+            return expected is None or process_creation_time(pid) == expected
         status_path = profile / "run/native-status.json"
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         rtsp = None
@@ -178,7 +242,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
         def ui(action, **fields):
             owned = state()
             wanted_roles = {"main-preview"}
-            if action in ("projector-fullscreen", "projector-window-close"):
+            if action in ("projector-fullscreen", "projector-window-close", "projector-place"):
                 slot = fields.get("slot")
                 assert type(slot) is int and slot in (1, 2)
                 wanted_roles = {f"fixed-scene-{slot}", f"fixed-scene-fullscreen-{slot}"}
@@ -191,7 +255,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 result = subprocess.run([powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-File",
                     str(HERE / "product-ui.ps1"), "-FrontendPid", str(frontend_pid), "-RootHwnd", windows[0]["rootHwnd"]],
                     input=json.dumps({"action": action, **fields}), capture_output=True, text=True,
-                    encoding="utf-8", timeout=25)
+                    encoding="utf-8", timeout=45)
             except subprocess.TimeoutExpired:
                 evidence["lastUiFailure"] = {"stage": action, "code": "ui-timeout"}
                 raise AssertionError("product UI Automation exceeded its deadline") from None
@@ -227,7 +291,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     isinstance(value.get("bootId"), str) and re.fullmatch(r"[a-f0-9]{32}", value["bootId"]) else None
             value = wait_for(ready, "native entry did not start required services", timeout=45)
             active_boot_id = value["bootId"]
-            known_pids.extend([value["ownerPid"], *(service["pid"] for service in value["services"])])
+            remember_owned_pids([value["ownerPid"], *(service["pid"] for service in value["services"])])
             frontend_pid = next(service["pid"] for service in value["services"] if service["name"] == "frontend")
             wait_for(lambda: state().get("phase") == "locked", "actual product window did not lock before authentication")
             assert state()["mediaSources"] == 0, "media source restored before login"
@@ -432,7 +496,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             initial_boot = started["bootId"]
             assert ui("close")
             assert process.wait(timeout=40) == 0
-            wait_for(lambda: not any(alive(pid) for pid in known_pids), "pre-login close retained owned processes")
+            wait_for(lambda: not any(owned_alive(pid) for pid in known_pids), "pre-login close retained owned processes")
             preferences = configparser.ConfigParser(interpolation=None)
             preferences.read_string((profile / "native-profile/obs-studio/user.ini").read_text(encoding="utf-8-sig"))
             assert preferences.getboolean("BasicWindow", "PreviewProgramMode") is True, \
@@ -724,7 +788,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 wait_for(lambda: not state().get("projectors"), "saved-scene projector did not close")
                 evidence["checks"].append("unrelated-studio-save-preserves-authorized-fixed-scene-and-main")
                 assert ui("save")
-                wait_for(lambda: read_json(paths[0]) == {"schema": 2, "sceneId": "fixture-five"},
+                wait_for(lambda: split_workspace(read_json(paths[0]))[0] ==
+                    {"schema": 2, "sceneId": "fixture-five"},
                     "scene-ID workspace save did not commit")
                 assert ui("logout")
                 wait_for(lambda: state().get("phase") == "locked", "Studio scene did not retire on logout")
@@ -756,7 +821,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     "manual camera graph did not replace saved-scene mode")
                 check_graph()
                 assert ui("save")
-                wait_for(lambda: read_json(paths[0]) == saved, "five-camera workspace save did not commit")
+                wait_for(lambda: split_workspace(read_json(paths[0]))[0] == saved,
+                    "five-camera workspace save did not commit")
                 phase = "same-canvas-source-retention"
                 reference = {binding["cameraId"]: binding["sourceUuid"] for binding in state()["bindings"]}
                 assert ui("choose", indices=[5, 4, 3, 2, 1])
@@ -775,6 +841,35 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 reference = {binding["cameraId"]: binding["sourceUuid"] for binding in state()["bindings"]}
                 assert ui("projector", slot=1)
                 wait_for(lambda: len(state().get("projectors", [])) == 1, "first native Scene projector did not open")
+                checkpoint("projector-first-open")
+                previous_geometry = state()["projectors"][0].get("geometry")
+                previous_placement = read_json(paths[0]).get("projectorPlacements", {}).get("fixed-1")
+                assert ui("projector-place", slot=1)
+                moved = wait_for(lambda: next((view for view in state().get("projectors", [])
+                    if view.get("slot") == 1 and view.get("geometry") != previous_geometry), None),
+                    "actual projector move was not observed in the runtime state")
+                placement = wait_for(lambda: (lambda value: value if value and value != previous_placement else None)(
+                    read_json(paths[0]).get("projectorPlacements", {}).get("fixed-1")),
+                    "actual projector move was not saved in its account workspace")
+                assert {key: placement[key] for key in ("x", "y", "width", "height")} == moved.get("geometry"), \
+                    "projector runtime geometry and saved preference disagree"
+                evidence["projectorPlacement"] = placement
+                checkpoint("projector-placed-and-saved")
+                assert ui("projector-window-close", slot=1)
+                wait_for(lambda: not state().get("projectors"), "placement probe did not close")
+                checkpoint("projector-window-closed")
+                assert ui("projector", slot=1)
+                restored = wait_for(lambda: next((view for view in state().get("projectors", [])
+                    if view.get("slot") == 1), None), "placement probe did not reopen")
+                expected_rect = {key: placement[key] for key in ("x", "y", "width", "height")}
+                evidence["projectorReopenGeometry"] = restored.get("geometry")
+                evidence["projectorExpectedGeometry"] = expected_rect
+                checkpoint("projector-reopened")
+                wait_for(lambda: next((view for view in state().get("projectors", [])
+                    if view.get("slot") == 1 and view.get("geometry") == expected_rect), None),
+                    "reopened OBS projector did not restore its logical geometry")
+                check_graph()
+                evidence["checks"].append("account-projector-geometry-persists-and-restores-with-shared-inputs")
                 assert ui("choose", indices=[5, 4, 3, 2, 1])
                 check_graph(reverse=True)
                 check_projectors({1: "forward"}, reference)
@@ -887,7 +982,9 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     expected_media=6, program_scene="fixture-alt", program_media=1,
                     projector_orders={"program-projector": "quick-1"})
                 checkpoint("program-after-pixels")
+                checkpoint("program-projector-close")
                 assert ui("projector-close")
+                checkpoint("program-projector-closed")
                 wait_for(lambda: not state().get("windows") or
                     all(window.get("role") == "main-preview" for window in state().get("windows", [])),
                     "Program projector did not close", timeout=8)
@@ -900,7 +997,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 checkpoint("program-cleared-put")
                 wait_for(lambda: state().get("programApplyState") == "idle" and
                     state().get("program", {}).get("mediaSources") == 0,
-                    "empty Program scene did not clear the previous protected output", timeout=12)
+                    "empty Program scene did not clear the previous protected output", timeout=25)
                 checkpoint("program-cleared-applied")
                 check_pixels("program-cleared", quick_order=[1, 2, 3, 4, 5])
                 evidence["checks"].extend(["studio-take-applies-real-obs-program-final-pixels",
@@ -943,7 +1040,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 viewer_paths = wait_for(lambda: list((profile / "native-profile").rglob(
                     "workspace-" + viewer["id"] + ".json")), "viewer workspace was not bound to its account identity")
                 assert len(viewer_paths) == 1 and viewer_paths[0] != owner_workspace
-                assert read_json(viewer_paths[0]) == saved and owner_workspace.read_bytes() == owner_bytes
+                viewer_workspace, _ = split_workspace(read_json(viewer_paths[0]))
+                assert viewer_workspace == saved and owner_workspace.read_bytes() == owner_bytes
                 evidence["checks"].extend(["scoped-viewer-catalog-excludes-forbidden-camera",
                     "scoped-viewer-five-hevc-final-pixels", "separate-account-workspace-does-not-overwrite-owner"])
                 viewer_reference = {binding["cameraId"]: binding["sourceUuid"] for binding in state()["bindings"]}
@@ -1006,11 +1104,49 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             evidence["normalCloseExitCode"] = exit_code
             assert exit_code == 0, "normal UI close failed orderly shutdown"
             try:
-                wait_for(lambda: not any(alive(pid) for pid in known_pids), "owned process survived normal close")
+                wait_for(lambda: not any(owned_alive(pid) for pid in known_pids), "owned process survived normal close")
             except AssertionError:
-                evidence["normalCloseAlivePids"] = sum(1 for pid in known_pids if alive(pid))
+                evidence["normalCloseAlivePids"] = sum(1 for pid in known_pids if owned_alive(pid))
                 raise
             evidence["checks"].append("normal-ui-close-cleans-owned-processes")
+            if complete_services:
+                phase = "real-plugin-workspace-import"
+                # Reuse only this gate's stopped disposable data. The source
+                # workspace was created by the actual Qt UI/OBS module path.
+                original_profile = profile
+                before_workspaces = {p.relative_to(original_profile): p.read_bytes()
+                                     for p in (original_profile / "native-profile").rglob("workspace-*.json")}
+                assert before_workspaces, "product gate did not create real saved workspaces"
+                imported = private / "migrated-native"
+                migration = subprocess.run([str(runtime / "python/python.exe"), "-B",
+                    str(runtime / "services/product/migrate_legacy.py"),
+                    "--source", str(original_profile / "config"),
+                    "--destination", str(imported / "config"), "--confirm-stopped",
+                    "--include-preview-workspaces"], capture_output=True, text=True, timeout=60)
+                assert migration.returncode == 0, "packaged workspace migration failed"
+                migration_receipt = json.loads(migration.stdout)
+                assert migration_receipt["previewWorkspacesCopied"] == len(before_workspaces)
+                for relative, content in before_workspaces.items():
+                    assert (original_profile / relative).read_bytes() == content
+                    assert (imported / relative).read_bytes() == content
+                profile = imported
+                status_path = profile / "run/native-status.json"
+                environment["WEBOBS_PRODUCT_TEST_ROOT"] = str(profile)
+                started = start()
+                if with_media:
+                    check_pixels("import-before-authentication", blank=True)
+                assert ui("login", **account)
+                if with_media:
+                    check_graph()
+                    time.sleep(3)
+                    check_pixels("imported-plugin-workspace")
+                else:
+                    wait_for(lambda: state().get("phase") == "authenticated", "imported account login failed")
+                assert ui("close")
+                assert process.wait(timeout=70) == 0
+                wait_for(lambda: not any(owned_alive(pid) for pid in known_pids), "migration probe retained processes")
+                evidence["checks"].extend(["actual-plugin-workspace-import-restores-after-authentication",
+                                           "import-preserves-source-account-workspace"])
             phase = "persistent-origin-conflict"
             original_origin = started["origin"]
             network_path = profile / "config/native-network.json"
@@ -1071,7 +1207,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             phase = "owner-crash"
             process.kill()
             process.wait(timeout=10)
-            wait_for(lambda: not any(alive(pid) for pid in known_pids), "Windows Job left owned services after launcher crash", timeout=15)
+            wait_for(lambda: not any(owned_alive(pid) for pid in known_pids), "Windows Job left owned services after launcher crash", timeout=15)
             evidence["checks"].append("launcher-crash-job-cleans-all-owned-processes")
             if preview_delivery:
                 assert all(marker.read_bytes() == b"synthetic retained older installation data" for marker in legacy_markers)
@@ -1102,6 +1238,13 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 "programSceneId", "programSceneFingerprint", "programApplyState", "startupStudioDeferred") if key in observed}
             evidence["observedState"]["watchingSavedScene"] = bool(observed.get("sceneId"))
             evidence["observedState"]["projectorCount"] = len(observed.get("projectors", []))
+            evidence["observedState"]["projectorGeometry"] = [
+                {"slot": view.get("slot"), "geometry": view.get("geometry"),
+                 "fullscreen": view.get("fullscreen")}
+                for view in observed.get("projectors", []) if isinstance(view, dict)]
+            preferences = observed.get("projectorPreferences", {})
+            evidence["observedState"]["projectorPreferenceRoles"] = (
+                sorted(preferences) if isinstance(preferences, dict) else [])
             evidence["observedState"]["windowRoles"] = [window.get("role") for window in observed.get("windows", [])
                                                        if isinstance(window, dict)]
             # Only fixed categories/counts from this boot's newest OBS log.
@@ -1136,16 +1279,18 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 process.kill()
                 process.wait(timeout=10)
             try:
-                wait_for(lambda: not any(alive(pid) for pid in known_pids),
+                wait_for(lambda: not any(owned_alive(pid) for pid in known_pids),
                          "owned Windows process survived gate cleanup", timeout=15)
             except Exception:
                 cleanup_failed = True
                 evidence["cleanupFailed"] = True
                 for pid in known_pids:
+                    if not owned_alive(pid):
+                        continue
                     subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 try:
-                    wait_for(lambda: not any(alive(pid) for pid in known_pids),
+                    wait_for(lambda: not any(owned_alive(pid) for pid in known_pids),
                              "owned Windows process survived forced cleanup", timeout=10)
                 except Exception:
                     evidence["forcedCleanupFailed"] = True

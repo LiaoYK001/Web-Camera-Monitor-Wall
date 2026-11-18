@@ -16,6 +16,8 @@ public static class ProductTestWindow {
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window,int command);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window,out uint pid);
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr window,IntPtr after,int x,int y,int width,int height,uint flags);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window,uint message,IntPtr wParam,IntPtr lParam);
 }
 '@
     $operation = [Console]::In.ReadToEnd() | ConvertFrom-Json
@@ -33,16 +35,8 @@ public static class ProductTestWindow {
         $found = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
             [System.Windows.Automation.PropertyCondition]::new(
                 [System.Windows.Automation.AutomationElement]::AutomationIdProperty, $Identity))
-        if ($null -eq $found) {
-            # Some Qt Windows providers qualify AutomationId with the QObject
-            # ancestry. Search only this exact process-owned product root.
-            $descendants = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants,
-                [System.Windows.Automation.Condition]::TrueCondition)
-            $controlCandidates = @($descendants | Where-Object {
-                ([string]$_.Current.AutomationId).EndsWith('.' + $Identity, [StringComparison]::Ordinal)
-            })
-            if ($controlCandidates.Count -eq 1) { $found = $controlCandidates[0] }
-        }
+        $kind = $null
+        $name = $null
         if ($null -eq $found) {
             $kind = [System.Windows.Automation.ControlType]::Button
             $name = switch ($Identity) {
@@ -62,19 +56,57 @@ public static class ProductTestWindow {
                 'webobsCloseProjectors' { '关闭固定投影' }
                 'webobsProgramProjector' { '打开 Program 投影' }
                 'webobsHostStats' { 'OBS 宿主统计' }
+                'webobsManageDevices' { '设备与来源管理' }
+                'webobsManageAudio' { '音频与监听' }
+                'webobsManageAnalytics' { '分析策略' }
+                'webobsManageEvents' { '事件与通知' }
+                'webobsManageArchive' { '录像与回放' }
+                'webobsManageStorage' { '录像与存储' }
+                'webobsManageGo2rtc' { '网站来源' }
+                'webobsManageAdmin' { '账号与权限' }
+                'webobsManageAccount' { '我的账号' }
+                'webobsManageSettings' { '系统设置' }
                 'webobsVideoHealth' { $kind = [System.Windows.Automation.ControlType]::Text; '' }
                 default {
                     if ($Identity -match '^webobsCameraSlot([1-9][0-9]?)$' -and [int]$Matches[1] -le 64) {
                         $kind = [System.Windows.Automation.ControlType]::ComboBox
                         "画面 $($Matches[1])"
-                    } else { throw 'Unknown fixture control.' }
+                    } else {
+                        # Unknown identities still get the AutomationId suffix
+                        # fallback below; do not fail before that query.
+                        $kind = $null
+                        $null
+                    }
                 }
             }
-            $controlCandidates = @($window.FindAll([System.Windows.Automation.TreeScope]::Descendants,
-                [System.Windows.Automation.Condition]::TrueCondition) | Where-Object {
-                    ($_.Current.Name -eq $name -or ($Identity -eq 'webobsVideoHealth' -and
-                        $_.Current.Name -match '^视频输入：')) -and $_.Current.ControlType -eq $kind
-                })
+        }
+        if ($null -eq $found -and $name) {
+            # Prefer a direct property query over enumerating a fully loaded
+            # OBS window. This is both faster and less likely to race a display
+            # teardown while a Program projector is closing.
+            $nameCondition = [System.Windows.Automation.PropertyCondition]::new(
+                [System.Windows.Automation.AutomationElement]::NameProperty, $name)
+            $typeCondition = [System.Windows.Automation.PropertyCondition]::new(
+                [System.Windows.Automation.AutomationElement]::ControlTypeProperty, $kind)
+            $nameAndType = [System.Windows.Automation.AndCondition]::new(
+                [System.Windows.Automation.Condition[]]@($nameCondition, $typeCondition))
+            $found = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $nameAndType)
+        }
+        if ($null -eq $found) {
+            # Some Qt Windows providers qualify AutomationId with the QObject
+            # ancestry. Search only this exact process-owned product root.
+            $descendants = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+                [System.Windows.Automation.Condition]::TrueCondition)
+            $controlCandidates = @($descendants | Where-Object {
+                ([string]$_.Current.AutomationId).EndsWith('.' + $Identity, [StringComparison]::Ordinal)
+            })
+            if ($controlCandidates.Count -eq 1) { $found = $controlCandidates[0] }
+        }
+        if ($null -eq $found) {
+            $controlCandidates = @($descendants | Where-Object {
+                ($_.Current.Name -eq $name -or ($Identity -eq 'webobsVideoHealth' -and
+                    $_.Current.Name -match '^视频输入：')) -and $_.Current.ControlType -eq $kind
+            })
             if ($controlCandidates.Count -eq 1) { $found = $controlCandidates[0] }
         }
         if ($null -eq $found) { throw 'Product control missing.' }
@@ -192,7 +224,17 @@ public static class ProductTestWindow {
         'projector-close' { Invoke-Control 'webobsCloseProjectors' }
         'program-projector' { Invoke-Control 'webobsProgramProjector' }
         'projector-window-close' {
-            $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()
+            # OBSProjector does not expose a reliable UIA WindowPattern.Close
+            # action on Windows. Exercise the same WM_CLOSE path as the title bar.
+            if (-not [ProductTestWindow]::PostMessage([IntPtr]$window.Current.NativeWindowHandle,
+                0x0010, [IntPtr]::Zero, [IntPtr]::Zero)) {
+                throw 'Owned projector close request failed.'
+            }
+        }
+        'projector-place' {
+            if ([int]$operation.slot -notin @(1,2)) { throw 'Invalid projector fixture slot.' }
+            if (-not [ProductTestWindow]::SetWindowPos([IntPtr]$window.Current.NativeWindowHandle,
+                [IntPtr]::Zero,120,120,800,500,20)) { throw 'Owned projector placement failed.' }
         }
         'projector-fullscreen' {
             if ([ProductTestWindow]::GetForegroundWindow() -ne [IntPtr]$window.Current.NativeWindowHandle) {

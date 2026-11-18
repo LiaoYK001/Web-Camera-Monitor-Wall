@@ -4,6 +4,7 @@
 #include "product_scene.hpp"
 #include "renderer_device_qt.hpp"
 #include "layout.hpp"
+#include "projector_placement.hpp"
 #include "wall.hpp"
 
 #include <obs-frontend-api.h>
@@ -37,6 +38,7 @@
 #include <QSpinBox>
 #include <QStandardItemModel>
 #include <QScrollArea>
+#include <QThread>
 #include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
@@ -65,6 +67,8 @@ class ProductWindow final : public QWidget {
 	QTimer program_sync_;
 	QTimer retirement_;
 	QTimer settlement_;
+	QTimer placement_save_;
+	QJsonObject projector_placements_;
 	QElapsedTimer settlement_elapsed_;
 	QElapsedTimer retirement_elapsed_;
 	QUrl origin_;
@@ -224,6 +228,7 @@ class ProductWindow final : public QWidget {
 	}
 	void observe_state(const char *phase)
 	{
+		remember_open_projector_placements();
 		const int media_sources = media_source_count();
 		obs_video_info video{};
 		const bool video_available = obs_get_video_info(&video);
@@ -257,6 +262,7 @@ class ProductWindow final : public QWidget {
 		state.insert("programSceneFingerprint", program_fingerprint_);
 		state.insert("programStudioRevision", program_studio_revision_);
 		state.insert("programApplyState", program_apply_state_);
+		state.insert("programSyncPending", program_sync_pending_);
 		state.insert("program", program_state());
 		state.insert("startupStudioDeferred", frontend_->property("webobsStudioDeferredToProduct").toBool());
 		state.insert("restoreGuardHits", frontend_->property("webobsRestoreGuardHits").toInt());
@@ -293,7 +299,9 @@ class ProductWindow final : public QWidget {
 			projector_states.append(QJsonObject{{"slot", int(i + 1)}, {"sceneId", view.scene_id},
 				{"sceneFingerprint", view.scene_fingerprint},
 				{"studioRevision", view.studio_revision}, {"bindings", view_bindings},
-				{"fullscreen", view.window->isFullScreen()}});
+				{"fullscreen", view.window->isFullScreen()},
+				{"geometry", QJsonObject{{"x", view.window->geometry().x()}, {"y", view.window->geometry().y()},
+					{"width", view.window->geometry().width()}, {"height", view.window->geometry().height()}}}});
 			const auto role = view.window->isFullScreen() ? "fixed-scene-fullscreen-%1" : "fixed-scene-%1";
 			windows.append(QJsonObject{{"role", QString::fromLatin1(role).arg(i + 1)},
 				{"qtClass", QString::fromLatin1(view.window->metaObject()->className())},
@@ -302,17 +310,32 @@ class ProductWindow final : public QWidget {
 		}
 		state.insert("windows", windows);
 		state.insert("projectors", projector_states);
+		state.insert("projectorPreferences", projector_placements_);
 		if (video_available)
 			state.insert("videoInfo", QJsonObject{{"baseWidth", int(video.base_width)},
 				{"baseHeight", int(video.base_height)}, {"outputWidth", int(video.output_width)},
 				{"outputHeight", int(video.output_height)}, {"fpsNumerator", int(video.fps_num)},
 				{"fpsDenominator", int(video.fps_den)}});
 		char *path = obs_module_config_path("product-state.json");
-		QSaveFile file(QString::fromUtf8(path ? path : ""));
+		const QString state_path = QString::fromUtf8(path ? path : "");
 		bfree(path);
 		const auto encoded = QJsonDocument(state).toJson();
-		if (!QDir().mkpath(QFileInfo(file.fileName()).absolutePath()) || !file.open(QIODevice::WriteOnly) ||
-		    file.write(encoded) != encoded.size() || !file.commit())
+		bool published = state_path.isEmpty();
+		// The UI gate and support tooling read this private observation file
+		// while the product writes it. Windows can transiently reject a
+		// QSaveFile replace when a reader still has the old handle open; retry
+		// a bounded number of times instead of leaving the observation stale.
+		for (int attempt = 0; attempt < 8 && !published; ++attempt) {
+			QSaveFile file(state_path);
+			if (QDir().mkpath(QFileInfo(file.fileName()).absolutePath()) && file.open(QIODevice::WriteOnly) &&
+			    file.write(encoded) == encoded.size() && file.commit()) {
+				published = true;
+				break;
+			}
+			if (attempt < 7)
+				QThread::msleep(15);
+		}
+		if (!published)
 			blog(LOG_WARNING, "WebOBS product state observation is unavailable");
 	}
 	void request(const QString &path, const QByteArray &method, const QJsonObject &body, Reply callback,
@@ -340,8 +363,10 @@ class ProductWindow final : public QWidget {
 	void close_projector(std::size_t index)
 	{
 		auto retired = std::move(projectors_[index]);
-		if (retired && retired->window)
+		if (retired && retired->window) {
+			remember_projector_placement(QString("fixed-%1").arg(index + 1), retired->window);
 			retired->window->close(); // OBS removes its own projector-list entry.
+		}
 		retired.reset();
 		update_projector_controls();
 	}
@@ -734,6 +759,67 @@ class ProductWindow final : public QWidget {
 		QObject::connect(&action, SIGNAL(triggered(bool)), window, SLOT(OpenFullScreenProjector()));
 		action.trigger();
 	}
+	void remember_projector_placement(const QString &role, QWidget *window)
+	{
+		if (user_id_.isEmpty() || !window || !window->screen()) return;
+		const auto rect = window->isFullScreen() ? window->normalGeometry() : window->geometry();
+		if (rect.isEmpty()) return;
+		const auto placement = QJsonObject{{"x", rect.x()}, {"y", rect.y()},
+			{"width", rect.width()}, {"height", rect.height()},
+			{"screen", window->screen()->name().left(128)}, {"fullscreen", window->isFullScreen()}};
+		if (projector_placements_.value(role).toObject() == placement) return;
+		projector_placements_[role] = placement;
+		placement_save_.start(500); // Debounce resize/move; no idle polling or per-pixel writes.
+	}
+	void remember_open_projector_placements()
+	{
+		// Win32 moves do not always produce a Qt Move event for OBS projector
+		// windows. Piggyback on the existing heartbeat/state observation as a
+		// bounded safety net; identical geometry never schedules another write.
+		for (std::size_t i = 0; i < projectors_.size(); ++i)
+			if (projectors_[i] && projectors_[i]->window)
+				remember_projector_placement(QString("fixed-%1").arg(i + 1), projectors_[i]->window);
+		if (program_projector_)
+			remember_projector_placement("program", program_projector_);
+	}
+	void save_projector_placements()
+	{
+		placement_save_.stop();
+		if (user_id_.isEmpty() || projector_placements_.isEmpty()) return;
+		QFile previous(workspace_path());
+		if (previous.size() > 16384 || !previous.open(QIODevice::ReadOnly)) return;
+		auto workspace = QJsonDocument::fromJson(previous.readAll()).object();
+		previous.close();
+		if (workspace.value("schema").toInt() != 1 && workspace.value("schema").toInt() != 2) return;
+		workspace["projectorPlacements"] = projector_placements_;
+		QSaveFile output(workspace_path());
+		const auto bytes = QJsonDocument(workspace).toJson();
+		if (!output.open(QIODevice::WriteOnly) || output.write(bytes) != bytes.size() || !output.commit())
+			status_->setText(tr("投影位置保存失败，原布局已保留。"));
+	}
+	void restore_projector_placement(const QString &role, QWidget *window)
+	{
+		const auto saved = projector_placements_.value(role).toObject();
+		if (saved.isEmpty() || !window) return;
+		QScreen *target = window->screen();
+		bool same_screen = false;
+		for (auto *screen : QGuiApplication::screens()) {
+			if (screen->name() == saved.value("screen").toString()) {
+				target = screen;
+				same_screen = true;
+				break;
+			}
+		}
+		if (!target) return;
+		const auto rect = projector_window_rect(saved, target->availableGeometry());
+		if (rect.isEmpty()) return;
+		window->setScreen(target);
+		window->setGeometry(rect);
+		// A missing screen falls back to a visible window, never unexpected
+		// fullscreen takeover on another display. OBS still owns fullscreen.
+		if (same_screen && saved.value("fullscreen").toBool() && !window->isFullScreen())
+			toggle_projector_fullscreen(window);
+	}
 	void open_program_projector()
 	{
 		if (user_id_.isEmpty() || !program_ || program_projector_) {
@@ -763,6 +849,7 @@ class ProductWindow final : public QWidget {
 		program_projector_ = opened;
 		opened->installEventFilter(this);
 		opened->setWindowTitle(tr("WebOBS Program 投影 · F11 全屏"));
+		restore_projector_placement("program", opened);
 		connect(opened, &QObject::destroyed, this, [this] {
 			program_projector_.clear();
 			observe_current_media();
@@ -772,7 +859,10 @@ class ProductWindow final : public QWidget {
 
 	void close_program_projector()
 	{
-		if (program_projector_) program_projector_->close();
+		if (program_projector_) {
+			remember_projector_placement("program", program_projector_);
+			program_projector_->close();
+		}
 		program_projector_.clear();
 		observe_current_media();
 	}
@@ -846,6 +936,7 @@ class ProductWindow final : public QWidget {
 			});
 			close_projector(index);
 			projectors_[index] = std::move(view);
+			restore_projector_placement(QString("fixed-%1").arg(index + 1), opened);
 			update_projector_controls();
 			observe_current_media();
 		});
@@ -881,6 +972,13 @@ class ProductWindow final : public QWidget {
 
 	void locked(const QString &message)
 	{
+		// Save only this account's window preferences before protected views
+		// retire. Geometry never authorizes media or reopens a projector.
+		for (std::size_t i = 0; i < projectors_.size(); ++i)
+			if (projectors_[i]) remember_projector_placement(QString("fixed-%1").arg(i + 1), projectors_[i]->window);
+		remember_projector_placement("program", program_projector_);
+		save_projector_placements();
+		projector_placements_ = {};
 		if (client_) client_->reset_session();
 		++main_generation_;
 		retirement_elapsed_.start();
@@ -975,6 +1073,13 @@ class ProductWindow final : public QWidget {
 				return;
 			}
 			user_id_ = id;
+			QFile workspace_file(workspace_path());
+			if (workspace_file.size() <= 16384 && workspace_file.open(QIODevice::ReadOnly)) {
+				const auto saved = QJsonDocument::fromJson(workspace_file.readAll()).object()
+					.value("projectorPlacements").toObject();
+				for (const auto &role : {QString("fixed-1"), QString("fixed-2"), QString("program")})
+					if (saved.value(role).isObject()) projector_placements_[role] = saved.value(role);
+			}
 			observe_state("authenticated");
 			for (auto *button : {watch_, logout_, refresh_, scene_watch_, stats_button_})
 				button->setEnabled(true);
@@ -1327,6 +1432,14 @@ class ProductWindow final : public QWidget {
 	}
 	bool eventFilter(QObject *object, QEvent *event) override
 	{
+		if (event->type() == QEvent::Move || event->type() == QEvent::Resize ||
+		    event->type() == QEvent::WindowStateChange || event->type() == QEvent::Close) {
+			if (program_projector_ && object == program_projector_.data())
+				remember_projector_placement("program", program_projector_);
+			for (std::size_t i = 0; i < projectors_.size(); ++i)
+				if (projectors_[i] && object == projectors_[i]->window.data())
+					remember_projector_placement(QString("fixed-%1").arg(i + 1), projectors_[i]->window);
+		}
 		if (program_projector_ && object == program_projector_.data()) {
 			if (event->type() == QEvent::WindowStateChange)
 				QTimer::singleShot(0, this, [this] { observe_current_media(); });
@@ -1482,6 +1595,7 @@ public:
 		});
 		watch_ = new QPushButton(tr("开始原生监看"), this);
 		save_ = new QPushButton(tr("保存布局"), this);
+		save_->setToolTip(tr("保存当前布局和投影窗口位置；打开投影时恢复其屏幕、大小和全屏偏好。"));
 		logout_ = new QPushButton(tr("退出账号"), this);
 		refresh_ = new QPushButton(tr("刷新设备目录"), this);
 		watch_->setObjectName("webobsWatch");
@@ -1627,9 +1741,10 @@ public:
 				return;
 			}
 			QSaveFile file(workspace_path());
-			const QJsonObject workspace = watching_scene_id_.isEmpty() ?
+			QJsonObject workspace = watching_scene_id_.isEmpty() ?
 				QJsonObject{{"schema", 1}, {"cameras", watching_}} :
 				QJsonObject{{"schema", 2}, {"sceneId", watching_scene_id_}};
+			if (!projector_placements_.isEmpty()) workspace["projectorPlacements"] = projector_placements_;
 			const auto bytes = QJsonDocument(workspace).toJson();
 			if (!QDir().mkpath(QFileInfo(file.fileName()).absolutePath()) ||
 			    !file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit())
@@ -1643,7 +1758,13 @@ public:
 		});
 		connect(manage, &QPushButton::clicked, this, [this] { open_management_page("/devices"); });
 		connect(&program_sync_, &QTimer::timeout, this, [this] { sync_program(); });
+		placement_save_.setSingleShot(true);
+		connect(&placement_save_, &QTimer::timeout, this, [this] {
+			save_projector_placements();
+			observe_current_media();
+		});
 		connect(&heartbeat_, &QTimer::timeout, this, [this] {
+			remember_open_projector_placements();
 			refresh_video_health();
 			renew_projectors(); // Remains active while the main view resolves another scene.
 			if (heartbeat_pending_ || user_id_.isEmpty())

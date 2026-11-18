@@ -104,22 +104,42 @@ try {
         if (-not (Test-Path -LiteralPath (Join-Path $profile $file))) { throw 'Installed account/camera data missing.' }
     }
     function Get-ProfileFingerprint {
-        @((Get-ChildItem -LiteralPath $profile -Recurse -File | Sort-Object FullName) | ForEach-Object {
-            $_.FullName.Substring($profile.Length) + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
-        }) -join "`n"
+        # Hash only durable user data. Update metadata, generated backups,
+        # logs/crash dumps, per-run sentinels and SQLite WAL sidecars are
+        # runtime artifacts; opening a WAL database read-only can create an
+        # empty WAL/SHM pair even when no user row changed.
+        $state = @{}
+        foreach ($file in @(Get-ChildItem -LiteralPath $profile -Recurse -File)) {
+            $relative = $file.FullName.Substring($profile.Length + 1).Replace('\', '/')
+            if ($relative -match '^(run|backups)/' -or
+                $relative -match '(^|/)(logs|crashes)/' -or
+                $relative -match '(^|/)\.sentinel(/|$)' -or
+                $relative -match '\.(db|sqlite3)-(wal|shm)$') {
+                continue
+            }
+            $state[$relative] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+        }
+        return $state
+    }
+    function Compare-ProfileFingerprint($before, $after) {
+        $paths = @(@($before.Keys) + @($after.Keys) | Sort-Object -Unique)
+        return ,@($paths | Where-Object { $before[$_] -ne $after[$_] })
     }
     $before = Get-ProfileFingerprint
     if ($complete) {
         $phase = 'same-machine-upgrade'
-        $match = [regex]::Match($version, '^(5\.0\.0-rc\.)([0-9]+)$')
+        $match = [regex]::Match($version, '^(5\.[01]\.0-rc\.)([0-9]+)$')
         if (-not $match.Success) { throw 'Complete candidate version is not rc.N.' }
         $upgradeVersion = $match.Groups[1].Value + ([int]$match.Groups[2].Value + 1)
         $upgradeOut = Join-Path $buildRoot 'upgrade-installer'
         New-Item -ItemType Directory $upgradeOut | Out-Null
+        $upgradeRuntime = Join-Path $buildRoot 'upgrade-runtime'
+        & $python -B (Join-Path $repoRoot 'native-host/tests/prepare_upgrade_runtime.py') --runtime $runtime --output $upgradeRuntime --version $upgradeVersion
+        if ($LASTEXITCODE -ne 0) { throw 'Distinct upgrade runtime preparation failed.' }
         $upgradeRemovals = Join-Path $upgradeOut 'owned-removals.nsh'
-        $null = & $python -B $verifier --runtime $runtime --removals $upgradeRemovals
+        $null = & $python -B $verifier --runtime $upgradeRuntime --removals $upgradeRemovals
         if ($LASTEXITCODE -ne 0) { throw 'Upgrade payload verification failed.' }
-        $upgradeArgs = @('/V2',"/DVERSION=$upgradeVersion","/DPACKAGE_DIR=$runtime",
+        $upgradeArgs = @('/V2',"/DVERSION=$upgradeVersion","/DPACKAGE_DIR=$upgradeRuntime",
             "/DOUTPUT_DIR=$upgradeOut","/DOWNED_REMOVALS=$upgradeRemovals",'/DCOMPLETE')
         & $makensis @upgradeArgs (Join-Path $repoRoot 'native-host/installer/WebOBSProductIntegration.nsi')
         if ($LASTEXITCODE -ne 0) { throw 'Upgrade NSIS compilation failed.' }
@@ -129,16 +149,32 @@ try {
             (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash) {
             throw 'Upgrade installer is byte-identical to the fresh installer.'
         }
-        $upgrade = Start-Process -FilePath $upgradeSetup -ArgumentList '/S', "/D=$installed" -Wait -PassThru
-        if ($upgrade.ExitCode -ne 0) { throw 'Actual NSIS upgrade installation failed.' }
-        if ((Get-ItemProperty $uninstallKey).DisplayVersion -ne $upgradeVersion) {
-            throw 'Upgrade did not update the installed version registration.'
-        }
-        if ((Get-ProfileFingerprint) -ne $before) {
+        & $python -B (Join-Path $repoRoot 'native-host/tests/update_windows.py') --runtime $runtime --installer $upgradeSetup --profile $profile --installed $installed --report (Join-Path $buildRoot 'native-product-updater.json')
+        if ($LASTEXITCODE -ne 0) { throw 'Actual installed updater/NSIS upgrade failed.' }
+        $phase = 'same-machine-upgrade-version'
+        $registeredVersion = (Get-ItemProperty $uninstallKey).DisplayVersion
+        $report.registeredVersion = $registeredVersion
+        if ($registeredVersion -ne $upgradeVersion) { throw 'Upgrade did not update the installed version registration.' }
+        $phase = 'same-machine-upgrade-profile-fingerprint'
+        $afterUpgrade = Get-ProfileFingerprint
+        $changedAfterUpgrade = Compare-ProfileFingerprint $before $afterUpgrade
+        $report.profileFingerprintBeforeCount = $before.Count
+        $report.profileFingerprintAfterCount = $afterUpgrade.Count
+        if ($changedAfterUpgrade.Count -ne 0) {
+            $report.profileFingerprintChangedPaths = @($changedAfterUpgrade | Select-Object -First 32)
             throw 'Upgrade changed retained account/profile data.'
         }
         $report.upgradeVersion = $upgradeVersion
         $report.sameMachineUpgradeQualified = $true
+        $report.installedUpdaterQualified = $true
+        $report.retentionScope = 'durable profile files excluding run/backups, logs/crashes/sentinels and SQLite WAL sidecars'
+        $phase = 'same-machine-upgrade-inventory'
+        $null = & $python -B $verifier --runtime $installed --installed
+        if ($LASTEXITCODE -ne 0) { throw 'Upgraded runtime inventory/version failed.' }
+        $phase = 'upgraded-entry-ui-and-media'
+        & $python -B (Join-Path $repoRoot 'native-host/tests/product_windows.py') --runtime $installed --with-media --retained-profile (Join-Path $privateRoot 'upgraded-profile') --report (Join-Path $buildRoot 'native-product-upgraded-ui.json')
+        if ($LASTEXITCODE -ne 0) { throw 'New payload did not pass actual upgraded entry/media.' }
+        $report.upgradedEntryQualified = $true
     }
     $unknown = Join-Path $installed 'user-notes.txt'
     [IO.File]::WriteAllText($unknown, 'private synthetic uninstall-retention marker')
@@ -154,7 +190,14 @@ try {
         if (-not $done) { Start-Sleep -Milliseconds 100 }
     } until ($done -or [DateTime]::UtcNow -ge $deadline)
     if (-not $done) { throw 'Owned files/registration/shortcut survived uninstall.' }
-    if ((Get-ProfileFingerprint) -ne $before -or [IO.File]::ReadAllText($unknown) -ne 'private synthetic uninstall-retention marker') {
+    $afterUninstall = Get-ProfileFingerprint
+    $changedAfterUninstall = Compare-ProfileFingerprint $before $afterUninstall
+    $report.profileFingerprintAfterUninstallCount = $afterUninstall.Count
+    if ($changedAfterUninstall.Count -ne 0 -or
+        [IO.File]::ReadAllText($unknown) -ne 'private synthetic uninstall-retention marker') {
+        if ($changedAfterUninstall.Count -ne 0) {
+            $report.profileFingerprintChangedPaths = @($changedAfterUninstall | Select-Object -First 32)
+        }
         throw 'Uninstall changed retained account/profile or unknown files.'
     }
     $report.retainedProfileUnchanged = $true

@@ -12,7 +12,12 @@ overrides:
   # GHSA-g3hv-75wg-m249 / GHSA-3g3m-2fjr-6pw4; Node 24 consumers.
   'minimatch@>=7 <11.0.1': 11.0.1
   'glob@>=9 <14.0.2': 14.0.2
+  # GHSA-fc5q-39xc-vjpf has no published fixed picomatch release yet.
+  # The local patch literalizes repeated extglobs containing wildcards; the
+  # audit command explicitly ignores only this mitigated build-time advisory.
+  picomatch: 4.0.7
   # Patched node-resolve only deep-clones its constant defaults; no deepmerge call remains.
   '@rollup/plugin-node-resolve@16.0.3>deepmerge': '-'
 patchedDependencies:
   '@rollup/plugin-node-resolve@16.0.3': patches/@rollup__plugin-node-resolve@16.0.3.patch
+  picomatch@4.0.7: patches/picomatch@4.0.7.patch

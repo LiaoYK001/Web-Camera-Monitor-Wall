@@ -43,6 +43,10 @@ def exercise():
             pass
         else:
             raise AssertionError("metadata accepted a non-candidate version")
+        installer = installer.rename(base / "WebOBS-Wall-5.1.0-rc.1-windows-x64-SETUP.exe")
+        assert module.main(["--installer", str(installer), "--version", "5.1.0-rc.1",
+                            "--output", str(output)]) == 0
+        assert "version: 5.1.0-rc.1" in output.read_text()
         print("PASS update manifest binds candidate version, size, SHA-512 and installer name")
 
 

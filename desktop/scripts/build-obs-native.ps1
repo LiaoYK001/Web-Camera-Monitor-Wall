@@ -22,8 +22,8 @@ if ($PixelTest -and -not (Get-Command 'node' -ErrorAction SilentlyContinue)) { t
 $pixelBuild = if ($PixelTest) { 'ON' } else { 'OFF' }
 if (-not $IsWindows -or -not [Environment]::Is64BitOperatingSystem -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') { throw 'The OBS prototype requires Windows x64.' }
 if ($Complete) {
-    if (-not $ProductMode -or $NativePreview -or $Version -notmatch '^5\.0\.0-rc\.[0-9]+$') {
-        throw 'Complete candidate delivery requires product mode and an explicit 5.0.0-rc.N version.'
+    if (-not $ProductMode -or $NativePreview -or $Version -notmatch '^5\.[01]\.0-rc\.[0-9]+$') {
+        throw 'Complete candidate delivery requires product mode and an explicit 5.0.0-rc.N or 5.1.0-rc.N version.'
     }
 } elseif ($NativePreview) {
     if (-not $ProductMode -or $Version -ne '4.5.0') { throw 'Explicit preview delivery requires product mode and version 4.5.0.' }

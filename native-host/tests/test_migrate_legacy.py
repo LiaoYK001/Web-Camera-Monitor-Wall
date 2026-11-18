@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import sqlite3
 import tempfile
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -99,8 +100,8 @@ def exercise_preview_workspaces():
             database.execute("CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT)")
             database.execute("INSERT INTO users VALUES ('a' * 32, 'preview-owner')")
             database.commit()
-        profile = root / "native-profile"
-        profile.mkdir()
+        profile = root / migrate.WORKSPACE_DIRECTORY
+        profile.mkdir(parents=True)
         owner = "a" * 32
         workspace = profile / f"workspace-{owner}.json"
         workspace.write_text(json.dumps({"schema": 2, "sceneId": "fixture-five"}), encoding="utf-8")
@@ -119,15 +120,51 @@ def exercise_preview_workspaces():
         receipt = migrate.migrate(source, destination, confirm_stopped=True,
                                   include_backup_key=False, include_preview_workspaces=True)
         assert receipt["status"] == "migrated" and receipt["previewWorkspacesCopied"] == 1
-        migrated = destination / "native-profile" / workspace.name
+        migrated = destination.parent / migrate.WORKSPACE_DIRECTORY / workspace.name
         assert migrated.read_bytes() == workspace.read_bytes()
-        assert not (destination / "native-profile/workspace-not-an-account.json").exists()
+        assert not (migrated.parent / "workspace-not-an-account.json").exists()
+        assert not (destination / "native-profile").exists()
         manifest = json.loads((destination / "native-migration.json").read_text())
         assert manifest["sourceKind"] == "explicit-native-preview"
         assert manifest["previewWorkspacesCopied"] == 1
         print("PASS v4.5 native preview migration keeps account workspace and rejects invalid entries")
 
 
+def exercise_commit_failure():
+    migrate = load()
+    with tempfile.TemporaryDirectory(prefix="webobs-migration-commit-") as temporary:
+        base = Path(temporary)
+        source = base / "Old" / "config"
+        make_legacy(source)
+        destination = base / "Native" / "config"
+        destination.mkdir(parents=True)
+        replace = migrate.os.replace
+
+        def fail_publish(old, new):
+            if Path(old).name.startswith(".webobs-migration-"):
+                raise OSError("synthetic promotion failure")
+            return replace(old, new)
+
+        with patch.object(migrate.os, "replace", side_effect=fail_publish):
+            try:
+                migrate.migrate(source, destination, confirm_stopped=True,
+                                include_backup_key=False)
+            except OSError:
+                pass
+            else:
+                raise AssertionError("promotion failure was ignored")
+        assert destination.is_dir() and not any(destination.iterdir())
+        assert not list(base.glob(".webobs-*"))
+        # Retry without clearing a half-imported account or layout.
+        assert migrate.migrate(source, destination, confirm_stopped=True,
+                               include_backup_key=False)["status"] == "migrated"
+        assert (destination / "cluster.sqlite3").is_file()
+        with closing(sqlite3.connect(source / "cluster.sqlite3")) as db:
+            assert db.execute("SELECT username FROM users").fetchone() == ("owner",)
+        print("PASS failed profile promotion restores empty target and migration can retry")
+
+
 if __name__ == "__main__":
     exercise()
     exercise_preview_workspaces()
+    exercise_commit_failure()

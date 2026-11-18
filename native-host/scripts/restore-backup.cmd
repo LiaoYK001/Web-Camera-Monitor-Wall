@@ -22,7 +22,7 @@ if not exist "%DATA%\run\backup.key" (
 )
 choice /C YN /M "Replace current configuration from this backup? / 是否用该备份替换当前配置"
 if errorlevel 2 exit /b 0
-"%RUNTIME%python\python.exe" -B "%RUNTIME%services\backup\encrypted_backup.py" restore "%ARCHIVE%" --config-root "%DATA%\config" --key-file "%DATA%\run\backup.key"
+"%RUNTIME%python\python.exe" -B "%RUNTIME%services\product\native_updater.py" restore --archive "%ARCHIVE%" --data-root "%DATA%" --confirm
 if errorlevel 1 (
   echo Restore failed. The current configuration was kept.
   echo 恢复失败；当前配置已保留。

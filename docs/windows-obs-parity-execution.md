@@ -1,5 +1,19 @@
 # Windows OBS 同等开销执行记录 / OBS parity execution record
 
+## 2026-11-17 / v5.1迁移与更新首批修复
+
+维护流程源码进一步修复自定义安装目录/带单引号路径、当前版本重新核验、无更新停止和稳定通道拒绝预发布；新增Latest资产URL允许规则但不启用稳定feed。恢复快捷方式原先缺WEBOBS_RESTORE_CONFIRM和Windows libsodium路径，现经受控维护CLI确认/停机检查后调用实际备份服务。
+
+为避免安装器覆盖仍被安装目录Python占用的文件，新增独立维护解释器复制/清理并接入真实CHECK-UPDATES.cmd；仅复制标准嵌入Python与维护依赖，不复制可选包，维护字节纳入回执，成功后由supervisor后续启动清理。实际Windows更新门禁改从已安装Python准备外部维护工具、退出原解释器后实际校验/安装，再解密恢复到隔离目标比对SQLite schema/rows。源代码/本机回归通过，新的Windows结果仍待绑定本轮源码；44050932022@c689e1b不包含这批后续修改。
+
+R2-004后续源码将投影窗口位置/屏幕/全屏偏好放入按账号workspace，复用OBS窗口；Qt逻辑坐标按当前可见屏幕约束，缺失原屏幕时窗口回退；仅移动/缩放事件去抖保存。新增几何边界测试本机真实QtCore链接执行通过，product_window整体在Qt6.11.2头/GCC下-Werror语法通过，44构建契约通过。实际Windows新增同源投影移动→保存→关闭→重开→回读几何门禁，未执行前不记通过；固定Scene媒体自动恢复和物理多屏/DPI仍未关闭。
+
+后续V51-002源码接入v5.1候选版本范围、更新元数据版本/安装器文件名匹配和候选Tag显式SourceRevision。实际Windows门禁改为构建独立运行时版本/重算清单的下一版本夹具，调用安装后native_updater经隔离loopback feed完成下载、缓存篡改拒绝、备份与真实NSIS，再验证新运行时/清单及重新运行入口媒体；原产品gate新增真实Qt插件目录工作区导入和认证后回显。夹具为同源码模拟下一版本，不据此宣称独立发布版本或完整R4合格。本机版本/清单、独立payload防改写、supervisor和包校验通过，实际Windows待新source运行。
+
+用户指定下一正式交付v5.1并以其进行主要Windows验证。独立工作树`codex/v51-hardening`基于dev2258a37；保留rc.1发布身份，未改变稳定feed。FIX-001修复真实OBS插件路径下的v4.5工作区读取与目标路径，整个新profile一起提交/失败恢复空目标；修复缓存EXE执行前和备份后size/SHA-512复检、同版/回退拒绝、缺失必要备份拒绝及预发布数字比较。
+
+本轮实际执行`python3 -B native-host/tests/test_migrate_legacy.py`（旧配置、真实v4.5路径、提交故障重试3组）及`test_native_updater.py`（真实loopback下载、缓存截断/同尺寸改写/追加、备份期间改写、确认和回退拒绝、SemVer）通过。测试不执行EXE，安装调用用mock隔离；Windows安装、实际旧档案与完整更新/功能/性能仍待后续，未宣称R4整体完成。
+
 ## 2026-10-31 / P0 冻结现场（首轮，尚未通过实机基线）
 
 本记录执行 [用户 P0–P5 计划](windows-obs-parity-dsh-plan.md)，不是完成声明。The plan remains open; build/fixture success is not hardware or performance qualification.
@@ -1416,3 +1430,11 @@ The second part of the per-entry inventory was completed and the remaining defec
 On 2026-11-17, run 43956468003 passed on source 8828532 with 52/52 portable and installed checks, 35 eight-frame final-pixel groups, 9/9 restore isolation, real in-product NVR recording/authenticated MP4, event dedup/outbox, go2rtc/online-extractor self-test, real Program cut/fade TAKE, Program/fixed projectors, scoped revocation, normal close/restart/password change/launcher crash cleanup, fresh NSIS, same-machine rc.1→rc.2 upgrade with profile bytes preserved, and data-retaining uninstall. Installer 212,117,618 bytes / SHA-256 3d16014d...; pre-first-start tree 794,551,075 logical / 806,587,720 allocation bytes across 6,972 files.
 
 The cut TAKE now settles the transition and releases the outgoing graph, publishing source state only when actual and owned counts agree. The test's `/studio/runtime` response no longer shadows the runtime path. Complete-service normal close uses a 70-second deadline while requiring exit code zero and no surviving registered processes; cold restart releases handles before reopening. The candidate is a prerelease, not Latest and without a stable feed. Target-machine real-camera/hardware decode/physical display/audio/two-hour stability, personal legacy migration, nonempty multi-track audio, OBS composite recording/streaming, LAN/Caddy remote access and part of analytics overlays remain open; this candidate does not replace R5/R7 or stable v5.0 acceptance.
+
+#### v5.1 Windows 更新/迁移门禁实际通过 / v5.1 Windows update and migration gates passed
+
+2026-11-18，[run 44194328169](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44194328169) 在源码 `472f3fe5cddf90f304801aab4dccd4765b0076f2` 上 success，内部版本 `5.1.0-rc.16`。便携产品、真实 NSIS 安装态和升级后产品门禁各 55 项，认证前恢复隔离 9 项；实际安装更新器完成同源码 `5.1.0-rc.16 → 5.1.0-rc.17` loopback feed 下载、大小/SHA-512 验证、改写缓存拒绝、独立维护解释器、加密备份、真实 NSIS 执行、版本切换及恢复验证。升级前后 durable profile 指纹均为 30 个文件且一致；卸载保留 profile、录像和未知文件，注册项/快捷方式清理。安装器 212,162,215 B，SHA-256 `12039948205f915de180eb0a84f74d0b51ef3fd737a30234851305dbe4242dbd`；安装树首启前 794,579,783 logical / 806,620,488 allocation B、6,972 文件。脱敏摘要见 [windows-v51-update-gates-2026-11-18.json](../qualification/windows-v51-update-gates-2026-11-18.json)。
+
+本轮实测修复了升级后 profile 比较中的 SQLite WAL sidecar 噪声，改为只哈希 durable 用户文件；Windows 读取方短暂持有 `product-state.json` 时对 QSaveFile 发布做有界重试；测试对跨多次启动复用的 PID 记录内核创建时间，避免把系统复用 PID 当作产品残留进程。以上不改变真实数据/清理断言，也不把内部候选升格为正式 Release。仍需由同一原生宿主实际产生非空逐轨音频混音、Program 合成录像/推流、远端/离线和完整旧档案迁移；目标机真实相机/音频/物理多屏/硬解/两小时长稳和 OBS 同条件性能仍未验证，`fullFeatureMigrationQualified` 仍为 false。
+
+On 2026-11-18, run 44194328169 passed on source 472f3fe5 with 55/55 portable, installed and upgraded product checks plus 9/9 restore isolation. The installed updater performed a real same-source rc.16-to-rc.17 loopback download, cache-tamper rejection, independent maintenance runtime, encrypted backup, NSIS execution, version switch and restore verification. Durable profile fingerprints matched at 30 files; uninstall retained profile, recordings and unknown files. The 212,162,215-byte installer and 794,579,783-byte logical install tree are internal qualification evidence, not a stable v5.1 release or OBS-performance claim. The fixes cover SQLite WAL sidecar noise in retention comparison, bounded observation-file publication retries and kernel creation-time PID identity. Nonempty multi-track audio, native Program composite recording/streaming, remote/offline access, complete legacy migration, physical devices and two-hour stability remain open.

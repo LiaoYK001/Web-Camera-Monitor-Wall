@@ -6,6 +6,8 @@
 
 公开 CI（[web-runtime-ci.yaml](<../.github/workflows/web-runtime-ci.yaml>)）分别在 `web/` 与 `desktop/` 工作区执行 `pnpm audit --audit-level=low`。历史 CI 绿色或 Dependabot 暂无开放告警都不能替代当前源码的重新审计；两个工作区必须各自通过。
 
+2026-11-18：npm 尚未发布针对 [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf)（picomatch 单分支重复 extglob ReDoS）的修复版本。两个工作区先通过 `patches/picomatch@4.0.7.patch` 把含未转义通配符的重复 extglob 当作字面量，避免编译指数回溯正则；随后只在审计命令中忽略这一已缓解的构建工具公告。该包不进入产品运行时，待上游发布修复版本后移除补丁和忽略项。回归见真实 Vite/Workbox、Electron 打包 glob 与两个工作区的生产构建。
+
 ~~~powershell
 # 在 web/ 与 desktop/ 目录分别执行（PATH 上的 pnpm 代理可能不可用，使用仓库固定版本）
 & "$env:APPDATA/npm/pnpm.cmd" audit --audit-level=low
