@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 232 · 2026-11-19T02:07:03+08:00（UTC+08）
+> 快照版本 233 · 2026-11-19T02:11:41+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #233 · 2026-11-19T02:11:41+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：rc.53（run 44364213218）未到达 UI 门禁：MSVC C2039 指出投影聚合循环把 std::unique_ptr<ProjectorView> 当作值使用（view.graph）。修复为 view->graph（提交 a33b267）。同时撤销我上一版把回环 flow 改为“最旧 pts 前进”的规则（提交 8b09fa3）：fixture 用 -re -stream_loop -1 -c copy，循环处时间戳会回绕，且 MediaMTX 会向新读者吐出环形缓冲，健康路径同样可能给出不变或负的时间戳；若据此重启健康的发布进程，产品会重连并重新出帧，可能掩盖真实解码停滞。现在只有“两次新读取都为空”才算发布方故障（本机 MediaMTX 1.18.2 实验证实杀进程后 [0,0]），包数与最新时间戳仅作证据。派发 rc.55（run 44366851677，soak 分支 5b8a9ac）。
+- 证据：run 44364213218 编译日志 11_Compile…txt 第 2914/2918 行 C2039；本机 python3 -m py_compile 通过；rc.54 run 44366334192 已取消（含不可靠的 pts 规则）；栈头 8b09fa3/7169e21/985226a/5b8a9ac/f78e76e/bc7dc97。
+- 源码：`a3dc48a4d9c96d1ed30114ed3ef7c2624f10ca56`
 ## #232 · 2026-11-19T02:07:03+08:00 · log
 
 - Agent：`deepseek-v51-20261118-01`；任务：`V51-014`
