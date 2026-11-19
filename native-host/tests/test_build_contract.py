@@ -1343,6 +1343,108 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("pixel_windows.steady_tone_window", gate)
 
 
+    def test_the_publish_toggle_says_why_the_owned_window_was_unusable(self):
+        """Run 44587525224: the resume toggle failed with an empty AssertionError.
+
+        ui() answers False in two different situations - this boot's own state
+        observation was unusable, or UI Automation refused the owned window - and a bare
+        ``assert ui(...)`` reported neither, so the installed gate stopped at
+        ``program-publish-disconnect`` with detail ``AssertionError: ``. ui_control waits
+        only for the addressability case and records every reason; a real UI Automation
+        refusal is not retried, because the click never landed, and failure_detail only
+        appends the recorded verdict to an assert that had no message of its own. The
+        publish acceptance itself is unchanged.
+        """
+        source = (ROOT / "native-host/tests/product_windows.py").read_text(encoding="utf-8")
+        lines = source.splitlines()
+        start = next(index for index, line in enumerate(lines, 1)
+                     if 'phase = "program-publish-disconnect"' in line)
+        end = next(index for index, line in enumerate(lines, 1)
+                   if "restarted publisher never delivered frames again" in line)
+        tree = ast.parse(source)
+        bare = [node.lineno for node in ast.walk(tree) if isinstance(node, ast.Assert)
+            and isinstance(node.test, ast.Call) and getattr(node.test.func, "id", "") == "ui"
+            and start <= node.lineno <= end]
+        self.assertEqual(bare, [], "a publish toggle still has an unexplained bare assert")
+        self.assertEqual(source.count('ui_control("stream-program"'), 2,
+            "both publish toggles of the relay-loss probe have to record their reason")
+        for wiring in ('"lastUiUnavailable"', '"lastStateObservation"', '"reportedHandles"',
+                       '"productControlWaits"', "def window_owner"):
+            self.assertIn(wiring, source)
+
+        spec = importlib.util.spec_from_file_location("product_windows",
+            ROOT / "native-host/tests/product_windows.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        node = next(item for item in ast.walk(ast.parse(source))
+            if isinstance(item, ast.FunctionDef) and item.name == "ui_control")
+        exec(compile(ast.get_source_segment(source, node), str(ROOT / "native-host/tests/product_windows.py"),
+            "exec"), module.__dict__)
+
+        class FakeTime:
+            def __init__(self):
+                self.now = 0.0
+            def monotonic(self):
+                return self.now
+            def sleep(self, seconds):
+                self.now += seconds
+
+        def run(ui_results, *, unavailable=None, refusal=None, timeout=15):
+            module.time = FakeTime()
+            module.evidence = {}
+            if refusal is not None:
+                module.evidence["lastUiFailure"] = refusal
+            seen = []
+            outcomes = list(ui_results)
+
+            def fake_ui(action, **fields):
+                seen.append(action)
+                passed = outcomes.pop(0)
+                # Only a failed call leaves a reason behind, exactly as ui() does.
+                if passed:
+                    module.evidence.pop("lastUiUnavailable", None)
+                elif unavailable is not None:
+                    module.evidence["lastUiUnavailable"] = unavailable
+                return passed
+            module.ui = fake_ui
+            return module.ui_control("stream-program", label="publish again after a relay loss",
+                timeout=timeout), seen
+
+        recovered, calls = run([False, False, True], unavailable={"stage": "stream-program",
+            "code": "owned-window-unavailable", "matchedWindows": 0, "reportedHandles": ["gone"],
+            "stateObservation": {"code": "state-file-unreadable"}})
+        self.assertTrue(recovered)
+        self.assertEqual(calls, ["stream-program", "stream-program", "stream-program"])
+        self.assertEqual(module.evidence["productControlWaits"][-1]["recoveredAfterAttempts"], 2)
+        self.assertEqual(module.evidence["productControlWaits"][-1]["unusableAttempts"][0]["code"],
+            "owned-window-unavailable")
+        self.assertNotIn("lastUiUnavailable", module.evidence)
+
+        refused, calls = run([False], unavailable=None, refusal={"stage": "initialize",
+            "code": "product-window"})
+        self.assertFalse(refused, "a UI Automation refusal must not be retried or hidden")
+        self.assertEqual(calls, ["stream-program"], "a refusal means the click never landed, so retrying would double it")
+        self.assertIsNone(module.evidence["productControlWaits"][-1]["lastUnavailable"])
+        self.assertEqual(module.evidence["productControlWaits"][-1]["lastUiFailure"]["code"], "product-window")
+
+        never, calls = run([False] * 40, unavailable={"stage": "stream-program",
+            "code": "owned-window-unavailable", "matchedWindows": 0, "reportedHandles": ["gone"]},
+            timeout=6)
+        self.assertFalse(never, "a window that stays unusable still fails the gate")
+        self.assertGreater(len(calls), 1)
+        self.assertLessEqual(len(module.evidence["productControlWaits"][-1]["unusableAttempts"]), 4)
+        self.assertEqual(module.evidence["productControlWaits"][-1]["recoveredAfterAttempts"], 0)
+
+        empty = module.failure_detail(AssertionError(""), {"lastUiUnavailable":
+            {"stage": "stream-program", "code": "owned-window-unavailable",
+             "reportedHandles": ["gone", "other-process(4321)"]}})
+        self.assertIn("owned-window-unavailable", empty)
+        self.assertIn("gone", empty)
+        self.assertEqual(module.failure_detail(AssertionError("publish control could not resume"),
+            {"lastUiUnavailable": {"code": "owned-window-unavailable"}}),
+            "AssertionError: publish control could not resume",
+            "an assertion that already explains itself must not be rewritten")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
