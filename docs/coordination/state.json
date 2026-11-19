@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 254,
-  "updated_at": "2026-11-19T21:31:51+08:00",
+  "revision": 255,
+  "updated_at": "2026-11-19T22:30:40+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1305,12 +1305,15 @@
         "commit a1af1b9; gh run 44524750280 @ 937129b = 5.1.0-rc.61 (soak_minutes=0); 容器内应用补丁后的 libobs/obs-source.c 与 product_window/product_scene/product_scene_libobs_test -fsyntax-only 全部 exit=0；test_build_contract 47/47、test_pixels 28（2 skip）",
         "gh run 44524750280 = 5.1.0-rc.61 @ 937129b7c759132b7f7f6af632ac72e8bc7dccb2；commit a1af1b9（codex/v51-r3-output）；rebased heads d772808/cd3dd2f/42bc704/705fa08/937129b；pinned OBS fb4d98bf git apply --check 与 patch -p1 通过；Fedora 44 容器（gcc/gcc-c++、Qt6、jansson、simde、uthash）-fsyntax-only exit=0；test_build_contract.py 47/47、test_pixels.py 28（2 skip）；rc.60 回执 /tmp/rc60rec.QsaP",
         "rc.61 回执 /tmp/rc61rec.xbza/native-product-integration-receipts-5.1.0-rc.61/native-product-entry-ui.json：checks 42、failurePhase=program-streaming、programStreamBandRms {below600Hz:1379.3,above660Hz:911.2}、WebOBS async backlog/timestamp jump 均为 0；TAKE、逐轨总线录像与发布双音调都已通过",
-        "本机验证：Fedora 44 容器内 product_window.cpp/product_scene.cpp -fsyntax-only -Wall -Wextra exit=0；应用补丁后的 libobs/obs-source.c -fsyntax-only -Wall exit=0（patch -p1 通过）；native-host/tests/test_*.py 全套通过（两个需 --probe 的真机探针除外）；git diff --check 干净"
+        "本机验证：Fedora 44 容器内 product_window.cpp/product_scene.cpp -fsyntax-only -Wall -Wextra exit=0；应用补丁后的 libobs/obs-source.c -fsyntax-only -Wall exit=0（patch -p1 通过）；native-host/tests/test_*.py 全套通过（两个需 --probe 的真机探针除外）；git diff --check 干净",
+        "rc.62 run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44534272424 @ f88b525e：42 项通过，failurePhase=program-streaming，programStreamVideoProbe frames=0/ptsSpanSeconds=0.0/returnCode=0，stderr 'co located POCs unavailable'+'mmco: unref short failure'，renderFrames 10620→10680、laggedFrames 8→8、streamConnected true、renderProbe available=false；programStreamBandRms 1377.1/907.2",
+        "codex/v51-r3-output@d6d2624；test_build_contract.py 48/48；native-host/tests/test_*.py 全套通过（两个需 --probe 的真机探针除外）；栈头已 rebase 推送：#70 825442d、#71 46f7b14、#74 223c7b7、#75 41fc1ad、#76 dab2e0f",
+        "run 44544305133 = 5.1.0-rc.63 @ dab2e0fa3e87db7f11d0331f6ccf2043266be9f1（codex/v51-r4-legacy-import，soak_minutes=0）in_progress"
       ],
       "blocker": "",
-      "next_step": "读 rc.62（run 44534272424 @ f88b525）回执：确认 TAKE、逐轨增益与完整 NSIS 在同一轮通过后再合并 #67→#70→#71→#74→#75→#76 并冻结候选；若仍停在发布视频帧，用 programStreamVideoProbe 的返回码/实测帧率与宿主 renderFrames/laggedFrames 判定是编码器 pacing 还是中继读取；本轮不合并不跑两小时长稳。",
-      "updated_at": "2026-11-19T21:31:51+08:00",
-      "last_note": "rc.61（run 44524750280 @ 937129b）42 项通过后首次不再停在 TAKE，改停在 program-streaming：published Program did not deliver enough video frames。该断言原先没有 ffprobe 返回码/stderr/帧数/pts 跨度与宿主渲染计数，无法区分编码器 pacing、中继拒读与宿主图形线程停滞；已补 programStreamVideoProbe 且阈值不变。同时把 render probe 改为只在 harness 通过 product-render-probe.control 打开的窗口内绘制（tick ≤250 ms 读一次，缺文件/过期/untilMs:0 都不绘制），像素断言窗口内关闭，只在像素断言即将失败时加一次探针开启的采集（pixelFailureDiagnostics.probeOnWindow），避免探针拖慢发布 pacing 或用 inc_showing 复活播放掩盖冻结。已在 f88b525（rebased heads 2a635b3/8f5e5b4/fade489/148fa38）派发 5.1.0-rc.62（run 44534272424，soak_minutes=0）。"
+      "next_step": "读 rc.63 的 programStreamVideoProbe.packetProbe：keyframes=0 说明编码器 IDR 没到新客户端，对照编码器送出与 MediaMTX 交给新连接的首包并检查 IDR/SPS-PPS 缺失段；keyframes>=2 且 frames>=10、跨度>=2s 则继续核对逐轨增益、偏移、发布断开恢复与 NSIS 安装回执齐全后再合并与冻结候选。",
+      "updated_at": "2026-11-19T22:30:40+08:00",
+      "last_note": "rc.62 与 rc.61 同点失败已定位方向：晚加入的 RTSP 客户端在下一个关键帧前就结束了 20 包读取；两个 Program 发布视频门禁改为共用按秒窗口读取器并新增包探针，中继被杀后的恢复门禁同修，pts_time 字符串解析修正，新增契约测试锁定 keyint 与断言。"
     },
     {
       "id": "COORD-008",
@@ -4441,6 +4444,20 @@
         "本机验证：Fedora 44 容器内 product_window.cpp/product_scene.cpp -fsyntax-only -Wall -Wextra exit=0；应用补丁后的 libobs/obs-source.c -fsyntax-only -Wall exit=0（patch -p1 通过）；native-host/tests/test_*.py 全套通过（两个需 --probe 的真机探针除外）；git diff --check 干净"
       ],
       "git_revision": "8c9c74bcd2f654805280bb127f5daece35f4e599"
+    },
+    {
+      "sequence": 255,
+      "at": "2026-11-19T22:30:40+08:00",
+      "agent": "qwen38-next-v51-20261119-01",
+      "task": "V51-008",
+      "action": "update",
+      "note": "rc.62 与 rc.61 同点失败已定位方向：晚加入的 RTSP 客户端在下一个关键帧前就结束了 20 包读取；两个 Program 发布视频门禁改为共用按秒窗口读取器并新增包探针，中继被杀后的恢复门禁同修，pts_time 字符串解析修正，新增契约测试锁定 keyint 与断言。",
+      "evidence": [
+        "rc.62 run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44534272424 @ f88b525e：42 项通过，failurePhase=program-streaming，programStreamVideoProbe frames=0/ptsSpanSeconds=0.0/returnCode=0，stderr 'co located POCs unavailable'+'mmco: unref short failure'，renderFrames 10620→10680、laggedFrames 8→8、streamConnected true、renderProbe available=false；programStreamBandRms 1377.1/907.2",
+        "codex/v51-r3-output@d6d2624；test_build_contract.py 48/48；native-host/tests/test_*.py 全套通过（两个需 --probe 的真机探针除外）；栈头已 rebase 推送：#70 825442d、#71 46f7b14、#74 223c7b7、#75 41fc1ad、#76 dab2e0f",
+        "run 44544305133 = 5.1.0-rc.63 @ dab2e0fa3e87db7f11d0331f6ccf2043266be9f1（codex/v51-r4-legacy-import，soak_minutes=0）in_progress"
+      ],
+      "git_revision": "7afa8a22439ba549b4857ed0f5967cc14835bebe"
     }
   ]
 }

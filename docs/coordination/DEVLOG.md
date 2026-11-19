@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 254 · 2026-11-19T21:31:51+08:00（UTC+08）
+> 快照版本 255 · 2026-11-19T22:30:40+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #255 · 2026-11-19T22:30:40+08:00 · update
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：rc.62 与 rc.61 同点失败已定位方向：晚加入的 RTSP 客户端在下一个关键帧前就结束了 20 包读取；两个 Program 发布视频门禁改为共用按秒窗口读取器并新增包探针，中继被杀后的恢复门禁同修，pts_time 字符串解析修正，新增契约测试锁定 keyint 与断言。
+- 证据：rc.62 run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44534272424 @ f88b525e：42 项通过，failurePhase=program-streaming，programStreamVideoProbe frames=0/ptsSpanSeconds=0.0/returnCode=0，stderr 'co located POCs unavailable'+'mmco: unref short failure'，renderFrames 10620→10680、laggedFrames 8→8、streamConnected true、renderProbe available=false；programStreamBandRms 1377.1/907.2；codex/v51-r3-output@d6d2624；test_build_contract.py 48/48；native-host/tests/test_*.py 全套通过（两个需 --probe 的真机探针除外）；栈头已 rebase 推送：#70 825442d、#71 46f7b14、#74 223c7b7、#75 41fc1ad、#76 dab2e0f；run 44544305133 = 5.1.0-rc.63 @ dab2e0fa3e87db7f11d0331f6ccf2043266be9f1（codex/v51-r4-legacy-import，soak_minutes=0）in_progress
+- 源码：`7afa8a22439ba549b4857ed0f5967cc14835bebe`
 ## #254 · 2026-11-19T21:31:51+08:00 · update
 
 - Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`

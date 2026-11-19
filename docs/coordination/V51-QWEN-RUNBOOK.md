@@ -76,6 +76,20 @@ python3 "$project/scripts/v51-ci-gate.py" 44385767337 \
 
 Probe draws are window-scoped: the host only draws while `product-render-probe.control` (next to `product-state.json`, `{"schema":1,"untilMs":<unix ms>}`) has an open window, so an absent file, an expired window or `untilMs: 0` draws nothing. Asserted pixel windows run with the probe closed, and only a pixel failure adds one probe-open capture in `pixelFailureDiagnostics.probeOnWindow`. Read `programStreamVideoProbe` for the published-frame failure instead of retrying the same SHA.
 
+### rc.62 起：Program 发布视频要先等关键帧 / Program published video must wait for a keyframe (since rc.62)
+
+rc.61（run 44524750280）与 rc.62（run 44534272424）连续两轮停在 `program-streaming`，详情同为 `published Program did not deliver enough video frames`；同轮 TAKE 像素、录像双音、发布流双音都通过。回执里 ffprobe 返回码 0、`frames` 0、`ptsSpanSeconds` 0.0，stderr 是 `co located POCs unavailable` 与 `mmco: unref short failure`，而宿主 `renderFrames` 在该窗口 +60、`laggedFrames` 不变、`streamConnected` true、`streamError` 空，`observedState.renderProbe` 为 `{"available": false}`。这组数值说明宿主在产出帧、中继在推流，解码端一帧都不认：晚加入的 RTSP 客户端落在编码器当前 GOP 内，旧探针只读 20 个包（约 0.7 s），而 `product_output.cpp` 两处都设 `keyint_sec 2`。另外 `pts_time` 是字符串，旧代码只接受数字，跨度恒记为 0。
+
+从 `codex/v51-r3-output@d6d2624` 起，两个 Program 发布视频门禁（首次推流与中继被杀后的恢复推流）共用 `published_video_window()`：同一条连接读 6 秒（≥2 个关键帧周期），`float()` 解析字符串 `pts_time`，输出 `firstDecodableFrameMs`、`windowTimedOut`、`elapsedMs`、`unparsableStamps`，并由独立线程读完 stderr。断言为 ≥10 帧、时间戳严格递增、跨度 ≥ 一个关键帧周期；返回码要求去掉，因为窗口结束会主动终止这条刻意长开的连接。副连接 `published_packet_window()` 给出 `packetProbe`（包数、关键帧包数、`firstPacketIsKey`、首个关键帧 pts、关键帧间隔）。`test_build_contract.py` 里的 `test_published_program_video_gate_waits_past_a_keyframe_for_a_late_join` 从 `product_output.cpp` 解析 `keyint_sec` 并要求与门禁常量一致、窗口 ≥2 倍、两处都用共享读取器、文件内不得残留 `%+#20`。
+
+读 rc.63（run 44544305133，源码 `dab2e0f`）时按这个顺序判断：
+
+1. `packetProbe.keyframes >= 2` 且 `frames >= 10`、跨度 ≥2 s：发布路径已通，继续看 `program-track-controls`、`program-track-offset`、`program-publish-disconnect` 与 NSIS 安装回执是否齐全。
+2. `packetProbe.keyframes` 为 0：编码器送出的 IDR 没有到达新客户端，对照编码器侧送出与 MediaMTX 交给新连接的首包，检查 IDR 与 SPS/PPS 在哪一段缺失（例如是否需要 `repeat_headers`），再决定改产品还是改探针。
+3. 有关键帧包但 `frames` 仍为 0：参数集没到解码器，或 `unparsableStamps`/`stderrTail` 指向具体解码失败；不要靠加长窗口通过。
+4. `firstDecodableFrameMs` 明显大于窗口长度的一半以上：把它和 `windowTimedOut` 一起读，区分“等到下一个 IDR”与“根本没等到”。
+
+
 ## 4. 全栈通过后走到成品
 
 | 次序 | 要完成的动作 | 可接受的证据 |
