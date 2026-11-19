@@ -53,6 +53,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -114,6 +115,13 @@ class ProductWindow final : public QWidget {
 	bool render_probe_enabled_ = qEnvironmentVariable("WEBOBS_PRODUCT_RENDER_PROBE") == "1";
 	bool render_probe_attached_ = false;
 	int render_probe_ticks_ = 0;
+	// The probe only draws inside a window the harness opens in a control file beside
+	// product-state.json. Without an open window nothing is drawn, no source is marked
+	// showing and no readback blocks the graphics thread, so the probe cannot revive a
+	// feed, take async frames out of the queue or slow the Program encoder.
+	std::atomic<qint64> render_probe_until_ms_{0};
+	qint64 render_probe_control_checked_ms_ = 0;
+	QString render_probe_control_path_;
 	RenderProbeSlot render_probe_slots_[2];
 	std::vector<RenderProbeSample> render_preview_samples_;
 	std::vector<RenderProbeSample> render_program_samples_;
@@ -538,6 +546,13 @@ class ProductWindow final : public QWidget {
 		auto *self = static_cast<ProductWindow *>(param);
 		if (!self->render_probe_attached_ || self->tearing_down_)
 			return;
+		// Reading a few bytes at most four times per second keeps the window request
+		// responsive without putting file I/O on the graphics thread every tick.
+		const qint64 now = QDateTime::currentMSecsSinceEpoch();
+		if (now - self->render_probe_control_checked_ms_ >= 250)
+			self->render_probe_read_control(now);
+		if (now >= self->render_probe_until_ms_.load())
+			return;
 		obs_enter_graphics();
 		const int index = self->render_probe_ticks_ % 2;
 		if (self->render_probe_slots_[index].staged)
@@ -547,6 +562,29 @@ class ProductWindow final : public QWidget {
 		++self->render_probe_ticks_;
 		obs_leave_graphics();
 	}
+	// Harness window request: {"schema":1,"untilMs":<unix ms>}. A missing or unreadable
+	// file keeps the previous window, so a concurrent writer cannot silently close an
+	// open window mid-capture; the harness closes it explicitly with untilMs 0.
+	void render_probe_read_control(qint64 now)
+	{
+		render_probe_control_checked_ms_ = now;
+		if (render_probe_control_path_.isEmpty()) {
+			char *base = obs_module_config_path("product-render-probe.control");
+			render_probe_control_path_ = QString::fromUtf8(base ? base : "");
+			bfree(base);
+			if (render_probe_control_path_.isEmpty())
+				return;
+		}
+		QFile file(render_probe_control_path_);
+		if (!file.open(QIODevice::ReadOnly))
+			return;
+		const auto parsed = QJsonDocument::fromJson(file.read(256)).object();
+		if (!parsed.contains("untilMs"))
+			return;
+		const qint64 until = parsed.value("untilMs").toVariant().toLongLong();
+		render_probe_until_ms_.store(until > 0 ? until : 0);
+	}
+
 	// Runs inside obs_enter_graphics on the graphics thread (the same pattern OBS's own
 	// screenshot helper uses): draw the Scene copy, then stage it for the next tick.
 	void render_probe_draw(int index)
@@ -684,7 +722,10 @@ class ProductWindow final : public QWidget {
 		if (!render_probe_enabled_)
 			return;
 		std::lock_guard<std::mutex> guard(render_probe_mutex_);
+		const qint64 until = render_probe_until_ms_.load();
 		state.insert("renderProbe", QJsonObject{{"enabled", true},
+			{"windowUntilMs", until},
+			{"windowOpen", until > QDateTime::currentMSecsSinceEpoch()},
 			{"preview", render_probe_samples_json(render_preview_samples_)},
 			{"program", render_probe_samples_json(render_program_samples_)}});
 	}
