@@ -6,6 +6,7 @@ import ast
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -280,6 +281,43 @@ class BuildContractTests(unittest.TestCase):
                           "unparsableStamps", "stamp = float(value)"):
             self.assertIn(assertion, gate)
 
+
+    def test_published_video_window_parses_string_stamps_and_keeps_bounded_noise(self):
+        """The shared window reader must not drop ffprobe's string pts_time.
+
+        The rc.61/rc.62 receipt recorded a span of 0 because only int/float stamps
+        were accepted, while ffprobe writes pts_time as text. A fake ffprobe also
+        proves that an "N/A" row is reported instead of counted, that a repeating
+        stderr tail cannot block the window, and that the window ends by killing a
+        deliberately long-lived connection. This only checks the reader, not the
+        published Program, and it skips where a script cannot be executed.
+        """
+        if os.name == "nt":
+            self.skipTest("fake ffprobe needs a POSIX executable")
+        spec = importlib.util.spec_from_file_location("product_windows",
+            ROOT / "native-host/tests/product_windows.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as temporary:
+            fake = Path(temporary) / "ffprobe"
+            fake.write_text("#!/usr/bin/env python3\n"
+                "import sys, time\n"
+                "sys.stderr.write('co located POCs unavailable\\n' * 3)\n"
+                "sys.stderr.flush()\n"
+                "for stamp in ('1.000000', 'N/A', '1.033333', '1.066666', '1.100000'):\n"
+                "    print(stamp, flush=True)\n"
+                "time.sleep(0.2)\n", encoding="utf-8")
+            fake.chmod(0o755)
+            window = module.published_video_window(fake, "rtsp://127.0.0.1:1/program", 30)
+            self.assertEqual(window["frames"], 4)
+            self.assertEqual(window["unparsableStamps"], ["N/A"])
+            self.assertEqual(window["stamps"], [1.0, 1.033333, 1.066666, 1.1])
+            self.assertTrue(window["monotonicTimestamps"])
+            self.assertAlmostEqual(window["ptsSpanSeconds"], 0.1, places=3)
+            self.assertTrue(window["firstDecodableFrameMs"] >= 0)
+            self.assertFalse(window["windowTimedOut"])
+            self.assertEqual(window["returnCode"], 0)
+            self.assertIn("co located POCs unavailable", window["stderrTail"])
 
     def test_build_symbols_are_stripped_before_the_manifest(self):
         builder = (ROOT / "desktop/scripts/build-obs-native.ps1").read_text(encoding="utf-8")
