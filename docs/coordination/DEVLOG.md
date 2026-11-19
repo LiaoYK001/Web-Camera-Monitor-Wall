@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 264 · 2026-11-20T00:40:00+08:00（UTC+08）
+> 快照版本 265 · 2026-11-20T01:27:37+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #265 · 2026-11-20T01:27:37+08:00 · update
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：rc.67（run 44568325933、源码 c29227a）49 项通过但仍失败于门禁：混音观察返回 PID 列表而端口比较按回执行读取 row["hostClaims"]，抛 TypeError；观察现返回记录行并断言行形状（修复 0874fd4）。该轮端口读法已生效：start 端口 51078/51389、停止前后 51389、宿主声明混音 mixerPort=51389，TAKE/双总线隔离/逐轨静音/逐轨增益 0.2007/录像失败路径/设备操作入口均已落进回执。rc.68 run 44577184643 已派发。
+- 证据：rc.67 回执 /tmp/rc67.0oFX/native-product-integration-receipts-5.1.0-rc.67/native-product-entry-ui.json：programTrackGain gainOne 2165.6/2159.0、gainPointTwo 2160.3/433.6（比值 0.2007）、programTrackMute 880Hz=0.1、programBusIsolation busTwo 440Hz=2889.5/1200Hz=0.5 与 busThree 1200Hz=2542.5/440Hz=0.7、recordingFailureReceipt recording-directory-failed、deviceOperations 有 ONVIF probe/GetProfiles；发布流探针 firstDecodableFrameMs 3452（首次）/1844（恢复）、windowTimedOut true、returnCode 1，伴随 h264 中途加入解码告警。本机 test_build_contract.py 52/52、native-host/tests/test_*.py 全套通过（两个需显式 --probe 的真机探针除外）、git diff --check 干净。链式同步后 #67 0874fd4、#70 559a0f9、#71 dd92696、#74 33ce403、#75 c5ed74f、#76 2c0e99d（各分支自身提交数不变）。rc.68 run 44577184643 源码 2c0e99dc04a81fd8d92f878a5e2f6da682507420、soak_minutes=0。NSIS 安装态、两小时长稳与目标机 OBS 对照仍未执行；本机无 PowerShell，NSIS 脚本只静态核对了 Python 参数与文件存在性。
+- 源码：`da197f9108b68914632b573d31c2a17ddf067fbd`
 ## #264 · 2026-11-20T00:40:00+08:00 · update
 
 - Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`

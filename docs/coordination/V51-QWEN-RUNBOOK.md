@@ -106,7 +106,9 @@ rc.64（run 44548882087）通过 49 项后停在 `program-publish-disconnect`：
 
 从 `329178b` 起，端口在截断之前读取：`mixer_identities()` 返回 `{identity(160), tail(80), port}`，端口来自掩码后的完整命令行，而不是被截断的显示串。真实混音命令行约 485~509 字符、回环目标 `tcp://127.0.0.1:<port>?listen=1` 落在末尾，若先截断再解析，每个存活混音都会返回 `None`、`watched_ports()` 为空，收敛断言会把正常服务的混音报成“声明端口没有辅助进程”。读收敛失败回执时先看 `processes[].port` 是否全为 `null`：全为 `null` 说明是门禁读法问题，此时 `tail` 里仍有 `tcp:<port>` 可核对；端口确实存在而声明端口无人服务，才是产品侧混音监督缺口。
 
-当前轮：`5.1.0-rc.67`（run [44568325933](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44568325933)，派发栈顶 `c29227a8a5bd0e4bce697aad083506d6528dd554`，`soak_minutes=0`）。`5.1.0-rc.66`（run 44563580338，源码 `496be556`）在发现上述截断缺陷后取消，不留下会把存活混音报成无 feeder 的误导回执。NSIS 安装步骤只在门禁步骤成功时运行，所以本轮也是第一次可能取得安装态回执（`installed-ui`、`nsis`、`restore-pair`、`legacy-import`、`lan`）。只有 TAKE、发布视频、逐轨增益与完整 NSIS 在同一轮齐全，才推进合并与冻结候选；若某声明端口仍无存活辅助进程，才在产品侧补混音监督（在同一端口重新拉起并保持源设置），并让断言继续覆盖重复与游离辅助进程。
+从 `0874fd4` 起，混音观察返回它写入 `audioMixHelperWatch` 的回执行，不再是辅助进程 PID 列表；`watched_ports()`/`claimed_ports()` 会先断言收到的是行。读法：若某轮在 `program-publish-disconnect` 抛 `TypeError: list indices must be integers or slices, not str`，那是门禁把 PID 列表当成了回执行，不代表混音失败；先看 `audioMixHelperWatch` 各行是否已经记下 `processes[].port` 与 `hostClaims[].mixerPort`。rc.67（run 44568325933，源码 `c29227a8`）正是这种读法：49 项通过、端口已读到（start `51078`/`51389`，停止前后 `51389`）、宿主唯一声明的混音 `mixerPort=51389`，按收敛规则本应判为通过。
+
+当前轮：`5.1.0-rc.68`（run [44577184643](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44577184643)，派发栈顶 `2c0e99dc04a81fd8d92f878a5e2f6da682507420`，`soak_minutes=0`）。这是 v5.1 里第一次可能真正运行 NSIS 安装态脚本（`installed-ui`、`nsis`、`restore-pair`、`legacy-import`、`lan`、`updater`、`upgraded-ui`）：门禁步骤失败时该步骤不会运行，本机也没有 PowerShell 可预解析，只能静态核对被调用的 Python 文件与其参数。NSIS 安装步骤只在门禁步骤成功时运行，所以本轮也是第一次可能取得安装态回执（`installed-ui`、`nsis`、`restore-pair`、`legacy-import`、`lan`）。只有 TAKE、发布视频、逐轨增益与完整 NSIS 在同一轮齐全，才推进合并与冻结候选；若某声明端口仍无存活辅助进程，才在产品侧补混音监督（在同一端口重新拉起并保持源设置），并让断言继续覆盖重复与游离辅助进程。
 
 ## 4. 全栈通过后走到成品
 
