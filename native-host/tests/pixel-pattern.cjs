@@ -64,6 +64,39 @@ function inspectEmpty(image, { inset = 0 } = {}) {
   }
   return [];
 }
+// Evidence only: a frozen slot needs a cause, so every sample also reports
+// content digests of the whole client and of each tile region. Identical digests
+// across samples say which region stopped repainting without changing any
+// colour, marker or timecode assertion.
+const fnv1a = (values) => {
+  let hash = 0x811c9dc5;
+  for (const value of values) { hash ^= value; hash = Math.imul(hash, 0x01000193) >>> 0; }
+  return hash.toString(16).padStart(8, '0');
+};
+function sceneTransform(image, { inset = 0 } = {}) {
+  const scale = Math.min((image.width - inset * 2) / 960, (image.height - inset * 2) / 540);
+  return { scale, left: (image.width - scale * 960) / 2, top: (image.height - scale * 540) / 2 };
+}
+function tileDigests(image, options = {}) {
+  const { order = ORDER, quick = false } = options;
+  const grid = geometry(order, quick);
+  const { scale, left, top } = sceneTransform(image, options);
+  return order.map((channel, slot) => {
+    const x0 = slot % grid.columns * grid.width, y0 = Math.floor(slot / grid.columns) * grid.height;
+    const values = [];
+    for (let y = 0; y < 180; y += 12) for (let x = 0; x < 320; x += 16)
+      values.push(...image.pixel(Math.floor(left + (x0 + grid.padX + x * grid.fit) * scale),
+        Math.floor(top + (y0 + grid.padY + y * grid.fit) * scale)));
+    return fnv1a(values);
+  });
+}
+function clientDigest(image) {
+  const stepX = Math.max(1, Math.round(image.width / 120)), stepY = Math.max(1, Math.round(image.height / 68));
+  const values = [];
+  for (let y = 0; y < image.height; y += stepY) for (let x = 0; x < image.width; x += stepX)
+    values.push(...image.pixel(x, y));
+  return fnv1a(values);
+}
 function analyze(directory, options) {
   const samples = [];
   for (let i = 0; i < 8; i++) {
@@ -73,8 +106,10 @@ function analyze(directory, options) {
       assert.ok(bytes.length <= 64 * 1024 * 1024, 'Oversized screenshot');
       const image = pattern.bitmap(bytes);
       size = ` (bitmap ${image.width}x${image.height})`;
-      samples.push({ sample: i, passed: true, width: image.width, height: image.height,
-        counters: options.empty ? inspectEmpty(image, options) : inspect(image, options) });
+      const counters = options.empty ? inspectEmpty(image, options) : inspect(image, options);
+      samples.push({ sample: i, passed: true, width: image.width, height: image.height, counters,
+        clientDigest: clientDigest(image),
+        tileDigests: options.empty ? [] : tileDigests(image, options) });
     } catch (error) {
       // fs errors contain local paths; public synthetic summaries must not.
       const message = error.code && error.code !== 'ERR_ASSERTION' ? `Synthetic client sample unavailable (${error.code})` : String(error.message).slice(0, 200) + size;
@@ -90,7 +125,16 @@ function analyze(directory, options) {
     }
     catch (error) { progressError = String(error.message); }
   }
-  return { passed: samples.every(s => s.passed) && temporalProgress, samples, temporalProgress, ...(progressError ? { progressError } : {}) };
+  // Which region stopped repainting: one tile, several tiles or the whole client.
+  const verified = samples.filter(s => s.passed);
+  const distinctClientCount = new Set(verified.map(s => s.clientDigest)).size;
+  const distinctTileCounts = options.empty ? [] : options.order.map(
+    (_, slot) => new Set(verified.map(s => s.tileDigests[slot])).size);
+  const staleTiles = options.empty || !options.dynamic ? [] :
+    distinctTileCounts.map((count, slot) => count === 1 && verified.length >= 3 ? slot : -1).filter(slot => slot >= 0);
+  return { passed: samples.every(s => s.passed) && temporalProgress, samples, temporalProgress,
+    distinctClientCount, distinctTileCounts, staleTiles,
+    ...(progressError ? { progressError } : {}) };
 }
 function synthetic(width, height, { order = ORDER, counter = 3, inset = 0, dynamic = true, quick = false } = {}) {
   const grid = geometry(order, quick);
@@ -135,6 +179,17 @@ function selftest() {
   assert.throws(() => quickProgress([0, 1, 2].map(i => [i,i,i,i,i,i,0]), 7), /slot 7/);
   const wrong = [0, 1, 2, 3, 4, 0, 1];
   assert.throws(() => inspect(synthetic(960,540,{ order: wrong, quick: true }), { order: [1,1,2,3,4,0,1], quick: true }), /Wrong channel/);
+  for (const [first, second] of [[3, 4], [3, 39]]) {
+    const a = synthetic(960, 540, { counter: first }), b = synthetic(960, 540, { counter: second });
+    assert.deepEqual(tileDigests(a, {}), tileDigests(a, {}));
+    assert.notDeepEqual(tileDigests(a, {}), tileDigests(b, {}));
+    assert.notEqual(clientDigest(a), clientDigest(b));
+  }
+  assert.equal(new Set(tileDigests(synthetic(960, 540, { order: REPEAT_FIRST }), { order: REPEAT_FIRST })).size, 1);
+  for (const count of [1, 5, 7])
+    assert.equal(tileDigests(synthetic(1280, 760, { order: Array.from({ length: count }, (_, i) => i % 5), quick: true, inset: 10 }),
+      { order: Array.from({ length: count }, (_, i) => i % 5), quick: true, inset: 10 }).length, count);
+  assert.equal(tileDigests(synthetic(601, 400, { inset: 10 }), { inset: 10 }).length, 5);
   console.log('PASS: 3x2 SCALE_INNER, Preview inset, colors, markers, all five temporal channels and negative cases');
 }
 if (require.main === module) {
@@ -154,4 +209,4 @@ if (require.main === module) {
       empty: mode === 'analyze-empty', order: channels, quick, dynamic: dynamic === 'true' })));
   } else throw new Error('Expected selftest, fixture or analyze');
 }
-module.exports = { inspect, inspectEmpty, analyze, synthetic };
+module.exports = { inspect, inspectEmpty, analyze, synthetic, tileDigests, clientDigest };

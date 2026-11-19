@@ -46,7 +46,7 @@ def exercise():
         try:
             assert supervisor.prepare() is True
             assert supervisor.complete is True
-            for name in ("config", "recordings", "backups", "snapshots", "config/go2rtc",
+            for name in ("config", "recordings", "recordings/program", "backups", "snapshots", "config/go2rtc",
                          "config/keys", "config/node"):
                 assert (root / name).is_dir(), f"complete profile missing {name}"
             key = root / "run/backup.key"
@@ -54,6 +54,9 @@ def exercise():
             environment = supervisor.environment
             assert environment["WEBOBS_NVR_ENABLED"] == "true"
             assert environment["WEBOBS_GO2RTC_ENABLED"] == "true"
+            # webobsd must remain Direct-only: composite_enabled flips the control
+            # server into OBS composition and it fails to start on the native
+            # runtime. Program recording/publishing belong to the native host instead.
             assert environment["WEBOBS_COMPOSITE_ENABLED"] == "false"
             assert Path(environment["WEBOBS_FFMPEG_PATH"]).name == "ffmpeg.exe"
             assert Path(environment["WEBOBS_FFMPEG_PATH"]).parent.name == "bin"
@@ -69,7 +72,7 @@ def exercise():
                 os.environ.pop("WEBOBS_PRODUCT_TEST_ROOT", None)
             else:
                 os.environ["WEBOBS_PRODUCT_TEST_ROOT"] = previous
-        print("PASS complete supervisor paths, services, backup key and direct-only media policy")
+        print("PASS complete supervisor paths, services, backup key and on-demand Program output policy")
 
 
 if __name__ == "__main__":
