@@ -1368,9 +1368,20 @@ class BuildContractTests(unittest.TestCase):
         self.assertEqual(bare, [], "a publish toggle still has an unexplained bare assert")
         self.assertEqual(source.count('ui_control("stream-program"'), 2,
             "both publish toggles of the relay-loss probe have to record their reason")
-        for wiring in ('"lastUiUnavailable"', '"lastStateObservation"', '"reportedHandles"',
-                       '"productControlWaits"', "def window_owner"):
+        for wiring in ('"lastUiUnavailable"', '"lastStateObservation"', '"productControlWaits"',
+                       "def window_owner"):
             self.assertIn(wiring, source)
+        # Both refusal paths record the handle verdict, so a UI Automation refusal cannot
+        # read like a startup wait any more (run 44599567300 said only product-window).
+        self.assertEqual(source.count('"reportedHandles"'), 2,
+            "the unusable-window path and the UI Automation refusal path both have to name the handle verdict")
+        ui_automation = (ROOT / "native-host/tests/product-ui.ps1").read_text(encoding="utf-8")
+        gone, mismatch = ui_automation.index("'window-handle-gone'"), ui_automation.index("'window-pid-mismatch'")
+        self.assertLess(gone, ui_automation.index("Invoke-Control"),
+            "the UI Automation helper reports why the owned window was refused before touching any control")
+        self.assertLess(mismatch, ui_automation.index("Invoke-Control"))
+        self.assertLess(ui_automation.index("Start-Sleep -Milliseconds 400"), gone,
+            "a handle that is being recreated is re-asked before it is reported gone")
 
         spec = importlib.util.spec_from_file_location("product_windows",
             ROOT / "native-host/tests/product_windows.py")

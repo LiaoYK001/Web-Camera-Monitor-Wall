@@ -646,7 +646,14 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 evidence["lastUiFailure"] = {"stage": action, "code": "invalid-report"}
                 raise AssertionError("product UI Automation did not return a bounded result") from None
             if reply.get("passed") is not True:
+                # A refusal still has to say what happened to the handle this boot reported:
+                # gone, owned by another process, or still this frontend's own window. Run 44599567300
+                # refused the resume toggle with only ``initialize/product-window``, which reads
+                # the same as a startup wait, so the verdict belongs beside the code.
                 evidence["lastUiFailure"] = {key: reply[key] for key in ("stage", "code", "exceptionType") if key in reply}
+                evidence["lastUiFailure"]["reportedHandles"] = [window_owner(window.get("rootHwnd", ""))
+                    for window in windows][:4]
+                evidence["lastUiFailure"]["stateObservation"] = evidence.get("lastStateObservation")
             passed = result.returncode == 0 and reply.get("passed") is True
             if passed and action in ("choose", "scene"):
                 before = owned.get("mainGeneration")

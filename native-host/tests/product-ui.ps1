@@ -23,9 +23,23 @@ public static class ProductTestWindow {
     $operation = [Console]::In.ReadToEnd() | ConvertFrom-Json
     $code = 'product-window'
     if ($RootHwnd -notmatch '^[0-9a-f]{1,16}$') { throw 'Invalid owned root handle.' }
-    $window = [System.Windows.Automation.AutomationElement]::FromHandle(
-        [IntPtr]::new([Convert]::ToInt64($RootHwnd,16)))
-    if ($null -eq $window -or $window.Current.ProcessId -ne $FrontendPid) {
+    $ownedHandle = [IntPtr]::new([Convert]::ToInt64($RootHwnd,16))
+    # UI Automation answers null for a handle that is being recreated. Re-asking is safe
+    # only because no control has been touched yet; run 44599567300 refused the resume
+    # toggle with one shared code, which could not separate a recreated handle from a
+    # window belonging to another process.
+    $window = $null
+    for ($attempt = 0; $attempt -lt 3; $attempt++) {
+        $window = [System.Windows.Automation.AutomationElement]::FromHandle($ownedHandle)
+        if ($null -ne $window) { break }
+        Start-Sleep -Milliseconds 400
+    }
+    if ($null -eq $window) {
+        $code = 'window-handle-gone'
+        throw 'Owned root handle is no longer a window.'
+    }
+    if ($window.Current.ProcessId -ne $FrontendPid) {
+        $code = 'window-pid-mismatch'
         throw 'Product window process identity mismatch.'
     }
     $null = [ProductTestWindow]::ShowWindow([IntPtr]$window.Current.NativeWindowHandle, 9)
