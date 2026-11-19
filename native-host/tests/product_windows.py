@@ -372,6 +372,24 @@ def terminate_process(powershell, pid):
     assert killed.returncode == 0, f"could not terminate PID {pid}: {killed.stderr[:200]}"
 
 
+def failure_detail(error, evidence):
+    """Name the failed product assertion even when the assert itself had no message.
+
+    A bare ``assert ui(...)`` used to reach the receipt as ``AssertionError: `` with no
+    reason at all (run 44587525224). The bounded window verdicts recorded by ui() and
+    ui_control are appended in that case only, so a message that already explains the
+    failure is never rewritten and no private path enters the detail.
+    """
+    detail = f"{type(error).__name__}: {error}"
+    if str(error):
+        return detail
+    context = {key: evidence[key] for key in ("lastUiUnavailable", "lastUiFailure") if key in evidence}
+    waits = evidence.get("productControlWaits")
+    if isinstance(waits, list) and waits:
+        context["lastControlWait"] = waits[-1]
+    return detail + " " + json.dumps(context, ensure_ascii=False)[:240]
+
+
 def exercise(runtime, report, *, with_media=False, retained_profile=None):
     if os.name != "nt":
         raise ValueError("actual Windows product gate requires Windows")
@@ -492,12 +510,44 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
         def state():
             paths = list((profile / "native-profile").rglob("product-state.json"))
             if len(paths) != 1:
+                evidence["lastStateObservation"] = {"code": "state-file-count", "files": len(paths)}
                 return {}
             try:
                 value = read_json(paths[0])
-                return value if value.get("pid") == str(frontend_pid) and value.get("bootId") == active_boot_id else {}
             except (OSError, ValueError):
+                evidence["lastStateObservation"] = {"code": "state-file-unreadable"}
                 return {}
+            if value.get("pid") != str(frontend_pid) or value.get("bootId") != active_boot_id:
+                # A second boot of the same disposable profile, or a host that exited and
+                # left its observation behind, both look like an empty state to the caller.
+                evidence["lastStateObservation"] = {"code": "state-from-other-boot",
+                    "pidMatched": value.get("pid") == str(frontend_pid),
+                    "bootIdMatched": value.get("bootId") == active_boot_id}
+                return {}
+            return value
+
+        def window_owner(handle_text):
+            """Whether a reported window handle still exists and who owns it.
+
+            The product reports its own native handles, so a failed UI Automation call
+            has to be attributed: handle gone, owned by another process, or still owned
+            by this frontend. Only that verdict leaves the receipt, never a path.
+            """
+            from ctypes import wintypes
+            user = ctypes.WinDLL("user32", use_last_error=True)
+            user.IsWindow.argtypes = [wintypes.HWND]
+            user.IsWindow.restype = wintypes.BOOL
+            user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+            user.GetWindowThreadProcessId.restype = wintypes.DWORD
+            try:
+                handle = wintypes.HWND(int(str(handle_text), 16))
+            except ValueError:
+                return "unreadable-handle"
+            if not user.IsWindow(handle):
+                return "gone"
+            owner = wintypes.DWORD()
+            user.GetWindowThreadProcessId(handle, ctypes.byref(owner))
+            return "frontend" if owner.value == frontend_pid else f"other-process({owner.value})"
 
         def render_probe_control_file():
             """The host's render-probe window file, beside its own state observation.
@@ -573,6 +623,12 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             if action == "stats-close":
                 windows = [owned["statsWindow"]] if owned.get("statsOpen") is True and isinstance(owned.get("statsWindow"), dict) else []
             if len(windows) != 1 or owned.get("pid") != str(frontend_pid):
+                evidence["lastUiUnavailable"] = {"stage": action, "code": "owned-window-unavailable",
+                    "matchedWindows": len(windows),
+                    "reportedHandles": [window_owner(window.get("rootHwnd", "")) for window in windows][:4],
+                    "reportedRoles": [str(window.get("role") or "")[:24]
+                        for window in owned.get("windows", [])][:8],
+                    "stateObservation": evidence.get("lastStateObservation")}
                 return False
             try:
                 result = subprocess.run([powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-File",
@@ -598,6 +654,36 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 wait_for(lambda: state().get("mainGeneration", -1) > before,
                     "actual native watch action was not acknowledged", timeout=5)
             return passed
+
+        def ui_control(action, *, label, timeout=15, **fields):
+            """Perform one product control and keep an unusable window explainable.
+
+            ui() answers False in two different situations: this boot's own state
+            observation was unusable, or UI Automation refused the owned window. A bare
+            ``assert ui(...)`` reported either as an empty ``AssertionError: ``, which is
+            how run 44587525224 lost the reason for its publish toggle. A window that is
+            briefly not addressable is waited for with every reason recorded; a real UI
+            Automation refusal is not retried, because the click never landed, so the
+            acceptance and its thresholds stay exactly as they were.
+            """
+            attempts = []
+            deadline = time.monotonic() + timeout
+            while True:
+                if ui(action, **fields):
+                    if attempts:
+                        evidence.setdefault("productControlWaits", []).append(
+                            {"label": label[:64], "recoveredAfterAttempts": len(attempts),
+                             "unusableAttempts": attempts[:4]})
+                    return True
+                unavailable = evidence.pop("lastUiUnavailable", None)
+                if unavailable is None or time.monotonic() >= deadline:
+                    evidence.setdefault("productControlWaits", []).append(
+                        {"label": label[:64], "recoveredAfterAttempts": 0,
+                         "unusableAttempts": attempts[:4], "lastUnavailable": unavailable,
+                         "lastUiFailure": evidence.get("lastUiFailure")})
+                    return False
+                attempts.append(unavailable)
+                time.sleep(0.5)
 
         def start():
             nonlocal process, frontend_pid, idle_program_uuid, active_boot_id, boot_started_at
@@ -2683,7 +2769,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 relay_children = [pid for pid, name in child_processes(powershell, int(state()["pid"]))
                     if name == "mediamtx.exe"]
                 assert relay_children == [], "MediaMTX survived the normal publisher stop"
-                assert ui("stream-program")
+                assert ui_control("stream-program", label="publish for the relay-loss probe"), \
+                    "the product publish control could not start Program publishing for the relay-loss probe"
                 recovered_stream = wait_for(streaming_ready, "Program publishing did not start for the disconnect probe",
                     timeout=40)
                 relay_children = [pid for pid, name in child_processes(powershell, int(state()["pid"]))
@@ -2700,7 +2787,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 evidence["publishDisconnectError"] = str(state().get("programOutput", {}).get("streamError"))[:120]
                 disconnected_url = recovered_stream.get("streamPlaybackUrl")
                 checkpoint("program-publish-disconnect-reported")
-                assert ui("stream-program")
+                assert ui_control("stream-program", label="publish again after a relay loss"), \
+                    "the product publish control could not resume Program publishing after the relay loss"
                 restarted_stream = wait_for(streaming_ready,
                     "Program publishing could not start again after a relay loss", timeout=40)
                 assert restarted_stream.get("streamConnected") is True, \
@@ -3090,7 +3178,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             # Synthetic logs stay private. Only fixed marker categories, bounded
             # counts and numeric exit status leave this disposable test profile.
             evidence["failurePhase"] = phase
-            detail = f"{type(error).__name__}: {error}"
+            detail = failure_detail(error, evidence)
             for private_value in (str(private), str(runtime), str(profile)):
                 detail = detail.replace(private_value, "<private>")
             evidence["failureDetail"] = detail[:300]
