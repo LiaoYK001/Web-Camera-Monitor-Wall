@@ -7,6 +7,7 @@ import copy
 import importlib.util
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -242,6 +243,43 @@ class BuildContractTests(unittest.TestCase):
         self.assertNotIn("[stderr]", source)
         gateway = (ROOT / "gateway/mediamtx.yml").read_text(encoding="utf-8")
         self.assertIn("logDestinations: [stdout]", gateway)
+
+    def test_published_program_video_gate_waits_past_a_keyframe_for_a_late_join(self):
+        """Both Program video gates must decode across keyframe intervals.
+
+        A consumer that joins after publishing starts lands inside the encoder's
+        current GOP, so its first packets are P-slices with no reference picture.
+        Reading 20 packets decoded zero frames twice (runs 44524750280 and
+        44534272424) with return code 0 and "co located POCs unavailable" while
+        the host advanced its render counter, and ffprobe reports pts_time as a
+        string, which the old numeric check dropped so the measured span always
+        read 0. Each gate now keeps at least ten strictly increasing decodable
+        frames over more than two publish keyframe intervals on one connection,
+        records when the first decodable frame arrived, and adds a packet probe
+        that answers whether the relay hands a late consumer an IDR at all.
+        """
+        encoder = (ROOT / "native-host/src/product_output.cpp").read_text(encoding="utf-8")
+        keyints = re.findall(r'obs_data_set_int\(video_settings\.get\(\), "keyint_sec", (\d+)\)', encoder)
+        self.assertTrue(keyints, "Program outputs must state their keyframe interval")
+        self.assertEqual(len(set(keyints)), 1, "recording and publishing must publish on one interval")
+        keyint = int(keyints[0])
+
+        gate = (ROOT / "native-host/tests/product_windows.py").read_text(encoding="utf-8")
+        self.assertEqual(int(re.search(r"PROGRAM_ENCODER_KEYINT_SECONDS = (\d+)", gate).group(1)), keyint,
+                         "the gate must read the interval the encoder actually uses")
+        multiplier = int(re.search(r"PROGRAM_VIDEO_WINDOW_SECONDS = PROGRAM_ENCODER_KEYINT_SECONDS \* (\d+)",
+                                   gate).group(1))
+        self.assertGreaterEqual(multiplier, 2, "the read window must span at least two keyframe intervals")
+
+        # One shared window reader for both the first publisher and the recovered one.
+        self.assertEqual(gate.count("published_video_window(runtime / \"bin/ffprobe.exe\""), 2)
+        self.assertEqual(gate.count("published_packet_window(runtime / \"bin/ffprobe.exe\""), 2)
+        self.assertNotIn('"-read_intervals", "%+#20"', gate)
+        for assertion in ("len(stamps) >= 10", "monotonic and span >= float(encoder_keyint_seconds)",
+                          'replay_window["frames"] >= 10', "firstDecodableFrameMs", "packetProbe",
+                          "unparsableStamps", "stamp = float(value)"):
+            self.assertIn(assertion, gate)
+
 
     def test_build_symbols_are_stripped_before_the_manifest(self):
         builder = (ROOT / "desktop/scripts/build-obs-native.ps1").read_text(encoding="utf-8")
