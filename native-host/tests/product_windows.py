@@ -277,6 +277,41 @@ def child_processes(powershell, pid):
     return children
 
 
+def mixer_identities(powershell, pids, private_values=()):
+    """Name each owned FFmpeg helper by its own command line, sanitized.
+
+    A bare PID diff cannot say which helper a phase destroyed: run 44548882087 lost
+    one of two FFmpeg mixers while the host still reported the mix as available with
+    two mixers and no recorded exit code. The command line is the only side-neutral
+    identity available here, so camera URLs and this run's private roots are replaced
+    before anything is recorded, and the row is capped.
+    """
+    if not pids:
+        return {}
+    wanted = " or ".join(f"ProcessId={int(pid)}" for pid in sorted(set(pids)))
+    unknown = {int(pid): "command-line-unavailable" for pid in set(pids)}
+    try:
+        listing = subprocess.run([powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+            f"Get-CimInstance Win32_Process -Filter '{wanted}' | "
+            'ForEach-Object { "$($_.ProcessId)|$($_.CommandLine)" }'],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=25)
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        # Naming a helper is a diagnostic; it never replaces the ownership assertion.
+        return unknown
+    identities = {}
+    if listing.returncode != 0:
+        return unknown
+    for line in listing.stdout.splitlines():
+        pid_text, _, command = line.partition("|")
+        if not pid_text.strip().isdigit():
+            continue
+        clean = re.sub(r"(?:rtsp|rtsps|udp|http|https|tcp)://\S+", "<url>", command)
+        for private_value in private_values:
+            clean = clean.replace(str(private_value), "<private>")
+        identities[int(pid_text.strip())] = clean.strip()[:160]
+    return identities
+
+
 def terminate_process(powershell, pid):
     """Kill one explicitly identified child PID; never a name-wide sweep."""
     killed = subprocess.run([powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
@@ -2536,8 +2571,27 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 # "connected" publisher, and the next start must recover. The Scene
                 # audio mixers are separate owned helpers, so record them first and
                 # require the same set afterwards instead of demanding no FFmpeg at all.
-                scene_mixers = sorted(pid for pid, name in child_processes(powershell, int(state()["pid"]))
-                    if name == "ffmpeg.exe")
+                def audio_mix_helper_watch(sample):
+                    """Every owned FFmpeg helper with its own identity and the host's claim.
+
+                    The host publishes `audioSources[].mixers` and its own recorded exit
+                    code, so a disappeared process is either the product releasing a helper
+                    it still needs or the product not noticing one died; the two readings
+                    side by side say which.
+                    """
+                    rows = sorted(pid for pid, name in child_processes(powershell, int(state()["pid"]))
+                        if name == "ffmpeg.exe")
+                    identities = mixer_identities(powershell, rows, (private, runtime, profile))
+                    claim = [{"sourceId": str(entry.get("sourceId") or "")[:64],
+                        "mixers": entry.get("mixers"), "processExitCode": entry.get("processExitCode"),
+                        "available": entry.get("available"), "active": entry.get("active")}
+                        for entry in state().get("audioSources", []) if isinstance(entry, dict)]
+                    row = {"sample": sample, "processes": [{"pid": pid, "identity": identities.get(pid, "")}
+                        for pid in rows], "hostClaims": claim}
+                    evidence.setdefault("audioMixHelperWatch", []).append(row)
+                    return rows
+
+                scene_mixers = audio_mix_helper_watch("publish-disconnect-start")
                 relay_children = [pid for pid, name in child_processes(powershell, int(state()["pid"]))
                     if name == "mediamtx.exe"]
                 assert relay_children == [], "MediaMTX survived the normal publisher stop"
@@ -2605,17 +2659,26 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     + f"frames across {video_window_seconds} seconds, expected at least 10 " \
                     + "monotonic frames spanning one keyframe interval"
                 evidence["checks"].append("publish-recovery-delivers-frames-to-a-real-consumer")
+                mixers_before_stop = audio_mix_helper_watch("before-program-output-stop")
                 assert ui("stream-program")
                 wait_for(lambda: state().get("programOutput", {}).get("streaming") is False and
                     state().get("programOutput", {}).get("mediaMtxRunning") is False,
                     "recovered publisher did not release MediaMTX after stopping", timeout=30)
                 after_stop = child_processes(powershell, int(state()["pid"]))
                 leaked_relay = sorted(pid for pid, name in after_stop if name == "mediamtx.exe")
-                mixers_after = sorted(pid for pid, name in after_stop if name == "ffmpeg.exe")
+                mixers_after = audio_mix_helper_watch("after-program-output-stop")
                 assert leaked_relay == [], \
                     f"Program output kept the private MediaMTX relay after stopping: {leaked_relay}"
-                assert mixers_after == scene_mixers, \
-                    f"stopping Program output changed the Scene audio mixers ({scene_mixers} -> {mixers_after})"
+                if mixers_after != scene_mixers:
+                    identities = {row["pid"]: row["identity"]
+                        for row in evidence["audioMixHelperWatch"][-1]["processes"]}
+                    lost = sorted(set(scene_mixers) - set(mixers_after))
+                    added = sorted(set(mixers_after) - set(scene_mixers))
+                    lost_earlier = sorted(set(scene_mixers) - set(mixers_before_stop))
+                    raise AssertionError("Program output changed the Scene audio mixers "
+                        + "(lost " + ", ".join(f"{pid}:{identities.get(pid, '')[:120]}" for pid in lost)
+                        + f"; added {added}; gone before the stop {lost_earlier}; host claims "
+                        + json.dumps(evidence["audioMixHelperWatch"][-1]["hostClaims"])[:400] + ")")
                 evidence["sceneAudioMixers"] = mixers_after
                 evidence["checks"].extend(["publish-relay-loss-is-reported-and-recoverable",
                     "program-output-helpers-are-released-after-stop"])
