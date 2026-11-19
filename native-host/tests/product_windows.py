@@ -2534,7 +2534,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 muted_880 = muted_window["amplitudes"]["880"]
                 evidence["programTrackMute"] = {"at440Hz": muted_440, "at880Hz": muted_880,
                     "audioTrackMask": muted.get("audioTracks"),
-                    "steadyWindowStart": muted_window["start"]}
+                    "steadyWindowStart": muted_window["start"],
+                    "toneReadings": muted_window["toneReadings"]}
                 assert muted.get("audioTracks") == 2, \
                     f"muted-track recording encoded mask {muted.get('audioTracks')}, expected 2"
                 assert muted_440 > 200 and muted_880 < 60, \
@@ -2566,6 +2567,15 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     ffmpeg, str(Path(gain_repeat["recordingPath"])), 0, steady=(440, 880))
                 control_ratios = {"440": round(repeat_window["amplitudes"]["440"] / gain_full_440, 3),
                     "880": round(repeat_window["amplitudes"]["880"] / gain_full_880, 3)}
+                # Write the measurement before judging it. rc.68 lost the numbers behind
+                # this control step because the evidence was only written after the
+                # assertion, so a rejected reference left nothing to read in the receipt.
+                evidence["programTrackGain"] = {"gainOne": {"at440Hz": gain_full_440,
+                    "at880Hz": gain_full_880}, "controlRatios": control_ratios,
+                    "steadyWindowStarts": {"reference": reference_window["start"],
+                        "repeat": repeat_window["start"]},
+                    "toneReadings": {"reference": reference_window["toneReadings"],
+                        "repeat": repeat_window["toneReadings"]}}
                 assert all(0.8 <= ratio <= 1.25 for ratio in control_ratios.values()), \
                     f"the unchanged gain configuration measured differently twice: {control_ratios}"
                 low_gain = alt_variant("fixture-alt-gain-low", [
@@ -2578,11 +2588,11 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     steady=(440,), measure=(880,))
                 gain_low_440 = reduced_window["amplitudes"]["440"]
                 gain_low_880 = reduced_window["amplitudes"]["880"]
-                evidence["programTrackGain"] = {"gainOne": {"at440Hz": gain_full_440,
-                    "at880Hz": gain_full_880}, "gainPointTwo": {"at440Hz": gain_low_440,
-                    "at880Hz": gain_low_880}, "controlRatios": control_ratios,
+                evidence["programTrackGain"].update({"gainPointTwo": {"at440Hz": gain_low_440,
+                    "at880Hz": gain_low_880},
                     "steadyWindowStarts": {"reference": reference_window["start"],
-                        "repeat": repeat_window["start"], "reduced": reduced_window["start"]}}
+                        "repeat": repeat_window["start"], "reduced": reduced_window["start"]},
+                    "reducedToneReadings": reduced_window["toneReadings"]})
                 # Linear gain 0.2 leaves about a fifth of that pitch's amplitude.
                 # The tolerance excludes "gain reached the mix source but the
                 # mixer ignored it" while allowing for AAC and resampler loss.

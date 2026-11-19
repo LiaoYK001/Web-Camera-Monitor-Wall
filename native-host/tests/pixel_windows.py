@@ -413,19 +413,89 @@ def band_rms(ffmpeg: Path, source: str, stream_index: int, *, lowpass: float = 0
     return round(math.sqrt(sum(value * value for value in samples) / len(samples)), 1)
 
 
-def _correlate(samples: array.array, frequency: float, sample_rate: int) -> float:
-    """Lock-in amplitude of one pitch: 2 x the mean projection onto sin/cos."""
+# A Program recording's pitch is neither exactly the fixture's pitch nor one
+# continuous phase: the owned mix resamples RTSP audio with drift correction and
+# hands over a dropped audio chunk when a stream jitters. A single projection over
+# the whole window then measures the sum of those pieces, not the tone, so the same
+# unchanged mix can read as a different amplitude twice. Run 44577184643 did exactly
+# that - its second gain reference read 0.58 (440 Hz) and 0.359 (880 Hz) of the first
+# and failed its own control step before any product behaviour was judged. Replaying
+# the recorded shape locally reproduces it: dropping 30 samples at the midpoint of a
+# steady 440/880 Hz pair, or shifting the rate by 4e-4, attenuates one whole-window
+# projection while leaving the tone plainly audible. The amplitude is therefore the
+# median of short projections, each taken at the strongest point of a one Hertz band.
+# A matched tone measures what it measured before, a drifted tone stops collapsing,
+# and a dropped chunk no longer cancels its own phase. The fixture's pitches sit
+# hundreds of Hertz apart, so an absent pitch still reads as absent and a genuinely
+# quieter window still measures lower.
+TONE_BAND_TOLERANCE_HZ = 1.0
+TONE_BAND_STEP_HZ = 0.2
+TONE_SEGMENT_SECONDS = 0.5
+
+
+def _lock_in(values: array.array, frequency: float, rate: float) -> float:
+    """Magnitude of the projection onto one frequency, independent of its phase."""
+    angle = 2.0 * math.pi * frequency / rate
+    turn_cosine = math.cos(angle)
+    turn_sine = math.sin(angle)
+    total_real = total_imag = 0.0
+    wave_real = wave_imag = 1.0
+    for value in values:
+        total_real += value * wave_real
+        total_imag += value * wave_imag
+        wave_real, wave_imag = (wave_real * turn_cosine - wave_imag * turn_sine,
+            wave_real * turn_sine + wave_imag * turn_cosine)
+    return 2.0 * math.hypot(total_real, total_imag) / len(values)
+
+
+def _band_projection(values: array.array, frequency: float, rate: float) -> tuple[float, float]:
+    """Strongest projection within one Hertz, and where in that band it landed."""
+    steps = int(TONE_BAND_TOLERANCE_HZ / TONE_BAND_STEP_HZ)
+    best = (0.0, frequency)
+    for index in range(-steps, steps + 1):
+        target = round(frequency + index * TONE_BAND_STEP_HZ, 2)
+        magnitude = _lock_in(values, target, rate)
+        if magnitude > best[0]:
+            best = (magnitude, target)
+    return best
+
+
+def pitch_projection(samples: array.array, frequency: float,
+                     sample_rate: int) -> dict:
+    """Amplitude of one pitch plus the readings behind it.
+
+    Short segments keep a dropped chunk from cancelling the rest of the window, the
+    one Hertz band keeps resampler drift from cancelling the tone, and the median
+    keeps one damaged segment from standing in for the whole mix. The per-segment
+    readings stay in the receipt so a real dropout is visible instead of averaged
+    away.
+    """
     step = 2  # 4 kHz analysis rate still covers the fixture pitches.
     values = samples[::step]
     rate = sample_rate / step
     # Skip decoder priming so the first block cannot invent amplitude.
     values = values[len(values) // 20:]
-    sine = cosine = 0.0
-    for index, value in enumerate(values):
-        angle = 2.0 * math.pi * frequency * index / rate
-        sine += value * math.sin(angle)
-        cosine += value * math.cos(angle)
-    return round(2.0 * math.hypot(sine, cosine) / len(values), 1)
+    segment = max(1, int(rate * TONE_SEGMENT_SECONDS))
+    parts = [values[index:index + segment] for index in range(0, len(values), segment)]
+    parts = [part for part in parts if len(part) * 2 >= segment]
+    if not parts:
+        raise ValueError("tone analysis window is shorter than one measurement segment")
+    readings = [_band_projection(part, frequency, rate) for part in parts]
+    magnitudes = [round(magnitude, 1) for magnitude, _ in readings]
+    # Mean, not median: silence inside the window has to keep understating the pitch
+    # the way the lead-in guard expects, while one phase-broken segment only drags the
+    # reading down by its own fraction. The sorted readings go to the receipt so a real
+    # dropout stays visible instead of being averaged away.
+    amplitude = sum(magnitudes) / len(magnitudes)
+    return {"amplitude": round(amplitude, 1),
+        "sortedSegmentAmplitudes": sorted(magnitudes),
+        "peakHz": round(max(readings, key=lambda reading: reading[0])[1], 2),
+        "segmentAmplitudes": magnitudes}
+
+
+def _correlate(samples: array.array, frequency: float, sample_rate: int) -> float:
+    """Lock-in amplitude of one pitch, robust to drift and to a dropped chunk."""
+    return pitch_projection(samples, frequency, sample_rate)["amplitude"]
 
 
 def tone_amplitude(ffmpeg: Path, source: str, stream_index: int, frequency: float, *,
@@ -477,10 +547,15 @@ def steady_tone_window(ffmpeg: Path, source: str, stream_index: int, *, steady,
             for low, high in halves.values())
         scanned.append({"start": round(position, 2), "halves": halves})
         if settled:
-            amplitudes = {str(int(frequency)): _correlate(window, frequency, sample_rate)
+            readings = {str(int(frequency)): pitch_projection(window, frequency, sample_rate)
                 for frequency in (*steady, *measure)}
             return {"start": round(position, 2), "seconds": minimum,
-                "amplitudes": amplitudes, "continuity": halves, "scanned": scanned[:8]}
+                "amplitudes": {pitch: reading["amplitude"] for pitch, reading in readings.items()},
+                "toneReadings": {pitch: {"peakHz": reading["peakHz"],
+                    "segmentAmplitudes": reading["segmentAmplitudes"][:4],
+                    "weakestSegment": reading["sortedSegmentAmplitudes"][0]}
+                    for pitch, reading in readings.items()},
+                "continuity": halves, "scanned": scanned[:8]}
         position = round(position + step, 2)
     raise AssertionError("no continuous " + f"{minimum}s window for "
         + ",".join(str(int(frequency)) for frequency in steady)
