@@ -1403,6 +1403,12 @@ class BuildContractTests(unittest.TestCase):
         def run(ui_results, *, unavailable=None, refusal=None, timeout=15):
             module.time = FakeTime()
             module.evidence = {}
+            # The product's own UI-thread account, as the state observation publishes it.
+            module.state = lambda: {"uiStallMs": 6100, "uiStallMaxMs": 6100,
+                "uiStallAtMs": 1700000000600, "publishedAtMs": 1700000000700,
+                "programOutput": {"teardown": {"relayStopMs": 6000, "relayStopMaxMs": 6000,
+                    "publishReleaseMs": 120, "publishReleaseMaxMs": 120,
+                    "publishStopWaitMs": 40, "publishStopWaitMaxMs": 40}}}
             if refusal is not None:
                 module.evidence["lastUiFailure"] = refusal
             seen = []
@@ -1429,6 +1435,9 @@ class BuildContractTests(unittest.TestCase):
         self.assertEqual(module.evidence["productControlWaits"][-1]["recoveredAfterAttempts"], 2)
         self.assertEqual(module.evidence["productControlWaits"][-1]["unusableAttempts"][0]["code"],
             "owned-window-unavailable")
+        self.assertEqual(module.evidence["productControlWaits"][-1]["uiThread"]["uiStallMaxMs"], 6100,
+            "a control that needed waits still has to say how long the UI thread was held")
+        self.assertEqual(module.evidence["productControlWaits"][-1]["uiThread"]["teardown"]["relayStopMs"], 6000)
         self.assertNotIn("lastUiUnavailable", module.evidence)
 
         refused, calls = run([False], unavailable=None, refusal={"stage": "initialize",
@@ -1437,6 +1446,11 @@ class BuildContractTests(unittest.TestCase):
         self.assertEqual(calls, ["stream-program"], "a refusal means the click never landed, so retrying would double it")
         self.assertIsNone(module.evidence["productControlWaits"][-1]["lastUnavailable"])
         self.assertEqual(module.evidence["productControlWaits"][-1]["lastUiFailure"]["code"], "product-window")
+        refusal_wait = module.evidence["productControlWaits"][-1]["uiThread"]
+        self.assertEqual(refusal_wait["uiStallAtMs"], 1700000000600,
+            "the refusal has to carry when the product's own heartbeat last came back late")
+        self.assertEqual(refusal_wait["teardown"]["publishReleaseMaxMs"], 120,
+            "the refusal has to carry the Program teardown durations behind it")
 
         never, calls = run([False] * 40, unavailable={"stage": "stream-program",
             "code": "owned-window-unavailable", "matchedWindows": 0, "reportedHandles": ["gone"]},
@@ -1455,6 +1469,38 @@ class BuildContractTests(unittest.TestCase):
             {"lastUiUnavailable": {"code": "owned-window-unavailable"}}),
             "AssertionError: publish control could not resume",
             "an assertion that already explains itself must not be rewritten")
+
+
+    def test_publish_control_refusal_names_the_ui_thread_owner(self):
+        """A refused Program control has to say whether the product held its own UI thread.
+
+        Runs 44587525224 and 44599567300 refused the resume toggle after a relay loss with
+        one shared UI Automation code, which cannot separate a window the product destroyed
+        from a UI thread the product is holding inside a Program teardown. The host now
+        measures its own late heartbeat ticks and every Program teardown duration, and the
+        gate records both beside the refusal so the next round names the layer instead of
+        guessing it.
+        """
+        output = (ROOT / "native-host/src/product_output.cpp").read_text(encoding="utf-8")
+        header = (ROOT / "native-host/src/product_output.hpp").read_text(encoding="utf-8")
+        window = (ROOT / "native-host/src/product_window.cpp").read_text(encoding="utf-8")
+        gate = (ROOT / "native-host/tests/product_windows.py").read_text(encoding="utf-8")
+
+        self.assertIn("struct TeardownSpan", output)
+        for span in ("TeardownSpan span(relay_stop_last_ms, relay_stop_max_ms);",
+                     "TeardownSpan span(publish_release_last_ms, publish_release_max_ms);",
+                     "TeardownSpan span(publish_stop_wait_last_ms, publish_stop_wait_max_ms);"):
+            self.assertIn(span, output, "every Program teardown the UI thread waits for must be measured")
+        for field in ("relay_stop_last_ms", "publish_release_last_ms", "publish_stop_wait_max_ms"):
+            self.assertIn(field, header)
+            self.assertIn("value.%s = impl_->%s;" % (field, field), output)
+        # The private state observation is the only channel the installed gate can read.
+        for key in ("uiStallMs", "uiStallMaxMs", "uiStallAtMs", "teardown"):
+            self.assertIn('"%s"' % key, window)
+        self.assertIn("now_ms - heartbeat_last_ms_ - heartbeat_interval_ms", window)
+        self.assertIn("def ui_thread_snapshot", gate)
+        self.assertEqual(gate.count('"uiThread": ui_thread_snapshot()'), 2,
+            "both the refusal and a control that needed waits carry the product's own account")
 
 
 if __name__ == "__main__":

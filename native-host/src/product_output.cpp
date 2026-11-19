@@ -212,6 +212,30 @@ QString media_mtx_config(int api_port, int rtsp_port, int webrtc_port, int udp_p
 		"  program:\n").arg(api_port).arg(rtsp_port).arg(webrtc_port).arg(udp_port).arg(rtmp_port);
 }
 
+// One Program teardown, measured. These calls run on the OBS UI thread whenever the
+// product heartbeat reads the observation, and a UI thread held inside a teardown is
+// what makes every product control refuse UI Automation. Recording the real duration
+// separates "the product was blocked" from "the window is gone" without changing what
+// the teardown waits for.
+struct TeardownSpan {
+	QElapsedTimer clock;
+	qint64 &last;
+	qint64 &maximum;
+	explicit TeardownSpan(qint64 &last_value, qint64 &maximum_value)
+		: last(last_value), maximum(maximum_value)
+	{
+		clock.start();
+	}
+	TeardownSpan(const TeardownSpan &) = delete;
+	TeardownSpan &operator=(const TeardownSpan &) = delete;
+	~TeardownSpan()
+	{
+		last = clock.elapsed();
+		if (last > maximum)
+			maximum = last;
+	}
+};
+
 } // namespace
 
 struct ProductProgramOutputImpl {
@@ -245,6 +269,14 @@ struct ProductProgramOutputImpl {
 	quint32 streaming_tracks = 0;
 	// The mask actually encoded into the retained finished recording.
 	quint32 completed_tracks = 0;
+	// Worst-case duration of each teardown since the product started; zero keeps the
+	// receipt honest about an operation that never blocked.
+	qint64 relay_stop_last_ms = 0;
+	qint64 relay_stop_max_ms = 0;
+	qint64 publish_release_last_ms = 0;
+	qint64 publish_release_max_ms = 0;
+	qint64 publish_stop_wait_last_ms = 0;
+	qint64 publish_stop_wait_max_ms = 0;
 	Output publish_output;
 	Encoder publish_video;
 	Encoder publish_audio;
@@ -269,6 +301,7 @@ struct ProductProgramOutputImpl {
 	}
 	void release_streaming()
 	{
+		TeardownSpan span(publish_release_last_ms, publish_release_max_ms);
 		publish_output.reset();
 		publish_video.reset();
 		publish_audio.reset();
@@ -276,6 +309,7 @@ struct ProductProgramOutputImpl {
 	}
 	void stop_media_mtx()
 	{
+		TeardownSpan span(relay_stop_last_ms, relay_stop_max_ms);
 		if (media_mtx.state() == QProcess::NotRunning) return;
 		media_mtx.terminate();
 		if (!media_mtx.waitForFinished(5000)) {
@@ -703,6 +737,7 @@ struct ProductProgramOutputImpl {
 	bool stop_streaming(QString &error)
 	{
 		if (!streaming) return error = "streaming-inactive", false;
+		TeardownSpan span(publish_stop_wait_last_ms, publish_stop_wait_max_ms);
 		if (publish_output.value) {
 			obs_output_stop(publish_output.value);
 			if (!wait_output_inactive(publish_output.value, 10000)) {
@@ -791,6 +826,12 @@ ProductProgramOutputStatus ProductProgramOutput::status() const
 	value.stream_playback_whep = impl_->stream_playback_whep;
 	value.stream_transport = impl_->stream_transport;
 	value.stream_error = impl_->stream_error;
+	value.relay_stop_last_ms = impl_->relay_stop_last_ms;
+	value.relay_stop_max_ms = impl_->relay_stop_max_ms;
+	value.publish_release_last_ms = impl_->publish_release_last_ms;
+	value.publish_release_max_ms = impl_->publish_release_max_ms;
+	value.publish_stop_wait_last_ms = impl_->publish_stop_wait_last_ms;
+	value.publish_stop_wait_max_ms = impl_->publish_stop_wait_max_ms;
 	return value;
 }
 } // namespace webobs::native_host

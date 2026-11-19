@@ -28,6 +28,17 @@ struct ProductProgramOutputStatus {
 	// builds with -DENABLE_WEBRTC=OFF, so this is "rtmp", not "whip".
 	QString stream_transport;
 	QString stream_error;
+	// How long each Program teardown kept the calling thread, in milliseconds. The
+	// product heartbeat reads this observation on the OBS UI thread, and a UI thread
+	// that stays inside a teardown is what makes every product control refuse UI
+	// Automation, so a publish-disconnect receipt has to say whether the product was
+	// itself blocked at that moment. Zero means the operation returned without waiting.
+	qint64 relay_stop_last_ms = 0;
+	qint64 relay_stop_max_ms = 0;
+	qint64 publish_release_last_ms = 0;
+	qint64 publish_release_max_ms = 0;
+	qint64 publish_stop_wait_last_ms = 0;
+	qint64 publish_stop_wait_max_ms = 0;
 };
 
 // Owns OBS Program encoders, one optional file output and one optional

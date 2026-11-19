@@ -673,6 +673,28 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             Automation refusal is not retried, because the click never landed, so the
             acceptance and its thresholds stay exactly as they were.
             """
+            def ui_thread_snapshot():
+                """What the product itself says about its UI thread right now.
+
+                ``uiStallMs`` comes from the product's own late heartbeat ticks and the
+                teardown durations from its Program output. A refusal inside a stall is
+                the product holding its own UI thread; a refusal with no stall and a
+                live handle is something else, and the receipt has to keep them apart.
+                """
+                snapshot = state()
+                output = snapshot.get("programOutput")
+                output = output if isinstance(output, dict) else {}
+                teardown = output.get("teardown")
+                teardown = teardown if isinstance(teardown, dict) else {}
+                return {"uiStallMs": snapshot.get("uiStallMs"),
+                    "uiStallMaxMs": snapshot.get("uiStallMaxMs"),
+                    "uiStallAtMs": snapshot.get("uiStallAtMs"),
+                    "statePublishedAtMs": snapshot.get("publishedAtMs"),
+                    "teardown": {key: teardown.get(key) for key in
+                        ("relayStopMs", "relayStopMaxMs", "publishReleaseMs",
+                            "publishReleaseMaxMs", "publishStopWaitMs",
+                            "publishStopWaitMaxMs")}}
+
             attempts = []
             deadline = time.monotonic() + timeout
             while True:
@@ -680,14 +702,15 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     if attempts:
                         evidence.setdefault("productControlWaits", []).append(
                             {"label": label[:64], "recoveredAfterAttempts": len(attempts),
-                             "unusableAttempts": attempts[:4]})
+                             "unusableAttempts": attempts[:4], "uiThread": ui_thread_snapshot()})
                     return True
                 unavailable = evidence.pop("lastUiUnavailable", None)
                 if unavailable is None or time.monotonic() >= deadline:
                     evidence.setdefault("productControlWaits", []).append(
                         {"label": label[:64], "recoveredAfterAttempts": 0,
                          "unusableAttempts": attempts[:4], "lastUnavailable": unavailable,
-                         "lastUiFailure": evidence.get("lastUiFailure")})
+                         "lastUiFailure": evidence.get("lastUiFailure"),
+                         "uiThread": ui_thread_snapshot()})
                     return False
                 attempts.append(unavailable)
                 time.sleep(0.5)
