@@ -289,6 +289,9 @@ class BuildContractTests(unittest.TestCase):
         command line is the identity available here, so camera URLs and this run's
         private roots must be replaced before anything reaches a receipt, while each
         helper's loopback mix port survives so the receipt can name the mix it starved.
+        The gate then compares live helper ports with the ports the host claims and gives
+        a retiring Scene graph a bounded grace period, because run 44548882087 lost a PID
+        that belonged to a released graph rather than to a mix the host still claimed.
         """
         if os.name == "nt":
             self.skipTest("fake PowerShell needs a POSIX executable")
@@ -300,7 +303,8 @@ class BuildContractTests(unittest.TestCase):
         for wiring in ("audio_mix_helper_watch", "mixer_identities(powershell, rows",
                        "before-program-output-stop", "after-program-output-stop",
                        '"mixerPort": entry.get("mixerPort")', "watched_ports(row)",
-                       "claimed_ports(row)", "live_ports != claimed",
+                       "claimed_ports(row)", "current_live_ports()",
+                       "mix-ports-still-unresolved", "mixerPortSettleMs",
                        "host still reports a live mix", "fixture publishers",
                        "other helpers"):
             self.assertIn(wiring, gate)
