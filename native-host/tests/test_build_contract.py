@@ -302,6 +302,8 @@ class BuildContractTests(unittest.TestCase):
         gate = (ROOT / "native-host/tests/product_windows.py").read_text(encoding="utf-8")
         for wiring in ("audio_mix_helper_watch", "mixer_identities(powershell, rows",
                        '"port": helper_port(clean)', "identities.get(pid) or MIXER_IDENTITY_UNAVAILABLE",
+                       "assert isinstance(row, dict)", 'return row',
+                       'mixers_before_stop["processes"]',
                        "before-program-output-stop", "after-program-output-stop",
                        '"mixerPort": entry.get("mixerPort")', "watched_ports(row)",
                        "claimed_ports(row)", "current_live_ports()",
@@ -378,6 +380,13 @@ class BuildContractTests(unittest.TestCase):
         self.assertEqual(module.watched_ports(served), module.claimed_ports(served))
         self.assertEqual(module.claimed_ports({"hostClaims": [{"sourceId": "x", "mixerPort": None},
                                                               {"sourceId": "y"}]}), [])
+        # Run 44568325933 handed the watch's helper PID list to these helpers and died on
+        # `list indices must be integers or slices, not str`, which hid whether any mix was
+        # actually starved. A wrong shape now says so in its own words.
+        for reader in (module.watched_ports, module.claimed_ports):
+            with self.assertRaises(AssertionError) as wrong_shape:
+                reader([12, 34])
+            self.assertIn("watch row", str(wrong_shape.exception))
 
     def test_published_packet_window_formats_the_interval_and_reports_its_own_failure(self):
         """The keyframe diagnostic must not break the measurement it accompanies.

@@ -306,11 +306,15 @@ def helper_port(identity):
 
 def watched_ports(row):
     """Every loopback mix port a live helper owns, duplicates kept."""
+    assert isinstance(row, dict), \
+        "mix port comparison needs a recorded watch row, not a helper PID list"
     return sorted(item["port"] for item in row["processes"] if item["port"])
 
 
 def claimed_ports(row):
     """The mix port each owned mix source says it is reading."""
+    assert isinstance(row, dict), \
+        "mix port comparison needs a recorded watch row, not a helper PID list"
     return sorted({int(entry["mixerPort"]) for entry in row["hostClaims"]
         if isinstance(entry.get("mixerPort"), (int, float)) and int(entry["mixerPort"]) > 0})
 
@@ -2628,6 +2632,10 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     one loopback port, so the claimed ports and the live helper ports have
                     to agree. The host's own `available` and exit code then say whether the
                     product released a helper it still needs or never noticed one died.
+                    The recorded row is returned, because the port comparison needs the
+                    claims and the helper ports together; run 44568325933 compared the
+                    returned helper PID list against those claims and died on a TypeError
+                    instead of reporting a mix verdict.
                     """
                     rows = sorted(pid for pid, name in child_processes(powershell, int(state()["pid"]))
                         if name == "ffmpeg.exe")
@@ -2659,7 +2667,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                             "tail": identity_of(pid)["tail"]}
                             for pid in rows if identity_of(pid)["port"] is None]}
                     evidence.setdefault("audioMixHelperWatch", []).append(row)
-                    return rows
+                    return row
 
                 scene_start_watch = audio_mix_helper_watch("publish-disconnect-start")
                 relay_children = [pid for pid, name in child_processes(powershell, int(state()["pid"]))
@@ -2730,7 +2738,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     + "monotonic frames spanning one keyframe interval"
                 evidence["checks"].append("publish-recovery-delivers-frames-to-a-real-consumer")
                 mixers_before_stop = audio_mix_helper_watch("before-program-output-stop")
-                assert mixers_before_stop, "no owned FFmpeg audio mixer helper was running"
+                assert mixers_before_stop["processes"], \
+                    "no owned FFmpeg audio mixer helper was running"
                 assert ui("stream-program")
                 wait_for(lambda: state().get("programOutput", {}).get("streaming") is False and
                     state().get("programOutput", {}).get("mediaMtxRunning") is False,
