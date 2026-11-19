@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 258 · 2026-11-19T22:55:36+08:00（UTC+08）
+> 快照版本 259 · 2026-11-19T23:43:15+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #259 · 2026-11-19T23:43:15+08:00 · update
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：rc.64 通过 49 项：关键帧窗口读取在 Windows 首次通过（首次推流 89 帧/跨度 3.866s/首个可解码帧 2437ms/包探针 3 个关键帧包），恢复推流 65 帧/跨度 2.2s 通过，逐轨静音·增益·偏移首次取得 Windows 声学实测。新的第一失败为辅助进程归属：停止 Program 输出后两个宿主拥有的 FFmpeg 混音进程只剩一个，而宿主仍报 mixers: 2、processExitCode: -1。已加身份观察（阶段开始/停止前/停止后三采样 + 脱敏命令行 + 宿主声明），断言仍为精确 PID 集合相等。
+- 证据：rc.64 run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44548882087 @ 0a7726a983694bd62621e46617d90b3c0f3ccb2b：49 项通过，failurePhase=program-publish-disconnect，detail 'AssertionError: stopping Program output changed the Scene audio mixers ([5092, 6176] -> [6176])'；programStreamVideoProbe frames 89/span 3.866/firstDecodableFrameMs 2437/packetProbe 170包-3关键帧-firstPacketIsKey false-gap 2.0；publishReplayVideoProbe frames 65/span 2.2/firstDecodableFrameMs 4875；programTrackGain gainOne 2170.5/2161.6、gainPointTwo 2165.4/433.7（比值 0.2006）、controlRatios 0.998/0.999；同窗 measuredFramesPerSecond 23.02、laggedFrames 1086→1216（记录但未断言）；codex/v51-r3-output@297b637；test_build_contract.py 51/51（新增假 PowerShell 身份脱敏测试）；栈已同步推送：#70 af8793b、#71 e9dbca5、#74 b209690、#75 afc5a53、#76 8603c02（顶层完整 SHA 8603c025cf20b34ccb81a407ef2f995da08b7ffd）；run 44557855349 = 5.1.0-rc.65 @ 8603c025cf20b34ccb81a407ef2f995da08b7ffd（soak_minutes=0）queued；门禁日志 /tmp/watch65.log
+- 源码：`b8bfb623147fc4752ead29df6b4e44a5bfcff4db`
 ## #258 · 2026-11-19T22:55:36+08:00 · update
 
 - Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
