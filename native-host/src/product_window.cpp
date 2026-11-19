@@ -188,6 +188,15 @@ class ProductWindow final : public QWidget {
 	QString user_id_;
 	quint64 main_generation_ = 0;
 	bool heartbeat_pending_ = false;
+	// A heartbeat tick that arrives late means the UI thread was held somewhere else.
+	// That is what makes a product control refuse UI Automation, so the observation has
+	// to carry the real stall duration and when it ended instead of leaving the receipt
+	// with only "the window was not addressable".
+	static constexpr qint64 heartbeat_interval_ms = 2000;
+	qint64 heartbeat_last_ms_ = 0;
+	qint64 ui_stall_last_ms_ = 0;
+	qint64 ui_stall_max_ms_ = 0;
+	qint64 ui_stall_at_ms_ = 0;
 	bool applying_ = false;
 	int transient_renewals_ = 0;
 	QString last_lock_ = QStringLiteral("none");
@@ -498,6 +507,13 @@ class ProductWindow final : public QWidget {
 			{"streamPlaybackWhep", value.stream_playback_whep},
 			{"streamTransport", value.stream_transport},
 			{"streamError", value.stream_error},
+			// Duration of the Program teardowns the calling thread actually waited for.
+			{"teardown", QJsonObject{{"relayStopMs", double(value.relay_stop_last_ms)},
+				{"relayStopMaxMs", double(value.relay_stop_max_ms)},
+				{"publishReleaseMs", double(value.publish_release_last_ms)},
+				{"publishReleaseMaxMs", double(value.publish_release_max_ms)},
+				{"publishStopWaitMs", double(value.publish_stop_wait_last_ms)},
+				{"publishStopWaitMaxMs", double(value.publish_stop_wait_max_ms)}}},
 			// audioTracks is what the running output encodes; selectedAudioTracks is
 			// the mask the applied Program Scene actually routes right now, so an
 			// idle receipt still proves which bus the next recording will encode.
@@ -775,6 +791,11 @@ class ProductWindow final : public QWidget {
 		// rate cannot exceed this publish rate, otherwise a 2 s observation gap looks
 		// like an input that stopped delivering frames.
 		state.insert("publishedAtMs", QDateTime::currentMSecsSinceEpoch());
+		// UI-thread stall evidence and the Program teardown durations behind it. These
+		// exist so a control refusal can be attributed without guessing.
+		state.insert("uiStallMs", double(ui_stall_last_ms_));
+		state.insert("uiStallMaxMs", double(ui_stall_max_ms_));
+		state.insert("uiStallAtMs", double(ui_stall_at_ms_));
 		struct MediaHealth {
 			bool showing;
 			bool active;
@@ -1820,7 +1841,8 @@ class ProductWindow final : public QWidget {
 				     support_bundle_})
 				button->setEnabled(true);
 			status_->setText(tr("已登录，正在读取授权设备目录…"));
-			heartbeat_.start(2000);
+			heartbeat_last_ms_ = 0;
+			heartbeat_.start(int(heartbeat_interval_ms));
 			program_sync_.start(1000);
 			sync_program();
 			refresh_catalog(true);
@@ -2567,6 +2589,19 @@ public:
 			observe_current_media();
 		});
 		connect(&heartbeat_, &QTimer::timeout, this, [this] {
+			const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
+			if (heartbeat_last_ms_ > 0) {
+				const qint64 lag = now_ms - heartbeat_last_ms_ - heartbeat_interval_ms;
+				// Only a late tick of a continuously running timer says something about the
+				// UI thread; a gap across a logout or a stopped timer does not.
+				if (lag > 250 && lag < 60000) {
+					ui_stall_last_ms_ = lag;
+					ui_stall_at_ms_ = now_ms;
+					if (lag > ui_stall_max_ms_)
+						ui_stall_max_ms_ = lag;
+				}
+			}
+			heartbeat_last_ms_ = now_ms;
 			remember_open_projector_placements();
 			refresh_video_health();
 			refresh_output_health();
