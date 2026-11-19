@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 255,
-  "updated_at": "2026-11-19T22:30:40+08:00",
+  "revision": 256,
+  "updated_at": "2026-11-19T22:33:05+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1308,12 +1308,13 @@
         "本机验证：Fedora 44 容器内 product_window.cpp/product_scene.cpp -fsyntax-only -Wall -Wextra exit=0；应用补丁后的 libobs/obs-source.c -fsyntax-only -Wall exit=0（patch -p1 通过）；native-host/tests/test_*.py 全套通过（两个需 --probe 的真机探针除外）；git diff --check 干净",
         "rc.62 run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44534272424 @ f88b525e：42 项通过，failurePhase=program-streaming，programStreamVideoProbe frames=0/ptsSpanSeconds=0.0/returnCode=0，stderr 'co located POCs unavailable'+'mmco: unref short failure'，renderFrames 10620→10680、laggedFrames 8→8、streamConnected true、renderProbe available=false；programStreamBandRms 1377.1/907.2",
         "codex/v51-r3-output@d6d2624；test_build_contract.py 48/48；native-host/tests/test_*.py 全套通过（两个需 --probe 的真机探针除外）；栈头已 rebase 推送：#70 825442d、#71 46f7b14、#74 223c7b7、#75 41fc1ad、#76 dab2e0f",
-        "run 44544305133 = 5.1.0-rc.63 @ dab2e0fa3e87db7f11d0331f6ccf2043266be9f1（codex/v51-r4-legacy-import，soak_minutes=0）in_progress"
+        "run 44544305133 = 5.1.0-rc.63 @ dab2e0fa3e87db7f11d0331f6ccf2043266be9f1（codex/v51-r4-legacy-import，soak_minutes=0）in_progress",
+        "本机实验目录 /tmp/latejoin.elgB；mediamtx v1.18.2（与 docker/Dockerfile 固定版本一致），配置与 product_output.cpp::media_mtx_config 同形状；旧探针 returnCode 0/jsonFrames 0；新探针 frames 148、monotonic true、span 4.9 s、firstDecodableFrameMs 1977、fps 30.2；packetProbe packets 181/keyframes 3/firstPacketIsKey false/firstKeyPacketPts 1.0676/keyGaps [2.0, 2.0]"
       ],
       "blocker": "",
       "next_step": "读 rc.63 的 programStreamVideoProbe.packetProbe：keyframes=0 说明编码器 IDR 没到新客户端，对照编码器送出与 MediaMTX 交给新连接的首包并检查 IDR/SPS-PPS 缺失段；keyframes>=2 且 frames>=10、跨度>=2s 则继续核对逐轨增益、偏移、发布断开恢复与 NSIS 安装回执齐全后再合并与冻结候选。",
-      "updated_at": "2026-11-19T22:30:40+08:00",
-      "last_note": "rc.62 与 rc.61 同点失败已定位方向：晚加入的 RTSP 客户端在下一个关键帧前就结束了 20 包读取；两个 Program 发布视频门禁改为共用按秒窗口读取器并新增包探针，中继被杀后的恢复门禁同修，pts_time 字符串解析修正，新增契约测试锁定 keyint 与断言。"
+      "updated_at": "2026-11-19T22:33:05+08:00",
+      "last_note": "本机用固定 MediaMTX v1.18.2 复现并确认：晚加入 RTSP 客户端的 20 包读取返回码 0 且 0 帧，而同一连接读 6 秒解出 148 帧（首个可解码帧 1977 ms，跨度 4.9 s，30.2 fps），副连接包探针显示中继每 2 秒交付关键帧（3 个关键帧包、firstPacketIsKey false、间隔 2.0/2.0）。缺陷在读取窗口，不在产品推流侧。"
     },
     {
       "id": "COORD-008",
@@ -4458,6 +4459,18 @@
         "run 44544305133 = 5.1.0-rc.63 @ dab2e0fa3e87db7f11d0331f6ccf2043266be9f1（codex/v51-r4-legacy-import，soak_minutes=0）in_progress"
       ],
       "git_revision": "7afa8a22439ba549b4857ed0f5967cc14835bebe"
+    },
+    {
+      "sequence": 256,
+      "at": "2026-11-19T22:33:05+08:00",
+      "agent": "qwen38-next-v51-20261119-01",
+      "task": "V51-008",
+      "action": "update",
+      "note": "本机用固定 MediaMTX v1.18.2 复现并确认：晚加入 RTSP 客户端的 20 包读取返回码 0 且 0 帧，而同一连接读 6 秒解出 148 帧（首个可解码帧 1977 ms，跨度 4.9 s，30.2 fps），副连接包探针显示中继每 2 秒交付关键帧（3 个关键帧包、firstPacketIsKey false、间隔 2.0/2.0）。缺陷在读取窗口，不在产品推流侧。",
+      "evidence": [
+        "本机实验目录 /tmp/latejoin.elgB；mediamtx v1.18.2（与 docker/Dockerfile 固定版本一致），配置与 product_output.cpp::media_mtx_config 同形状；旧探针 returnCode 0/jsonFrames 0；新探针 frames 148、monotonic true、span 4.9 s、firstDecodableFrameMs 1977、fps 30.2；packetProbe packets 181/keyframes 3/firstPacketIsKey false/firstKeyPacketPts 1.0676/keyGaps [2.0, 2.0]"
+      ],
+      "git_revision": "806d0800758638fa7c5becc278c47a5a222fcb0b"
     }
   ]
 }

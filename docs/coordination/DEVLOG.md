@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 255 · 2026-11-19T22:30:40+08:00（UTC+08）
+> 快照版本 256 · 2026-11-19T22:33:05+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #256 · 2026-11-19T22:33:05+08:00 · update
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：本机用固定 MediaMTX v1.18.2 复现并确认：晚加入 RTSP 客户端的 20 包读取返回码 0 且 0 帧，而同一连接读 6 秒解出 148 帧（首个可解码帧 1977 ms，跨度 4.9 s，30.2 fps），副连接包探针显示中继每 2 秒交付关键帧（3 个关键帧包、firstPacketIsKey false、间隔 2.0/2.0）。缺陷在读取窗口，不在产品推流侧。
+- 证据：本机实验目录 /tmp/latejoin.elgB；mediamtx v1.18.2（与 docker/Dockerfile 固定版本一致），配置与 product_output.cpp::media_mtx_config 同形状；旧探针 returnCode 0/jsonFrames 0；新探针 frames 148、monotonic true、span 4.9 s、firstDecodableFrameMs 1977、fps 30.2；packetProbe packets 181/keyframes 3/firstPacketIsKey false/firstKeyPacketPts 1.0676/keyGaps [2.0, 2.0]
+- 源码：`806d0800758638fa7c5becc278c47a5a222fcb0b`
 ## #255 · 2026-11-19T22:30:40+08:00 · update
 
 - Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
