@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 272,
-  "updated_at": "2026-11-20T04:33:37+08:00",
+  "revision": 274,
+  "updated_at": "2026-11-20T04:45:17+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1335,12 +1335,13 @@
         "codex/v51-r3-output e5a87b0；栈再次重放推送：#70 d475a70、#71 da082ee、#74 1861627、#75 9c59f49、#76 6971a60（顶层完整 SHA 6971a60aadd5fe7244b16192c24450f2a1705f52；相对 e955d9e 的树差只有 test_build_contract.py 与两个审计入口）；本机 native-host/tests/test_build_contract.py 54/54 OK、审计 RTSP 规则复跑 OK、git diff --check 干净。",
         "codex/v51-r5-soak 0686c2b（test_build_contract.py 55 项 OK；换回 bd617e8 的 product_windows.py 后新增回放断言失败于已重启发布进程）；codex/v51-r3-005-devices da2fc15；codex/v51-r4-legacy-import bf8c1ce；试合树 /tmp/merge-dry.9r6A 六次 merge 无冲突且 native-host 套件 OK；rc.69 run 44587525224 仍 in_progress，当前步骤 Build and qualify a fresh integrated product NSIS installation（首次执行安装态门禁）。",
         "rc.69 回执 /tmp/rc69.ht0c/native-product-integration-receipts-5.1.0-rc.69/：installed-ui passed=false failurePhase=program-publish-disconnect lastCheckpoint=program-publish-disconnect-reported publishDisconnectError=publish-relay-exited publishRelayPid=2908 programTrackGain controlRatios 1.01/1.005 gainPointTwo 比值 0.2012 programTrackMute 880=6.5 programBusIsolation busTwo 440=4070.2/1200=2.7、busThree 1200=4102.9/440=5.5 programTrackOffsets [[0,500,300],[1,0,-200]] recordingFailureReceipt=recording-directory-failed deviceOperations 有 ONVIF GetProfiles；entry-ui passed=true（77 项）restore/size-split 通过，restore-pair、legacy-import、lan、updater、upgraded-ui 因门禁中断未执行；本机 native-host/tests/test_*.py 全部 OK（两个需 --probe 的真机探针除外），test_build_contract 56 OK（非 v51 worktree 仍因 obs 子模块未初始化报 1 error，与本轮无关），git diff --check 干净，staged diff 无新增 rtsp userinfo；新回归在修复前文件上失败于残留裸 assert（2686/2703），修复后三种结局与空消息补全全部通过。rc.70 run 44599567300 已派发，监视 /tmp/watch70.log。",
-        "rc.70 回执 /tmp/rc70.aZVt/：installed-ui passed=false failurePhase=program-publish-disconnect failureDetail='the product publish control could not resume Program publishing after the relay loss' lastCheckpoint=program-publish-disconnect-reported publishDisconnectError=publish-relay-exited publishRelayPid=7824 productControlWaits=[{label:'publish again after a relay loss',recoveredAfterAttempts:0,unusableAttempts:[],lastUnavailable:null,lastUiFailure:{stage:'initialize',code:'product-window'}}] lastStateObservation={code:'state-from-other-boot',pidMatched:false,bootIdMatched:false}（该条来自结束时的观察，不属开关调用）；entry-ui passed=true、restore 通过、size-split 含 installedTree；restore-pair、legacy-import、lan、updater、upgraded-ui 仍未执行。本机 test_build_contract 55 OK（新契约在修复前的 product_windows.py 上失败于 reportedHandles 计数 1≠2；在修复前的 product-ui.ps1 上缺少两个区分 code），git diff --check 干净，无新增 rtsp userinfo。rc.71 run 44609775780 已派发，监视 /tmp/watch71.log。"
+        "rc.70 回执 /tmp/rc70.aZVt/：installed-ui passed=false failurePhase=program-publish-disconnect failureDetail='the product publish control could not resume Program publishing after the relay loss' lastCheckpoint=program-publish-disconnect-reported publishDisconnectError=publish-relay-exited publishRelayPid=7824 productControlWaits=[{label:'publish again after a relay loss',recoveredAfterAttempts:0,unusableAttempts:[],lastUnavailable:null,lastUiFailure:{stage:'initialize',code:'product-window'}}] lastStateObservation={code:'state-from-other-boot',pidMatched:false,bootIdMatched:false}（该条来自结束时的观察，不属开关调用）；entry-ui passed=true、restore 通过、size-split 含 installedTree；restore-pair、legacy-import、lan、updater、upgraded-ui 仍未执行。本机 test_build_contract 55 OK（新契约在修复前的 product_windows.py 上失败于 reportedHandles 计数 1≠2；在修复前的 product-ui.ps1 上缺少两个区分 code），git diff --check 干净，无新增 rtsp userinfo。rc.71 run 44609775780 已派发，监视 /tmp/watch71.log。",
+        "commit 9ed32ae (codex/v51-r3-output, PR #67)；栈顶 codex/v51-r4-legacy-import e3a9519f7a61376ba4f5ca1e53798f55dd17fbd9；静态契约缺少计量时 FAILED、补齐后 OK；native-host/tests 在 v51 worktree 通过"
       ],
       "blocker": "",
-      "next_step": "rc.71 完成后执行 python3 scripts/v51-ci-gate.py 44609775780 --sha cdfe8182a4928a75d4eff31b7afe0b110f3bde92 --version 5.1.0-rc.71，并按 lastUiFailure.code 分支：window-handle-gone→查产品恢复路径为何销毁/重建顶层窗口；window-pid-mismatch→查装置读到的句柄是否过期；recoveredAfterAttempts>0→门禁已自愈，继续读后续 restore-pair/legacy-import/LAN/updater/upgraded-ui。若再次只是装置侧改动就要重编 OBS，则新增一个复用已发布候选安装包与当前测试脚本的 Windows 快速复测入口（完整候选仍优先，不阻塞出包）。六个 PR 的 head public CI 全绿且顺序试合无冲突，通过后再按 #67→#70→#71→#74→#75→#76 双语合入 dev 并派发 soak_minutes=120 冻结候选。",
-      "updated_at": "2026-11-20T04:33:37+08:00",
-      "last_note": "rc.70（run 44599567300，源码 ed25609c…）再次停在 program-publish-disconnect，但新判定把范围缩小了：failureDetail 明确是断线后恢复推流的第二次开关；productControlWaits 显示首次调用即被 UI Automation 拒绝（unusableAttempts 空、lastUnavailable=null），不是本次 product-state.json 不可用；lastUiFailure 仍只有共享的 initialize/product-window，因为 product-ui.ps1 对 FromHandle 返回空与 Current.ProcessId≠FrontendPid 抛同一个 code，且该 code 在  赋值前设置，与启动阶段 wait_for(ui('inspect')) 的正常等待无法区分。修复 460789d：拒绝分开发回 window-handle-gone / window-pid-mismatch，并在触碰任何控件之前最多再问三次（400 ms，点击尚未发生）；Python 把 window_owner() 的现场判定写进 lastUiFailure.reportedHandles（gone/other-process(N)/frontend）。发布验收与阈值不变。栈再次重放：#70 3e485f9、#71 6c86adb、#74 bab66ab、#75 3bb51fa、#76 cdfe818（顶层完整 SHA cdfe8182a4928a75d4eff31b7afe0b110f3bde92，相对 ed25609 只差 3 个文件 37+/5-）。"
+      "next_step": "读 rc.71（run 44609775780 @ cdfe8182）首个失败点与 reportedHandles/productControlWaits；若仍是发布开关拒绝，从 e3a9519 派发 soak_minutes=0 的 rc.72 读心跳与拆除耗时；若通过则补齐 restore-pair/legacy-import/lan/updater/upgraded-ui 回执再按依赖合入 dev。",
+      "updated_at": "2026-11-20T04:45:17+08:00",
+      "last_note": "本轮增加产品侧 UI 线程归因计量并沿 PR 链同步到栈顶 e3a9519；等待 rc.71 结果决定下一轮。"
     },
     {
       "id": "COORD-008",
@@ -4692,6 +4693,28 @@
         "rc.70 回执 /tmp/rc70.aZVt/：installed-ui passed=false failurePhase=program-publish-disconnect failureDetail='the product publish control could not resume Program publishing after the relay loss' lastCheckpoint=program-publish-disconnect-reported publishDisconnectError=publish-relay-exited publishRelayPid=7824 productControlWaits=[{label:'publish again after a relay loss',recoveredAfterAttempts:0,unusableAttempts:[],lastUnavailable:null,lastUiFailure:{stage:'initialize',code:'product-window'}}] lastStateObservation={code:'state-from-other-boot',pidMatched:false,bootIdMatched:false}（该条来自结束时的观察，不属开关调用）；entry-ui passed=true、restore 通过、size-split 含 installedTree；restore-pair、legacy-import、lan、updater、upgraded-ui 仍未执行。本机 test_build_contract 55 OK（新契约在修复前的 product_windows.py 上失败于 reportedHandles 计数 1≠2；在修复前的 product-ui.ps1 上缺少两个区分 code），git diff --check 干净，无新增 rtsp userinfo。rc.71 run 44609775780 已派发，监视 /tmp/watch71.log。"
       ],
       "git_revision": "37caa067b4f74f82a2d4409d905dfeadd21caa4d"
+    },
+    {
+      "sequence": 273,
+      "at": "2026-11-20T04:45:14+08:00",
+      "agent": "qwen38-next-v51-20261119-01",
+      "task": "V51-008",
+      "action": "log",
+      "note": "发布开关被拒的归因补到产品侧：宿主现在计量自身心跳迟到时长/时刻与 Program 拆除各段耗时（停止输出等待、释放推流对象、停止 MediaMTX），写入私有状态观测；已安装门禁在记录 UIA 拒绝时同时带上这份产品自述与状态发布时间。验收阈值未变。该提交已沿 PR 链推进到栈顶。",
+      "evidence": [
+        "commit 9ed32ae (codex/v51-r3-output, PR #67)；栈顶 codex/v51-r4-legacy-import e3a9519f7a61376ba4f5ca1e53798f55dd17fbd9；静态契约缺少计量时 FAILED、补齐后 OK；native-host/tests 在 v51 worktree 通过"
+      ],
+      "git_revision": "210020f2c686ffc00ec4e9726a95a09aa810a7b0"
+    },
+    {
+      "sequence": 274,
+      "at": "2026-11-20T04:45:17+08:00",
+      "agent": "qwen38-next-v51-20261119-01",
+      "task": "V51-008",
+      "action": "update",
+      "note": "本轮增加产品侧 UI 线程归因计量并沿 PR 链同步到栈顶 e3a9519；等待 rc.71 结果决定下一轮。",
+      "evidence": [],
+      "git_revision": "210020f2c686ffc00ec4e9726a95a09aa810a7b0"
     }
   ]
 }

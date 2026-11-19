@@ -1,12 +1,24 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 272 · 2026-11-20T04:33:37+08:00（UTC+08）
+> 快照版本 274 · 2026-11-20T04:45:17+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #274 · 2026-11-20T04:45:17+08:00 · update
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：本轮增加产品侧 UI 线程归因计量并沿 PR 链同步到栈顶 e3a9519；等待 rc.71 结果决定下一轮。
+- 证据：无新增验收证据
+- 源码：`210020f2c686ffc00ec4e9726a95a09aa810a7b0`
+## #273 · 2026-11-20T04:45:14+08:00 · log
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：发布开关被拒的归因补到产品侧：宿主现在计量自身心跳迟到时长/时刻与 Program 拆除各段耗时（停止输出等待、释放推流对象、停止 MediaMTX），写入私有状态观测；已安装门禁在记录 UIA 拒绝时同时带上这份产品自述与状态发布时间。验收阈值未变。该提交已沿 PR 链推进到栈顶。
+- 证据：commit 9ed32ae (codex/v51-r3-output, PR #67)；栈顶 codex/v51-r4-legacy-import e3a9519f7a61376ba4f5ca1e53798f55dd17fbd9；静态契约缺少计量时 FAILED、补齐后 OK；native-host/tests 在 v51 worktree 通过
+- 源码：`210020f2c686ffc00ec4e9726a95a09aa810a7b0`
 ## #272 · 2026-11-20T04:33:37+08:00 · update
 
 - Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
