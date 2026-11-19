@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 270,
-  "updated_at": "2026-11-20T03:05:28+08:00",
+  "revision": 271,
+  "updated_at": "2026-11-20T03:34:48+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1333,12 +1333,13 @@
         "rc.67 run 44568325933 首个失败点 phase=program-publish-disconnect、detail=TypeError: list indices must be integers or slices, not str（门禁把混音观察返回的 PID 列表当成回执行），已由 0874fd4 修复；该轮 49 项通过并保留 TAKE、双总线隔离、逐轨静音、逐轨增益 0.2007、录像失败路径、设备操作入口、发布与恢复解码帧等有效证据。本机 test_build_contract.py 53/53 通过；把 product_windows.py 换回修复前版本（deaec20）后新回归失败于 AssertionError: [12, 13] is not an instance of <class dict>，换回修复版即通过。Fedora 容器 v51qt（fedora:44，Python 3.14.10）内 -k mix 3 项通过，脱敏回执回放：publish-disconnect-start live=[51078,51389] claimed=[51389] unserved=[] orphan=[51078]；before/after stop live=[51389] claimed=[51389] unserved=[] orphan=[]；converged=True；MIX-PORT VERDICT: PASS。链式同步后 #67 c64a76b、#70 0f3f078、#71 3a282f8、#74 b7f0f01、#75 f964680、#76 a71d561（栈顶自身提交数仍 24，相对 2c0e99d 只多 1 个测试文件 80 行）。",
         "codex/v51-r3-output 768fa07；栈已重放推送：#70 4f81086、#71 5348d3b、#74 04370d4、#75 0b387c8、#76 e955d9e（顶层完整 SHA e955d9ea5d7947917a4a85292b923c5e91afc6f6，与旧栈顶 a71d561 的树差仅为本次 4 个测试文件 236+/19-）；本机 native-host/tests/test_pixels.py 31 项 OK（2 skip）、test_build_contract.py 54/54 OK、native-host/tests/test_*.py 全套 exit 0（仅两个需显式 --probe 的 Windows 真机探针 exit 2）、test_product_lan 24 OK、test_legacy_import OK、git diff --check 干净；把 pixel_windows.py 换回 HEAD 版本回放：丢弃块对照 0.343/0.814 失败、偏离标称音调 0.286 失败、toneReadings KeyError，换回修复版全部通过。非 v51 worktree 未初始化 obs/obs-studio 子模块时 test_lock_matches_pinned_obs_and_only_needed_dependencies 报缺 CMakePresets.json，与本轮改动无关（#69 待补）。",
         "codex/v51-r3-output e5a87b0；栈再次重放推送：#70 d475a70、#71 da082ee、#74 1861627、#75 9c59f49、#76 6971a60（顶层完整 SHA 6971a60aadd5fe7244b16192c24450f2a1705f52；相对 e955d9e 的树差只有 test_build_contract.py 与两个审计入口）；本机 native-host/tests/test_build_contract.py 54/54 OK、审计 RTSP 规则复跑 OK、git diff --check 干净。",
-        "codex/v51-r5-soak 0686c2b（test_build_contract.py 55 项 OK；换回 bd617e8 的 product_windows.py 后新增回放断言失败于已重启发布进程）；codex/v51-r3-005-devices da2fc15；codex/v51-r4-legacy-import bf8c1ce；试合树 /tmp/merge-dry.9r6A 六次 merge 无冲突且 native-host 套件 OK；rc.69 run 44587525224 仍 in_progress，当前步骤 Build and qualify a fresh integrated product NSIS installation（首次执行安装态门禁）。"
+        "codex/v51-r5-soak 0686c2b（test_build_contract.py 55 项 OK；换回 bd617e8 的 product_windows.py 后新增回放断言失败于已重启发布进程）；codex/v51-r3-005-devices da2fc15；codex/v51-r4-legacy-import bf8c1ce；试合树 /tmp/merge-dry.9r6A 六次 merge 无冲突且 native-host 套件 OK；rc.69 run 44587525224 仍 in_progress，当前步骤 Build and qualify a fresh integrated product NSIS installation（首次执行安装态门禁）。",
+        "rc.69 回执 /tmp/rc69.ht0c/native-product-integration-receipts-5.1.0-rc.69/：installed-ui passed=false failurePhase=program-publish-disconnect lastCheckpoint=program-publish-disconnect-reported publishDisconnectError=publish-relay-exited publishRelayPid=2908 programTrackGain controlRatios 1.01/1.005 gainPointTwo 比值 0.2012 programTrackMute 880=6.5 programBusIsolation busTwo 440=4070.2/1200=2.7、busThree 1200=4102.9/440=5.5 programTrackOffsets [[0,500,300],[1,0,-200]] recordingFailureReceipt=recording-directory-failed deviceOperations 有 ONVIF GetProfiles；entry-ui passed=true（77 项）restore/size-split 通过，restore-pair、legacy-import、lan、updater、upgraded-ui 因门禁中断未执行；本机 native-host/tests/test_*.py 全部 OK（两个需 --probe 的真机探针除外），test_build_contract 56 OK（非 v51 worktree 仍因 obs 子模块未初始化报 1 error，与本轮无关），git diff --check 干净，staged diff 无新增 rtsp userinfo；新回归在修复前文件上失败于残留裸 assert（2686/2703），修复后三种结局与空消息补全全部通过。rc.70 run 44599567300 已派发，监视 /tmp/watch70.log。"
       ],
       "blocker": "",
-      "next_step": "等 rc.69（run 44587525224，源码 e955d9ea5d7947917a4a85292b923c5e91afc6f6，5.1.0-rc.69，soak_minutes=0）完成后用 python3 scripts/v51-ci-gate.py 44587525224 --sha e955d9ea5d7947917a4a85292b923c5e91afc6f6 --version 5.1.0-rc.69 读回执；通过则按 #67→#70→#71→#74→#75→#76 双语合入 dev，再从 dev 集成源码派发 5.1.0-rc.70、soak_minutes=120 的冻结候选并用 --freeze 复核。",
-      "updated_at": "2026-11-20T03:05:28+08:00",
-      "last_note": "长稳门禁补上 Linux 回放回归（#74 提交 0686c2b）：假宿主、假时钟、假夹具发布进程重放同一个 soak_watched_inputs，夹具发布进程窗口内退出被重启并继续观察、不记成产品停滞，而输入停滞、进程树变化、私有内存/句柄增长、不可读进程、CPU 过低与回环服务退出仍分别失败；换回 1861627 的父提交即失败、换回修复版即通过。栈已按依赖重放推送：#75 da2fc15、#76 bf8c1ce（顶层完整 SHA bf8c1ce…，只差测试文件）。另外在临时 worktree 里把 #67→#70→#71→#74→#75→#76 顺序试合进 origin/dev：六个 merge 全部自动干净，合并树 native-host/tests/test_*.py 除两个需 --probe 的真机探针与未初始化 obs 子模块外全部 OK；workflow 在 soak_minutes>0 时 job timeout 为 260 分钟，够容纳 120 分钟长稳。"
+      "next_step": "rc.70 完成后执行 python3 scripts/v51-ci-gate.py 44599567300 --sha ed25609c58933b10c52f4f86fd98369ad6d0d489 --version 5.1.0-rc.70；通过则按 #67→#70→#71→#74→#75→#76 双语合入 dev（已在临时 worktree 试合过六次均无冲突），再从 dev 集成源码派发 5.1.0-rc.71、soak_minutes=120 的冻结候选并用 --freeze 复核，最后以 GitHub prerelease 提供安装包下载链接。",
+      "updated_at": "2026-11-20T03:34:48+08:00",
+      "last_note": "rc.69（run 44587525224）首次跑到 NSIS 安装态：NSIS 新装、便携门禁、TAKE 像素、录像/发布双音、总线隔离、逐轨静音/增益（比值 1.01/1.005，降至 0.201）/偏移、设备操作、录像失败路径共 45 项通过，随后停在 program-publish-disconnect，failureDetail 只有 'AssertionError: '（裸 assert ui(...) 无消息），lastUiFailure 还停留在启动阶段。定位：ui() 返回 False 有两种原因——本次启动 product-state.json 不可用，或 UI Automation 拒绝被拥有窗口——空消息把两者混在一起。修复 4a79201：state() 记录 lastStateObservation（state-file-count/state-file-unreadable/state-from-other-boot），ui() 在提前返回前记录 lastUiUnavailable（matchedWindows、reportedRoles、用 user32 IsWindow+GetWindowThreadProcessId 现场判定的 reportedHandles：gone/other-process/frontend），发布开关改用 ui_control（仅窗口暂不可寻址时有界等待并记录 productControlWaits；真实 UIA 拒绝不重试，因为点击从未发生），failure_detail() 在无消息断言时附上判定。发布验收与阈值未改。栈按依赖重放推送：#70 b25624c、#71 324413b、#74 8996b94、#75 0f59dc7、#76 ed25609（顶层完整 SHA ed25609c58933b10c52f4f86fd98369ad6d0d489，相对 bf8c1ce 只差这两个文件 194+/4-）。"
     },
     {
       "id": "COORD-008",
@@ -4666,6 +4667,18 @@
         "codex/v51-r5-soak 0686c2b（test_build_contract.py 55 项 OK；换回 bd617e8 的 product_windows.py 后新增回放断言失败于已重启发布进程）；codex/v51-r3-005-devices da2fc15；codex/v51-r4-legacy-import bf8c1ce；试合树 /tmp/merge-dry.9r6A 六次 merge 无冲突且 native-host 套件 OK；rc.69 run 44587525224 仍 in_progress，当前步骤 Build and qualify a fresh integrated product NSIS installation（首次执行安装态门禁）。"
       ],
       "git_revision": "6feda94c64c0595b19d68c98d66251aaad845dda"
+    },
+    {
+      "sequence": 271,
+      "at": "2026-11-20T03:34:48+08:00",
+      "agent": "qwen38-next-v51-20261119-01",
+      "task": "V51-008",
+      "action": "update",
+      "note": "rc.69（run 44587525224）首次跑到 NSIS 安装态：NSIS 新装、便携门禁、TAKE 像素、录像/发布双音、总线隔离、逐轨静音/增益（比值 1.01/1.005，降至 0.201）/偏移、设备操作、录像失败路径共 45 项通过，随后停在 program-publish-disconnect，failureDetail 只有 'AssertionError: '（裸 assert ui(...) 无消息），lastUiFailure 还停留在启动阶段。定位：ui() 返回 False 有两种原因——本次启动 product-state.json 不可用，或 UI Automation 拒绝被拥有窗口——空消息把两者混在一起。修复 4a79201：state() 记录 lastStateObservation（state-file-count/state-file-unreadable/state-from-other-boot），ui() 在提前返回前记录 lastUiUnavailable（matchedWindows、reportedRoles、用 user32 IsWindow+GetWindowThreadProcessId 现场判定的 reportedHandles：gone/other-process/frontend），发布开关改用 ui_control（仅窗口暂不可寻址时有界等待并记录 productControlWaits；真实 UIA 拒绝不重试，因为点击从未发生），failure_detail() 在无消息断言时附上判定。发布验收与阈值未改。栈按依赖重放推送：#70 b25624c、#71 324413b、#74 8996b94、#75 0f59dc7、#76 ed25609（顶层完整 SHA ed25609c58933b10c52f4f86fd98369ad6d0d489，相对 bf8c1ce 只差这两个文件 194+/4-）。",
+      "evidence": [
+        "rc.69 回执 /tmp/rc69.ht0c/native-product-integration-receipts-5.1.0-rc.69/：installed-ui passed=false failurePhase=program-publish-disconnect lastCheckpoint=program-publish-disconnect-reported publishDisconnectError=publish-relay-exited publishRelayPid=2908 programTrackGain controlRatios 1.01/1.005 gainPointTwo 比值 0.2012 programTrackMute 880=6.5 programBusIsolation busTwo 440=4070.2/1200=2.7、busThree 1200=4102.9/440=5.5 programTrackOffsets [[0,500,300],[1,0,-200]] recordingFailureReceipt=recording-directory-failed deviceOperations 有 ONVIF GetProfiles；entry-ui passed=true（77 项）restore/size-split 通过，restore-pair、legacy-import、lan、updater、upgraded-ui 因门禁中断未执行；本机 native-host/tests/test_*.py 全部 OK（两个需 --probe 的真机探针除外），test_build_contract 56 OK（非 v51 worktree 仍因 obs 子模块未初始化报 1 error，与本轮无关），git diff --check 干净，staged diff 无新增 rtsp userinfo；新回归在修复前文件上失败于残留裸 assert（2686/2703），修复后三种结局与空消息补全全部通过。rc.70 run 44599567300 已派发，监视 /tmp/watch70.log。"
+      ],
+      "git_revision": "fc63607a4ec03c0e1cc2829f193d00445f329e0c"
     }
   ]
 }

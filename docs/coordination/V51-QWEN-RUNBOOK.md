@@ -50,7 +50,12 @@ python3 "$project/scripts/v51-ci-gate.py" 44385767337 \
 
 如果本地 Agent 的工具层支持限制，给它工作任务 worktree 和账本脚本的访问权限。常用入口是 `git status/diff/log`、`rg`、测试、上面的检查脚本和 `agent-sync.py`。将 `git push`、`gh workflow run` 与批准后的发布命令绑定到具体 PR、分支和环境，沿用项目现有授权。共享 checkout 保留他人的文件和历史。`main`、Tag、更新源和历史 Release 附件由正常发布流程操作。此仓库脚本控制证据判定，工具权限由 T3 或实际运行器执行。
 
-## 3. 当前第一项任务是 rc.59 的音轨增益
+## 3. 逐轨增益与其后续失败面（历史起点 rc.59）
+
+**当前轮次 / current round**：rc.70 run [44599567300](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44599567300)，
+源码 `ed25609c58933b10c52f4f86fd98369ad6d0d489`（栈顶 `codex/v51-r4-legacy-import`），`product_mode=true complete=true soak_minutes=0`。
+上一轮 rc.69 的安装态门禁已把逐轨增益测到比值 1.01/1.005、降低后 0.201，增益本身不再阻塞；
+本轮要读的是发布开关的窗口判定与后续从未执行过的 restore-pair、legacy-import、LAN、updater、upgraded-ui。
 
 2026-11-19 的直接证据为 [rc.59](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44385767337) 的 `native-product-entry-ui.json`。46 项通过后，`program-track-controls` 失败。Portable 五路 HEVC、Program MP4、回环 RTMP 后通过 RTSP 解码双音、总线隔离、逐轨静音、ONVIF 模拟设备操作与拒绝结果已记录。安装步骤跳过，因此成对恢复、旧数据导入和 LAN 没有本轮安装证据。若 GitHub 有更新的失败，以更新回执的第一项为准。
 
@@ -145,6 +150,36 @@ cos(2·比值差)）也正好符合丢弃约 30 个采样造成的相位旋转�
 本地回归在 `native-host/tests/test_pixels.py` 的 `AudioWindowContractTests`（真实 FFmpeg，
 Fedora 可跑）：丢弃块对照、偏离标称的音调、相邻音高仍判为缺失、回执形状；把
 `pixel_windows.py` 换回修复前版本会分别得到 0.343、0.286 与 `toneReadings` KeyError。
+
+### rc.69 起：安装态发布开关要说清窗口为何不可用 / the installed publish toggle names the unusable window (since rc.69)
+
+rc.69（run 44587525224，栈顶 `e955d9e`）第一次跑到 NSIS 安装态门禁：新装、便携门禁、TAKE 像素、
+录像与发布双音、逐轨静音/增益/偏移、设备操作、录像失败路径共 45 项通过，随后停在
+`program-publish-disconnect`，`failureDetail` 只有 `AssertionError: `（空消息），回执里
+`lastUiFailure` 还停留在启动阶段的 `initialize/product-window`，因此无法判断到底哪里坏了。
+
+`ui()` 返回 `False` 有两个完全不同的原因，而裸 `assert ui(...)` 把两者都写成空消息：
+
+1. 本次启动的 `product-state.json` 不可用。现在 `state()` 把原因写进 `lastStateObservation`：
+   `state-file-count`（该目录里状态文件不是一个）、`state-file-unreadable`、
+   `state-from-other-boot`（`pidMatched`/`bootIdMatched` 哪个不成立）。
+2. UI Automation 拒绝被拥有的窗口。`ui()` 在提前返回前把判定写进 `lastUiUnavailable`：
+   `matchedWindows`、`reportedRoles` 以及每个上报句柄的存活判定 `reportedHandles`
+   （`gone`／`other-process(N)`／`frontend`），句柄存活用 `user32!IsWindow` 与
+   `GetWindowThreadProcessId` 现场判定，不写任何私有路径。
+
+从 `4a79201` 起，发布开关改用 `ui_control(action, label=…)`：只在“窗口暂不可寻址”时有界等待
+（默认 15 s）并把每次原因记进 `productControlWaits`；真正的 UIA 拒绝**不重试**，因为点击从未
+发生、重试会变成两次点击。断言本身没有消息时，`failure_detail()` 会把记录到的判定附进
+`failureDetail`，所以空消息不会再出现。发布验收与阈值未改。
+
+读法：先看 `failureDetail` 里附的 `lastUiUnavailable`/`lastControlWait`。`reportedHandles` 全是
+`gone` 表示宿主上报的窗口句柄已经不存在而进程还在跑，属产品侧；`state-from-other-boot` 表示
+这个 disposable 档案被第二次启动覆写，属门禁装置侧；`lastUiFailure.code = product-window`
+且 `reportedHandles` 为 `frontend` 才是 UI Automation 自身拒绝。本地回归在
+`native-host/tests/test_build_contract.py`：三种结局（短暂不可寻址后成功、真实拒绝不重试、
+始终不可用仍失败）与空消息补全，把 `product_windows.py` 换回修复前版本会在“仍残留裸 assert”
+上失败并列出 2686/2703 两行。
 
 ### 公开仓库审计：测试夹具里的 RTSP  userinfo 必须登记 / test fixtures must declare their RTSP userinfo
 

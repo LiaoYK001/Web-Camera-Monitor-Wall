@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 270 · 2026-11-20T03:05:28+08:00（UTC+08）
+> 快照版本 271 · 2026-11-20T03:34:48+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #271 · 2026-11-20T03:34:48+08:00 · update
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：rc.69（run 44587525224）首次跑到 NSIS 安装态：NSIS 新装、便携门禁、TAKE 像素、录像/发布双音、总线隔离、逐轨静音/增益（比值 1.01/1.005，降至 0.201）/偏移、设备操作、录像失败路径共 45 项通过，随后停在 program-publish-disconnect，failureDetail 只有 'AssertionError: '（裸 assert ui(...) 无消息），lastUiFailure 还停留在启动阶段。定位：ui() 返回 False 有两种原因——本次启动 product-state.json 不可用，或 UI Automation 拒绝被拥有窗口——空消息把两者混在一起。修复 4a79201：state() 记录 lastStateObservation（state-file-count/state-file-unreadable/state-from-other-boot），ui() 在提前返回前记录 lastUiUnavailable（matchedWindows、reportedRoles、用 user32 IsWindow+GetWindowThreadProcessId 现场判定的 reportedHandles：gone/other-process/frontend），发布开关改用 ui_control（仅窗口暂不可寻址时有界等待并记录 productControlWaits；真实 UIA 拒绝不重试，因为点击从未发生），failure_detail() 在无消息断言时附上判定。发布验收与阈值未改。栈按依赖重放推送：#70 b25624c、#71 324413b、#74 8996b94、#75 0f59dc7、#76 ed25609（顶层完整 SHA ed25609c58933b10c52f4f86fd98369ad6d0d489，相对 bf8c1ce 只差这两个文件 194+/4-）。
+- 证据：rc.69 回执 /tmp/rc69.ht0c/native-product-integration-receipts-5.1.0-rc.69/：installed-ui passed=false failurePhase=program-publish-disconnect lastCheckpoint=program-publish-disconnect-reported publishDisconnectError=publish-relay-exited publishRelayPid=2908 programTrackGain controlRatios 1.01/1.005 gainPointTwo 比值 0.2012 programTrackMute 880=6.5 programBusIsolation busTwo 440=4070.2/1200=2.7、busThree 1200=4102.9/440=5.5 programTrackOffsets [[0,500,300],[1,0,-200]] recordingFailureReceipt=recording-directory-failed deviceOperations 有 ONVIF GetProfiles；entry-ui passed=true（77 项）restore/size-split 通过，restore-pair、legacy-import、lan、updater、upgraded-ui 因门禁中断未执行；本机 native-host/tests/test_*.py 全部 OK（两个需 --probe 的真机探针除外），test_build_contract 56 OK（非 v51 worktree 仍因 obs 子模块未初始化报 1 error，与本轮无关），git diff --check 干净，staged diff 无新增 rtsp userinfo；新回归在修复前文件上失败于残留裸 assert（2686/2703），修复后三种结局与空消息补全全部通过。rc.70 run 44599567300 已派发，监视 /tmp/watch70.log。
+- 源码：`fc63607a4ec03c0e1cc2829f193d00445f329e0c`
 ## #270 · 2026-11-20T03:05:28+08:00 · update
 
 - Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
