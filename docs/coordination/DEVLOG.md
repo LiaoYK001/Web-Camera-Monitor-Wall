@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 267 · 2026-11-20T01:35:30+08:00（UTC+08）
+> 快照版本 268 · 2026-11-20T02:25:35+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #268 · 2026-11-20T02:25:35+08:00 · update
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：rc.68 run 44577184643（源码 2c0e99dc，soak_minutes=0）已完成并失败：49 项通过，首个失败点 phase=program-track-controls、detail=AssertionError: the unchanged gain configuration measured differently twice: {'440': 0.58, '880': 0.359}（checkpoint program-mix-audible-per-track gain reference repeat）；该轮只有 entry-ui 与 restore 两份回执，NSIS 安装、逐轨增益、成对恢复均未跑到。本轮只验证一个已定位失败点：测量把整窗一次性投影当成音调本身。用真实 FFmpeg（ffmpeg 8.1.3，本机 Fedora）回放录制形状复现——在 1.2 s 处丢掉 40 ms 音频块后，440 Hz 的整窗投影从 2890.0 掉到 991.3（比值 0.343）、880 Hz 掉到 0.814；偏离标称 0.4 Hz 时比值 0.286，而音调始终明显可闻。混音重采样带漂移校正并在流抖动时交接丢弃块，相位断裂后整窗投影读的是各段之和。修复 768fa07：幅度改为 0.5 s 短段在 ±1 Hz 带宽内最强投影的平均（平均而非中位数，保证窗口内静音仍按比例低估，lead-in 保护仍有效），并把增益对照的测量证据写在断言之前（rc.68 的比值是失败回执里唯一的数字）。验收阈值一字未改。
+- 证据：codex/v51-r3-output 768fa07；栈已重放推送：#70 4f81086、#71 5348d3b、#74 04370d4、#75 0b387c8、#76 e955d9e（顶层完整 SHA e955d9ea5d7947917a4a85292b923c5e91afc6f6，与旧栈顶 a71d561 的树差仅为本次 4 个测试文件 236+/19-）；本机 native-host/tests/test_pixels.py 31 项 OK（2 skip）、test_build_contract.py 54/54 OK、native-host/tests/test_*.py 全套 exit 0（仅两个需显式 --probe 的 Windows 真机探针 exit 2）、test_product_lan 24 OK、test_legacy_import OK、git diff --check 干净；把 pixel_windows.py 换回 HEAD 版本回放：丢弃块对照 0.343/0.814 失败、偏离标称音调 0.286 失败、toneReadings KeyError，换回修复版全部通过。非 v51 worktree 未初始化 obs/obs-studio 子模块时 test_lock_matches_pinned_obs_and_only_needed_dependencies 报缺 CMakePresets.json，与本轮改动无关（#69 待补）。
+- 源码：`c435bb063ee94d3dd8acde1640bef95c345e5bd7`
 ## #267 · 2026-11-20T01:35:30+08:00 · update
 
 - Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
