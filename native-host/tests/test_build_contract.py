@@ -1311,6 +1311,118 @@ class BuildContractTests(unittest.TestCase):
                 with self.subTest(wrong=wrong), self.assertRaises(AssertionError):
                     smoke_windows.check_product_receipt(path, expect_hardware_requests=5)
 
+    def test_the_installed_soak_gate_repairs_its_own_feed_before_blaming_the_product(self):
+        """Replay the two-hour watch on Linux: harness faults and product faults differ.
+
+        This gate only ever runs on a Windows runner, and it is the last thing between a
+        passing candidate and a publishable freeze, so it is replayed here with a fake
+        host and fake fixture publishers. A publisher that exits while looping a fixture
+        file is the harness's own fault: the watch must restart it and keep watching, and
+        must not report a product stall (commit 1861627). A stalled input, a process tree
+        that changed while nothing but watching happened, private memory or handle growth
+        past the bound, an unreadable process and an idle tree all still fail, and the
+        receipt has to carry the per-minute readings.
+        """
+        spec = importlib.util.spec_from_file_location("product_windows",
+            ROOT / "native-host/tests/product_windows.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        source = (ROOT / "native-host/tests/product_windows.py").read_text(encoding="utf-8")
+        node = next(item for item in ast.walk(ast.parse(source))
+            if isinstance(item, ast.FunctionDef) and item.name == "soak_watched_inputs")
+        code = ast.get_source_segment(source, node)
+        self.assertIn("def soak_watched_inputs", code)
+        exec(compile(code, str(ROOT / "native-host/tests/product_windows.py"), "exec"),
+            module.__dict__)
+
+        class FakeTime:
+            def __init__(self):
+                self.now = 0.0
+            def monotonic(self):
+                return self.now
+            def sleep(self, seconds):
+                self.now += seconds
+
+        class Publisher:
+            """Fake fixture publisher: alive, or exited from `dies_at` simulated seconds on."""
+
+            def __init__(self, clock, alive=True, dies_at=None):
+                self.clock = clock
+                self.alive = alive
+                self.dies_at = dies_at
+                self.restarted = 0
+            def poll(self):
+                if self.dies_at is not None and self.clock.now >= self.dies_at:
+                    return 1
+                return None if self.alive else 1
+
+        def run(minutes, *, metrics, stalled_minutes=(), dead_minutes=()):
+            clock = FakeTime()
+            # dead_minutes names the simulated minute (0-based) in which the second
+            # fixture publisher exits; that one, and only that one, must be restarted.
+            died_in = dead_minutes[0] if dead_minutes else None
+            publishers = [Publisher(clock), Publisher(clock, dies_at=None if died_in is None else died_in * 60)]
+            module.rtsp = type("FixtureRtsp", (), {
+                "publishers": publishers,
+                "server": Publisher(clock),
+                "restart_publisher": lambda self, index: (
+                    setattr(publishers[index], "alive", True),
+                    setattr(publishers[index], "dies_at", None),
+                    setattr(publishers[index], "restarted", publishers[index].restarted + 1))})()
+            module.time = clock
+            module.evidence = {"checks": []}
+            module.checkpoint = lambda name: None
+            samples = list(metrics)
+            module.process_tree_metrics = lambda: dict(samples.pop(0))
+            # The gate always asks "are zero inputs stalled"; the fake answers that from the
+            # simulated clock so a chosen minute can report a frozen input.
+            module.ui = lambda action, **fields: int(clock.now // 60) not in stalled_minutes
+            module.soak_watched_inputs(minutes)
+            return publishers
+
+        def tree(cpu, private=500_000_000, handles=300, pids=(10, 11, 12), unavailable=()):
+            return {"cpuSeconds": cpu, "privateBytes": private, "handles": handles,
+                "processIds": list(pids), "unavailable": list(unavailable)}
+
+        healthy = run(3, metrics=[tree(0.0), tree(60.0), tree(120.0)])
+        self.assertEqual([publisher.restarted for publisher in healthy], [0, 0])
+        self.assertEqual(module.evidence["soak"]["minutes"], 3)
+        self.assertEqual(module.evidence["soak"]["intervalSeconds"], 60)
+        self.assertEqual(len(module.evidence["soak"]["samples"]), 3)
+        self.assertEqual(module.evidence["soak"]["cpuSecondsDelta"], 120.0)
+        self.assertIn("installed-soak-3-minutes-five-inputs", module.evidence["checks"])
+
+        repaired = run(3, dead_minutes=(1,), metrics=[tree(0.0), tree(60.0), tree(120.0)])
+        self.assertEqual([publisher.restarted for publisher in repaired], [0, 1],
+            "the minute whose publisher exited must have that publisher restarted")
+        self.assertEqual(module.evidence["fixturePublisherWatch"][0]["dead"], [1])
+        self.assertIn("installed-soak-3-minutes-five-inputs", module.evidence["checks"],
+            "a repaired fixture feed is a harness fault, not a product stall")
+
+        with self.assertRaisesRegex(AssertionError, "soak minute 2"):
+            run(3, metrics=[tree(0.0), tree(60.0), tree(120.0)], stalled_minutes=(1,))
+        with self.assertRaisesRegex(AssertionError, "process tree changed"):
+            run(3, metrics=[tree(0.0, pids=(10, 11)), tree(60.0, pids=(10, 11, 12)),
+                tree(120.0, pids=(10, 11, 12))])
+        with self.assertRaisesRegex(AssertionError, "private memory grew"):
+            run(3, metrics=[tree(0.0), tree(60.0), tree(120.0, private=820_000_000)])
+        with self.assertRaisesRegex(AssertionError, "handle count grew"):
+            run(3, metrics=[tree(0.0), tree(60.0), tree(120.0, handles=520)])
+        with self.assertRaisesRegex(AssertionError, "could not read every product process"):
+            run(3, metrics=[tree(0.0, unavailable=(11,)), tree(60.0), tree(120.0)])
+        with self.assertRaisesRegex(AssertionError, "used only"):
+            run(3, metrics=[tree(0.0), tree(1.0), tree(2.0)])
+        # A publisher exiting inside the window is repaired; the loopback server itself
+        # dying is not the product's fault either, but it does invalidate the window.
+        module.rtsp = type("FixtureRtsp", (), {"publishers": [Publisher(FakeTime())],
+            "server": Publisher(FakeTime(), alive=False),
+            "restart_publisher": lambda self, index: None})()
+        module.evidence = {"checks": []}
+        module.process_tree_metrics = lambda: tree(0.0)
+        module.ui = lambda action, **fields: True
+        with self.assertRaisesRegex(AssertionError, "loopback RTSP server exited"):
+            module.soak_watched_inputs(1)
+
     def test_the_gain_control_step_records_its_measurement_before_rejecting_it(self):
         """A rejected Program control step still has to say what it measured.
 
