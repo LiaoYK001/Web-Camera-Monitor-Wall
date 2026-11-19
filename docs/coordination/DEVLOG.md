@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 256 · 2026-11-19T22:33:05+08:00（UTC+08）
+> 快照版本 257 · 2026-11-19T22:35:30+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #257 · 2026-11-19T22:35:30+08:00 · update
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：追加一个用假 ffprobe 直接驱动 published_video_window() 的单元测试，锁定字符串 pts_time 解析、N/A 记入 unparsableStamps 而非计数、stderr 噪声不阻塞窗口；栈已再次同步到新基线。
+- 证据：codex/v51-r3-output@b893905；test_build_contract.py 49/49（在 .worktrees/v51）；已 rebase 推送：#70 67699ee、#71 66facec、#74 893e3af、#75 f62004c、#76 8023fff（顶层完整 SHA 8023fff7cbc147cc38d0c5f3e838c16dd7c6827e）；rc.63 仍在跑 run 44544305133 @ dab2e0fa3e87db7f11d0331f6ccf2043266be9f1，回执将绑定该 SHA；b893905 之后仅新增测试文件，不改门禁行为。非 v51 worktree 未初始化 OBS 子模块时 test_lock_matches_pinned_obs_and_only_needed_dependencies 报缺文件，与本轮改动无关（属 #69 待补）。
+- 源码：`8a9be92ced0ec3b036f97fb3debac6e00faf3a3b`
 ## #256 · 2026-11-19T22:33:05+08:00 · update
 
 - Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`

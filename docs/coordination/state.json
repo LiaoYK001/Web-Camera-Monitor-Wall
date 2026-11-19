@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 256,
-  "updated_at": "2026-11-19T22:33:05+08:00",
+  "revision": 257,
+  "updated_at": "2026-11-19T22:35:30+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1309,12 +1309,14 @@
         "rc.62 run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44534272424 @ f88b525e：42 项通过，failurePhase=program-streaming，programStreamVideoProbe frames=0/ptsSpanSeconds=0.0/returnCode=0，stderr 'co located POCs unavailable'+'mmco: unref short failure'，renderFrames 10620→10680、laggedFrames 8→8、streamConnected true、renderProbe available=false；programStreamBandRms 1377.1/907.2",
         "codex/v51-r3-output@d6d2624；test_build_contract.py 48/48；native-host/tests/test_*.py 全套通过（两个需 --probe 的真机探针除外）；栈头已 rebase 推送：#70 825442d、#71 46f7b14、#74 223c7b7、#75 41fc1ad、#76 dab2e0f",
         "run 44544305133 = 5.1.0-rc.63 @ dab2e0fa3e87db7f11d0331f6ccf2043266be9f1（codex/v51-r4-legacy-import，soak_minutes=0）in_progress",
-        "本机实验目录 /tmp/latejoin.elgB；mediamtx v1.18.2（与 docker/Dockerfile 固定版本一致），配置与 product_output.cpp::media_mtx_config 同形状；旧探针 returnCode 0/jsonFrames 0；新探针 frames 148、monotonic true、span 4.9 s、firstDecodableFrameMs 1977、fps 30.2；packetProbe packets 181/keyframes 3/firstPacketIsKey false/firstKeyPacketPts 1.0676/keyGaps [2.0, 2.0]"
+        "本机实验目录 /tmp/latejoin.elgB；mediamtx v1.18.2（与 docker/Dockerfile 固定版本一致），配置与 product_output.cpp::media_mtx_config 同形状；旧探针 returnCode 0/jsonFrames 0；新探针 frames 148、monotonic true、span 4.9 s、firstDecodableFrameMs 1977、fps 30.2；packetProbe packets 181/keyframes 3/firstPacketIsKey false/firstKeyPacketPts 1.0676/keyGaps [2.0, 2.0]",
+        "codex/v51-r3-output@b893905；test_build_contract.py 49/49（在 .worktrees/v51）；已 rebase 推送：#70 67699ee、#71 66facec、#74 893e3af、#75 f62004c、#76 8023fff（顶层完整 SHA 8023fff7cbc147cc38d0c5f3e838c16dd7c6827e）",
+        "rc.63 仍在跑 run 44544305133 @ dab2e0fa3e87db7f11d0331f6ccf2043266be9f1，回执将绑定该 SHA；b893905 之后仅新增测试文件，不改门禁行为。非 v51 worktree 未初始化 OBS 子模块时 test_lock_matches_pinned_obs_and_only_needed_dependencies 报缺文件，与本轮改动无关（属 #69 待补）。"
       ],
       "blocker": "",
-      "next_step": "读 rc.63 的 programStreamVideoProbe.packetProbe：keyframes=0 说明编码器 IDR 没到新客户端，对照编码器送出与 MediaMTX 交给新连接的首包并检查 IDR/SPS-PPS 缺失段；keyframes>=2 且 frames>=10、跨度>=2s 则继续核对逐轨增益、偏移、发布断开恢复与 NSIS 安装回执齐全后再合并与冻结候选。",
-      "updated_at": "2026-11-19T22:33:05+08:00",
-      "last_note": "本机用固定 MediaMTX v1.18.2 复现并确认：晚加入 RTSP 客户端的 20 包读取返回码 0 且 0 帧，而同一连接读 6 秒解出 148 帧（首个可解码帧 1977 ms，跨度 4.9 s，30.2 fps），副连接包探针显示中继每 2 秒交付关键帧（3 个关键帧包、firstPacketIsKey false、间隔 2.0/2.0）。缺陷在读取窗口，不在产品推流侧。"
+      "next_step": "读 rc.63（dab2e0f）回执：先看 programStreamVideoProbe.packetProbe 与 frames/firstDecodableFrameMs；若 TAKE、发布视频、逐轨增益、NSIS 安装同轮齐全，则把 #67→#70→#71→#74→#75→#76 合入 dev，再用 dev 头派发 soak_minutes=120 候选并冻结、发布 prerelease。",
+      "updated_at": "2026-11-19T22:35:30+08:00",
+      "last_note": "追加一个用假 ffprobe 直接驱动 published_video_window() 的单元测试，锁定字符串 pts_time 解析、N/A 记入 unparsableStamps 而非计数、stderr 噪声不阻塞窗口；栈已再次同步到新基线。"
     },
     {
       "id": "COORD-008",
@@ -4471,6 +4473,19 @@
         "本机实验目录 /tmp/latejoin.elgB；mediamtx v1.18.2（与 docker/Dockerfile 固定版本一致），配置与 product_output.cpp::media_mtx_config 同形状；旧探针 returnCode 0/jsonFrames 0；新探针 frames 148、monotonic true、span 4.9 s、firstDecodableFrameMs 1977、fps 30.2；packetProbe packets 181/keyframes 3/firstPacketIsKey false/firstKeyPacketPts 1.0676/keyGaps [2.0, 2.0]"
       ],
       "git_revision": "806d0800758638fa7c5becc278c47a5a222fcb0b"
+    },
+    {
+      "sequence": 257,
+      "at": "2026-11-19T22:35:30+08:00",
+      "agent": "qwen38-next-v51-20261119-01",
+      "task": "V51-008",
+      "action": "update",
+      "note": "追加一个用假 ffprobe 直接驱动 published_video_window() 的单元测试，锁定字符串 pts_time 解析、N/A 记入 unparsableStamps 而非计数、stderr 噪声不阻塞窗口；栈已再次同步到新基线。",
+      "evidence": [
+        "codex/v51-r3-output@b893905；test_build_contract.py 49/49（在 .worktrees/v51）；已 rebase 推送：#70 67699ee、#71 66facec、#74 893e3af、#75 f62004c、#76 8023fff（顶层完整 SHA 8023fff7cbc147cc38d0c5f3e838c16dd7c6827e）",
+        "rc.63 仍在跑 run 44544305133 @ dab2e0fa3e87db7f11d0331f6ccf2043266be9f1，回执将绑定该 SHA；b893905 之后仅新增测试文件，不改门禁行为。非 v51 worktree 未初始化 OBS 子模块时 test_lock_matches_pinned_obs_and_only_needed_dependencies 报缺文件，与本轮改动无关（属 #69 待补）。"
+      ],
+      "git_revision": "8a9be92ced0ec3b036f97fb3debac6e00faf3a3b"
     }
   ]
 }
