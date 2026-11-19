@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 263 · 2026-11-20T00:13:44+08:00（UTC+08）
+> 快照版本 264 · 2026-11-20T00:40:00+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #264 · 2026-11-20T00:40:00+08:00 · update
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：门禁命令行截断缺陷已修：helper_port() 原来解析被截到 160 字符的显示串，真实混音命令行约 485~509 字符且回环目标在末尾，导致每个存活混音都被读成无端口；现从掩码后未截断的命令行读取端口并记录 80 字符 tail（修复 329178b，文档 deaec20）。rc.66 run 44563580338 已取消；rc.67 run 44568325933 已派发。
+- 证据：本地 native-host/tests/test_build_contract.py 52/52、native-host/tests/test_*.py 全套通过（两个需显式 --probe 的真机探针除外）、git diff --check 干净；真实形状 485 字符命令行本机验证端口 58964 在截断后仍可读、URL 与私有根不外泄。rc.67 run 44568325933 派发源码 c29227a8a5bd0e4bce697aad083506d6528dd554（栈顶，含 329178b），soak_minutes=0。#67 头 deaec20、#70 e1c62b0、#71 080bd45、#74 80a0d2d、#75 078fd32、#76 a469db1 已链式同步。NSIS 安装态、两小时长稳与目标机 OBS 对照仍未执行。
+- 源码：`eaf2a477a51cd9899741dd8410da5abc521d7003`
 ## #263 · 2026-11-20T00:13:44+08:00 · update
 
 - Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`

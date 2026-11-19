@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 263,
-  "updated_at": "2026-11-20T00:13:44+08:00",
+  "revision": 264,
+  "updated_at": "2026-11-20T00:40:00+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1323,12 +1323,13 @@
         "run 44557855349 = 5.1.0-rc.65 @ 8603c025cf20b34ccb81a407ef2f995da08b7ffd（soak_minutes=0）queued；门禁日志 /tmp/watch65.log",
         "codex/v51-r3-output c6ffb7f；build contract 52/52；Fedora 容器 -fsyntax-only 通过 product_scene.cpp/product_window.cpp；栈已重放到 #67 c6ffb7f：#70 b3c16b5、#71 b1df906、#74 4b9d9cc、#75 90aff05、#76 5237e79（均已 --force-with-lease 推送）",
         "codex/v51-r3-output 89fe334；rc.64 回执 observedState.audioSources 1 条声明（available true / processExitCode -1 / mixers 2）与 1 个存活辅助进程；本机 /tmp/mixprobe2.sh 记录 Broken pipe 退出与同端口重新监听；栈已重放推送：#70 6fb81b2、#71 c39afab、#74 c6ae922、#75 56b6d33、#76 496be55（顶层完整 SHA 496be556b6b642eb36a7b13170e629d893df08f7）；test_build_contract.py 52/52",
-        "run 44563580338 head 496be556b6b642eb36a7b13170e629d893df08f7 与栈顶一致；rc.65 无产物（取消于恢复步骤）；门禁 watch66 日志 /tmp/watch66.log"
+        "run 44563580338 head 496be556b6b642eb36a7b13170e629d893df08f7 与栈顶一致；rc.65 无产物（取消于恢复步骤）；门禁 watch66 日志 /tmp/watch66.log",
+        "本地 native-host/tests/test_build_contract.py 52/52、native-host/tests/test_*.py 全套通过（两个需显式 --probe 的真机探针除外）、git diff --check 干净；真实形状 485 字符命令行本机验证端口 58964 在截断后仍可读、URL 与私有根不外泄。rc.67 run 44568325933 派发源码 c29227a8a5bd0e4bce697aad083506d6528dd554（栈顶，含 329178b），soak_minutes=0。#67 头 deaec20、#70 e1c62b0、#71 080bd45、#74 80a0d2d、#75 078fd32、#76 a469db1 已链式同步。NSIS 安装态、两小时长稳与目标机 OBS 对照仍未执行。"
       ],
       "blocker": "",
-      "next_step": "读 rc.66 回执：混音端口收敛、逐轨增益、NSIS 安装态回执；同轮齐全后按 #67→#70→#71→#74→#75→#76 双语合并到 dev，再同步 #69/#73 并派发 soak_minutes=120 冻结候选",
-      "updated_at": "2026-11-20T00:13:44+08:00",
-      "last_note": "rc.65（run 44557855349）在同一断言处失败后，其门禁步骤失败导致回执上传步骤不会执行，已在恢复步骤中取消；rc.66 已从栈顶 496be556 派发（run 44563580338，soak_minutes=0），本轮同时是第一次可能取得安装态回执（NSIS 安装步骤只在门禁成功时运行）"
+      "next_step": "读 rc.67 run 44568325933 回执：同一轮要求 TAKE 像素、发布流视频、逐轨增益、混音端口收敛与 NSIS 安装态回执齐全；齐全后再按 #67→#70→#71→#74→#75→#76 合入 dev 并冻结候选，否则一轮只处理一个已验证失败点。",
+      "updated_at": "2026-11-20T00:40:00+08:00",
+      "last_note": "门禁命令行截断缺陷已修：helper_port() 原来解析被截到 160 字符的显示串，真实混音命令行约 485~509 字符且回环目标在末尾，导致每个存活混音都被读成无端口；现从掩码后未截断的命令行读取端口并记录 80 字符 tail（修复 329178b，文档 deaec20）。rc.66 run 44563580338 已取消；rc.67 run 44568325933 已派发。"
     },
     {
       "id": "COORD-008",
@@ -4572,6 +4573,18 @@
         "run 44563580338 head 496be556b6b642eb36a7b13170e629d893df08f7 与栈顶一致；rc.65 无产物（取消于恢复步骤）；门禁 watch66 日志 /tmp/watch66.log"
       ],
       "git_revision": "38db2a50b4f73ccb7ec07b4e910c205904eef6d2"
+    },
+    {
+      "sequence": 264,
+      "at": "2026-11-20T00:40:00+08:00",
+      "agent": "qwen38-next-v51-20261119-01",
+      "task": "V51-008",
+      "action": "update",
+      "note": "门禁命令行截断缺陷已修：helper_port() 原来解析被截到 160 字符的显示串，真实混音命令行约 485~509 字符且回环目标在末尾，导致每个存活混音都被读成无端口；现从掩码后未截断的命令行读取端口并记录 80 字符 tail（修复 329178b，文档 deaec20）。rc.66 run 44563580338 已取消；rc.67 run 44568325933 已派发。",
+      "evidence": [
+        "本地 native-host/tests/test_build_contract.py 52/52、native-host/tests/test_*.py 全套通过（两个需显式 --probe 的真机探针除外）、git diff --check 干净；真实形状 485 字符命令行本机验证端口 58964 在截断后仍可读、URL 与私有根不外泄。rc.67 run 44568325933 派发源码 c29227a8a5bd0e4bce697aad083506d6528dd554（栈顶，含 329178b），soak_minutes=0。#67 头 deaec20、#70 e1c62b0、#71 080bd45、#74 80a0d2d、#75 078fd32、#76 a469db1 已链式同步。NSIS 安装态、两小时长稳与目标机 OBS 对照仍未执行。"
+      ],
+      "git_revision": "eaf2a477a51cd9899741dd8410da5abc521d7003"
     }
   ]
 }
