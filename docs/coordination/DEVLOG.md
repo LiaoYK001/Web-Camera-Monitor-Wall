@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 269 · 2026-11-20T02:30:16+08:00（UTC+08）
+> 快照版本 270 · 2026-11-20T03:05:28+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #270 · 2026-11-20T03:05:28+08:00 · update
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：长稳门禁补上 Linux 回放回归（#74 提交 0686c2b）：假宿主、假时钟、假夹具发布进程重放同一个 soak_watched_inputs，夹具发布进程窗口内退出被重启并继续观察、不记成产品停滞，而输入停滞、进程树变化、私有内存/句柄增长、不可读进程、CPU 过低与回环服务退出仍分别失败；换回 1861627 的父提交即失败、换回修复版即通过。栈已按依赖重放推送：#75 da2fc15、#76 bf8c1ce（顶层完整 SHA bf8c1ce…，只差测试文件）。另外在临时 worktree 里把 #67→#70→#71→#74→#75→#76 顺序试合进 origin/dev：六个 merge 全部自动干净，合并树 native-host/tests/test_*.py 除两个需 --probe 的真机探针与未初始化 obs 子模块外全部 OK；workflow 在 soak_minutes>0 时 job timeout 为 260 分钟，够容纳 120 分钟长稳。
+- 证据：codex/v51-r5-soak 0686c2b（test_build_contract.py 55 项 OK；换回 bd617e8 的 product_windows.py 后新增回放断言失败于已重启发布进程）；codex/v51-r3-005-devices da2fc15；codex/v51-r4-legacy-import bf8c1ce；试合树 /tmp/merge-dry.9r6A 六次 merge 无冲突且 native-host 套件 OK；rc.69 run 44587525224 仍 in_progress，当前步骤 Build and qualify a fresh integrated product NSIS installation（首次执行安装态门禁）。
+- 源码：`6feda94c64c0595b19d68c98d66251aaad845dda`
 ## #269 · 2026-11-20T02:30:16+08:00 · update
 
 - Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
