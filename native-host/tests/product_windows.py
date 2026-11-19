@@ -293,7 +293,13 @@ def sanitize_helper_command(command):
 
 
 def helper_port(identity):
-    """The loopback mix port carried by a sanitized helper command line, or None."""
+    """The loopback mix port carried by a masked helper command line, or None.
+
+    `identity` has to be the complete masked command line, not the capped identity a
+    receipt records: a real mix helper is roughly 450 characters and its output target
+    sits near the end, so parsing the display-truncated string reported every mixer as
+    having no port.
+    """
     match = re.search(r"tcp:(\d+)", identity or "")
     return int(match.group(1)) if match else None
 
@@ -309,20 +315,27 @@ def claimed_ports(row):
         if isinstance(entry.get("mixerPort"), (int, float)) and int(entry["mixerPort"]) > 0})
 
 
+MIXER_IDENTITY_UNAVAILABLE = {"identity": "command-line-unavailable", "tail": "", "port": None}
+
+
 def mixer_identities(powershell, pids, private_values=()):
-    """Name each owned FFmpeg helper by its own command line, sanitized.
+    """Name each owned FFmpeg helper by its own command line, masked and capped.
 
     A bare PID diff cannot say which helper a phase destroyed: run 44548882087 lost
     one of two FFmpeg mixers while the host still reported the mix as available with
     two mixers and no recorded exit code. The command line is the only side-neutral
     identity available here, so camera URLs and this run's private roots are replaced
     before anything is recorded, while each helper's own loopback mix port is kept so
-    the row can be tied back to the mix source that owns it. The row is capped.
+    the row can be tied back to the mix source that owns it. The recorded identity is
+    capped for the receipt, so the port is read from the masked line before the cap:
+    the real `-f mpegts tcp://127.0.0.1:<port>?listen=1` target sits past character
+    450 of a ~509-character command line and a capped string alone would report no
+    mixer as owned. The tail keeps that output target visible in the receipt.
     """
     if not pids:
         return {}
     wanted = " or ".join(f"ProcessId={int(pid)}" for pid in sorted(set(pids)))
-    unknown = {int(pid): "command-line-unavailable" for pid in set(pids)}
+    unknown = {int(pid): dict(MIXER_IDENTITY_UNAVAILABLE) for pid in set(pids)}
     try:
         listing = subprocess.run([powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
             f"Get-CimInstance Win32_Process -Filter '{wanted}' | "
@@ -341,7 +354,9 @@ def mixer_identities(powershell, pids, private_values=()):
         clean = sanitize_helper_command(command)
         for private_value in private_values:
             clean = clean.replace(str(private_value), "<private>")
-        identities[int(pid_text.strip())] = clean.strip()[:160]
+        clean = clean.strip()
+        identities[int(pid_text.strip())] = {"identity": clean[:160], "tail": clean[-80:],
+            "port": helper_port(clean)}
     return identities
 
 
@@ -2629,15 +2644,20 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                         "state": "alive" if publisher is not None and publisher.poll() is None
                         else ("stopped" if publisher is None else "exited")}
                         for index, publisher in enumerate(rtsp.publishers)]
+                    def identity_of(pid):
+                        return identities.get(pid) or MIXER_IDENTITY_UNAVAILABLE
                     row = {"sample": sample, "processes": [{"pid": pid,
-                        "port": helper_port(identities.get(pid, "")),
-                        "identity": identities.get(pid, "")}
+                        "port": identity_of(pid)["port"],
+                        "identity": identity_of(pid)["identity"],
+                        "tail": identity_of(pid)["tail"]}
                         for pid in rows], "hostClaims": claim, "fixturePublishers": fixtures,
                         # A short-lived AV remux is also an owned ffmpeg child. Keep it out
                         # of the mix comparison but record it so a helper count is never
                         # silently explained away.
-                        "otherHelpers": [{"pid": pid, "identity": identities.get(pid, "")[:120]}
-                            for pid in rows if helper_port(identities.get(pid, "")) is None]}
+                        "otherHelpers": [{"pid": pid,
+                            "identity": identity_of(pid)["identity"][:120],
+                            "tail": identity_of(pid)["tail"]}
+                            for pid in rows if identity_of(pid)["port"] is None]}
                     evidence.setdefault("audioMixHelperWatch", []).append(row)
                     return rows
 
@@ -2754,7 +2774,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     rows = sorted(pid for pid, name in child_processes(powershell, int(state()["pid"]))
                         if name == "ffmpeg.exe")
                     identities = mixer_identities(powershell, rows, (private, runtime, profile))
-                    return sorted(filter(None, (helper_port(identities.get(pid, "")) for pid in rows))), rows
+                    return sorted(filter(None, (identities.get(pid, MIXER_IDENTITY_UNAVAILABLE)
+                        ["port"] for pid in rows))), rows
 
                 def mix_ports_unresolved():
                     audio_mix_helper_watch("mix-ports-still-unresolved")
