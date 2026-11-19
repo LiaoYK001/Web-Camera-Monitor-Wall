@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 262,
-  "updated_at": "2026-11-20T00:04:56+08:00",
+  "revision": 263,
+  "updated_at": "2026-11-20T00:13:44+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1322,12 +1322,13 @@
         "codex/v51-r3-output@297b637；test_build_contract.py 51/51（新增假 PowerShell 身份脱敏测试）；栈已同步推送：#70 af8793b、#71 e9dbca5、#74 b209690、#75 afc5a53、#76 8603c02（顶层完整 SHA 8603c025cf20b34ccb81a407ef2f995da08b7ffd）",
         "run 44557855349 = 5.1.0-rc.65 @ 8603c025cf20b34ccb81a407ef2f995da08b7ffd（soak_minutes=0）queued；门禁日志 /tmp/watch65.log",
         "codex/v51-r3-output c6ffb7f；build contract 52/52；Fedora 容器 -fsyntax-only 通过 product_scene.cpp/product_window.cpp；栈已重放到 #67 c6ffb7f：#70 b3c16b5、#71 b1df906、#74 4b9d9cc、#75 90aff05、#76 5237e79（均已 --force-with-lease 推送）",
-        "codex/v51-r3-output 89fe334；rc.64 回执 observedState.audioSources 1 条声明（available true / processExitCode -1 / mixers 2）与 1 个存活辅助进程；本机 /tmp/mixprobe2.sh 记录 Broken pipe 退出与同端口重新监听；栈已重放推送：#70 6fb81b2、#71 c39afab、#74 c6ae922、#75 56b6d33、#76 496be55（顶层完整 SHA 496be556b6b642eb36a7b13170e629d893df08f7）；test_build_contract.py 52/52"
+        "codex/v51-r3-output 89fe334；rc.64 回执 observedState.audioSources 1 条声明（available true / processExitCode -1 / mixers 2）与 1 个存活辅助进程；本机 /tmp/mixprobe2.sh 记录 Broken pipe 退出与同端口重新监听；栈已重放推送：#70 6fb81b2、#71 c39afab、#74 c6ae922、#75 56b6d33、#76 496be55（顶层完整 SHA 496be556b6b642eb36a7b13170e629d893df08f7）；test_build_contract.py 52/52",
+        "run 44563580338 head 496be556b6b642eb36a7b13170e629d893df08f7 与栈顶一致；rc.65 无产物（取消于恢复步骤）；门禁 watch66 日志 /tmp/watch66.log"
       ],
       "blocker": "",
-      "next_step": "读 rc.65（run 44557855349 / 8603c025）的 audioMixHelperWatch 身份与声明对照；随后从栈顶 496be55 以 rc.66、soak_minutes=0 复跑，确认 TAKE、发布视频、逐轨增益与完整 NSIS 同轮齐全后再推进合并",
-      "updated_at": "2026-11-20T00:04:56+08:00",
-      "last_note": "复核 rc.64 失败现场：宿主当时只声明 1 条混音、也只有 1 个存活 FFmpeg 辅助进程，消失的 PID 属于正在释放的上一版 Scene 图；门禁断言因此改为按同一时刻比较——每次采样要求声明端口都有存活辅助进程，停止 Program 输出后 40 秒内收敛到存活端口多重集等于声明端口集合。另在本机 ffmpeg 8.1.3 证实 tcp listen 写端在读端断开后以 Broken pipe 退出、同端口可立即重新监听，记为开放加固风险（本轮未改混音生命周期）"
+      "next_step": "读 rc.66 回执：混音端口收敛、逐轨增益、NSIS 安装态回执；同轮齐全后按 #67→#70→#71→#74→#75→#76 双语合并到 dev，再同步 #69/#73 并派发 soak_minutes=120 冻结候选",
+      "updated_at": "2026-11-20T00:13:44+08:00",
+      "last_note": "rc.65（run 44557855349）在同一断言处失败后，其门禁步骤失败导致回执上传步骤不会执行，已在恢复步骤中取消；rc.66 已从栈顶 496be556 派发（run 44563580338，soak_minutes=0），本轮同时是第一次可能取得安装态回执（NSIS 安装步骤只在门禁成功时运行）"
     },
     {
       "id": "COORD-008",
@@ -4559,6 +4560,18 @@
         "codex/v51-r3-output 89fe334；rc.64 回执 observedState.audioSources 1 条声明（available true / processExitCode -1 / mixers 2）与 1 个存活辅助进程；本机 /tmp/mixprobe2.sh 记录 Broken pipe 退出与同端口重新监听；栈已重放推送：#70 6fb81b2、#71 c39afab、#74 c6ae922、#75 56b6d33、#76 496be55（顶层完整 SHA 496be556b6b642eb36a7b13170e629d893df08f7）；test_build_contract.py 52/52"
       ],
       "git_revision": "8f4e0a43730f7961a97c35b5eea8bfa7b3ec8503"
+    },
+    {
+      "sequence": 263,
+      "at": "2026-11-20T00:13:44+08:00",
+      "agent": "qwen38-next-v51-20261119-01",
+      "task": "V51-008",
+      "action": "update",
+      "note": "rc.65（run 44557855349）在同一断言处失败后，其门禁步骤失败导致回执上传步骤不会执行，已在恢复步骤中取消；rc.66 已从栈顶 496be556 派发（run 44563580338，soak_minutes=0），本轮同时是第一次可能取得安装态回执（NSIS 安装步骤只在门禁成功时运行）",
+      "evidence": [
+        "run 44563580338 head 496be556b6b642eb36a7b13170e629d893df08f7 与栈顶一致；rc.65 无产物（取消于恢复步骤）；门禁 watch66 日志 /tmp/watch66.log"
+      ],
+      "git_revision": "38db2a50b4f73ccb7ec07b4e910c205904eef6d2"
     }
   ]
 }
