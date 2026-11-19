@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 261 · 2026-11-19T23:57:09+08:00（UTC+08）
+> 快照版本 262 · 2026-11-20T00:04:56+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #262 · 2026-11-20T00:04:56+08:00 · update
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：复核 rc.64 失败现场：宿主当时只声明 1 条混音、也只有 1 个存活 FFmpeg 辅助进程，消失的 PID 属于正在释放的上一版 Scene 图；门禁断言因此改为按同一时刻比较——每次采样要求声明端口都有存活辅助进程，停止 Program 输出后 40 秒内收敛到存活端口多重集等于声明端口集合。另在本机 ffmpeg 8.1.3 证实 tcp listen 写端在读端断开后以 Broken pipe 退出、同端口可立即重新监听，记为开放加固风险（本轮未改混音生命周期）
+- 证据：codex/v51-r3-output 89fe334；rc.64 回执 observedState.audioSources 1 条声明（available true / processExitCode -1 / mixers 2）与 1 个存活辅助进程；本机 /tmp/mixprobe2.sh 记录 Broken pipe 退出与同端口重新监听；栈已重放推送：#70 6fb81b2、#71 c39afab、#74 c6ae922、#75 56b6d33、#76 496be55（顶层完整 SHA 496be556b6b642eb36a7b13170e629d893df08f7）；test_build_contract.py 52/52
+- 源码：`8f4e0a43730f7961a97c35b5eea8bfa7b3ec8503`
 ## #261 · 2026-11-19T23:57:09+08:00 · update
 
 - Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
