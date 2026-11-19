@@ -2723,38 +2723,69 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 after_watch = evidence["audioMixHelperWatch"][-1]
                 before_watch = evidence["audioMixHelperWatch"][-2]
                 started_ports = claimed_ports(scene_start_watch)
-                live_ports = watched_ports(after_watch)
                 claimed = claimed_ports(after_watch)
                 # Each owned mix source reads exactly one loopback port and each mix
-                # helper owns exactly one, so the live ports have to equal the claimed
-                # ports as a multiset. A helper that dies unnoticed leaves a claimed port
-                # unserved; a second helper on one port or an unclaimed helper is a leak.
-                # This is no weaker than the previous PID-set equality and stays correct
-                # if the product later respawns a helper on its existing port.
+                # helper owns exactly one, so the live helper ports have to equal the
+                # ports the host claims. Run 44548882087 lost one PID inside this window
+                # while the host claimed exactly the one mix that still had a helper:
+                # that was a retiring Scene graph releasing its own feeder, not a lost
+                # mixer. Convergence keeps both real failure modes named - a claimed port
+                # with no live helper is a mix the user cannot hear, and an unclaimed
+                # helper is a leak that outlives its mix source.
                 assert len(started_ports) == len(scene_start_watch["hostClaims"]) > 0, \
                     "an owned mix source did not report its loopback mix port: " \
                     + json.dumps(scene_start_watch["hostClaims"])[:300]
-                assert claimed == started_ports, \
-                    f"Program output changed which mix ports the host reads " \
-                    + f"(started {started_ports}, now claims {claimed}; " \
-                    + f"before the stop {claimed_ports(before_watch)})"
-                if live_ports != claimed:
+                # A mix the host claims has to be fed at every sample. Extra helpers are
+                # allowed only while a retiring Scene graph releases its own feeder, and
+                # the convergence below has to see them go.
+                for sample in (scene_start_watch, before_watch):
+                    starving = sorted(set(claimed_ports(sample)) - set(watched_ports(sample)))
+                    assert starving == [], \
+                        f"mix ports the host claims had no live helper at " \
+                        + f"{sample['sample']}: {starving} feed mix " \
+                        + json.dumps([str(entry.get("sourceId") or "")[:64]
+                            for entry in sample["hostClaims"]
+                            if int(entry.get("mixerPort") or 0) in starving])[:240] \
+                        + f"; live {watched_ports(sample)}; host claims " \
+                        + json.dumps(sample["hostClaims"])[:300] \
+                        + "; fixture publishers " + json.dumps(sample["fixturePublishers"])[:200]
+
+                def current_live_ports():
+                    rows = sorted(pid for pid, name in child_processes(powershell, int(state()["pid"]))
+                        if name == "ffmpeg.exe")
+                    identities = mixer_identities(powershell, rows, (private, runtime, profile))
+                    return sorted(filter(None, (helper_port(identities.get(pid, "")) for pid in rows))), rows
+
+                def mix_ports_unresolved():
+                    audio_mix_helper_watch("mix-ports-still-unresolved")
+                    row = evidence["audioMixHelperWatch"][-1]
+                    live, claim = watched_ports(row), claimed_ports(row)
                     owner_by_port = {int(entry["mixerPort"]): str(entry.get("sourceId") or "")[:64]
-                        for entry in after_watch["hostClaims"]
+                        for entry in row["hostClaims"]
                         if isinstance(entry.get("mixerPort"), (int, float)) and int(entry["mixerPort"]) > 0}
-                    unserved = sorted(set(claimed) - set(live_ports))
-                    orphaned = sorted(set(live_ports) - set(claimed))
-                    gone_earlier = sorted(set(started_ports) - set(watched_ports(before_watch)))
-                    starved = [entry for entry in after_watch["hostClaims"]
+                    unserved = sorted(set(claim) - set(live))
+                    starved = [entry for entry in row["hostClaims"]
                         if int(entry.get("mixerPort") or 0) in unserved]
-                    raise AssertionError("Program output left an owned mix port unserved "
-                        + f"(live {live_ports}, claimed {claimed}; unserved {unserved} feed mix "
-                        + f"{[owner_by_port[port] for port in unserved]}; orphan helpers {orphaned}; "
-                        + f"unserved before the stop {gone_earlier}; host still reports a live mix for "
-                        + f"{json.dumps(starved)[:240]}; fixture publishers "
-                        + json.dumps(after_watch["fixturePublishers"])[:200]
-                        + f"; other helpers {json.dumps(after_watch['otherHelpers'])[:200]})")
-                evidence["sceneAudioMixers"] = live_ports
+                    return ("Program output left mix ports unresolved (live " + json.dumps(live)
+                        + ", claimed " + json.dumps(claim)
+                        + f"; unserved {unserved} feed mix {[owner_by_port[port] for port in unserved]}"
+                        + f"; orphan helpers {sorted(set(live) - set(claim))}"
+                        + f"; host still reports a live mix for {json.dumps(starved)[:240]}"
+                        + f"; fixture publishers {json.dumps(row['fixturePublishers'])[:200]}"
+                        + f"; other helpers {json.dumps(row['otherHelpers'])[:200]})")
+
+                settled = [None]
+                settle_started = time.monotonic()
+                while time.monotonic() < settle_started + 40:
+                    settled[0] = current_live_ports()
+                    if settled[0][0] == claimed:
+                        break
+                    time.sleep(2)
+                if settled[0] is None or settled[0][0] != claimed:
+                    raise AssertionError(mix_ports_unresolved())
+                evidence["sceneAudioMixers"] = settled[0][0]
+                evidence["sceneAudioMixerPids"] = settled[0][1]
+                evidence["mixerPortSettleMs"] = int((time.monotonic() - settle_started) * 1000)
                 evidence["checks"].extend(["publish-relay-loss-is-reported-and-recoverable",
                     "program-output-helpers-are-released-after-stop"])
                 checkpoint("program-output-resources-released")
