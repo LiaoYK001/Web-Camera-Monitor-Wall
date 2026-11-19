@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 268 · 2026-11-20T02:25:35+08:00（UTC+08）
+> 快照版本 269 · 2026-11-20T02:30:16+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #269 · 2026-11-20T02:30:16+08:00 · update
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：第二个本轮修复：public-audit 在 native-host/tests/test_build_contract.py:322 报 non-placeholder RTSP credentials，#67/#70/#71/#74/#75/#76 的 PR 检查因此全部失败（run 44587405965 与 44578735870 都是 public-audit → Audit and build the public PWA 步骤 exit 1），合并被阻塞。混音辅助进程夹具必须携带 userinfo 才能证明净化器真的剥离凭据，故按仓库既有测试约定改为 fixture-user:fixture-password 与 TEST-NET 文档网段 192.0.2.9，并把该引用登记进 tests/run-public-audit.sh 与 .ps1 两个允许列表（与其余 17 条既有登记同流程）。为此把这两个审计入口加入本任务声明范围。本机按审计脚本同一规则复跑：RTSP AUDIT OK；净化断言仍要求身份与 tail 不含 userinfo 与远端主机。
+- 证据：codex/v51-r3-output e5a87b0；栈再次重放推送：#70 d475a70、#71 da082ee、#74 1861627、#75 9c59f49、#76 6971a60（顶层完整 SHA 6971a60aadd5fe7244b16192c24450f2a1705f52；相对 e955d9e 的树差只有 test_build_contract.py 与两个审计入口）；本机 native-host/tests/test_build_contract.py 54/54 OK、审计 RTSP 规则复跑 OK、git diff --check 干净。
+- 源码：`d803d1283290c888a5f86a4a491415c1bf7dfc41`
 ## #268 · 2026-11-20T02:25:35+08:00 · update
 
 - Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 268,
-  "updated_at": "2026-11-20T02:25:35+08:00",
+  "revision": 269,
+  "updated_at": "2026-11-20T02:30:16+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1263,6 +1263,9 @@
         "native-host/tests/product_windows.py",
         "native-host/tests/pixel_windows.py",
         "native-host/tests/test_build_contract.py",
+        "native-host/tests/test_pixels.py",
+        "tests/run-public-audit.sh",
+        "tests/run-public-audit.ps1",
         "docs/windows-obs-parity-execution.md"
       ],
       "depends_on": [],
@@ -1328,12 +1331,13 @@
         "rc.67 回执 /tmp/rc67.0oFX/native-product-integration-receipts-5.1.0-rc.67/native-product-entry-ui.json：programTrackGain gainOne 2165.6/2159.0、gainPointTwo 2160.3/433.6（比值 0.2007）、programTrackMute 880Hz=0.1、programBusIsolation busTwo 440Hz=2889.5/1200Hz=0.5 与 busThree 1200Hz=2542.5/440Hz=0.7、recordingFailureReceipt recording-directory-failed、deviceOperations 有 ONVIF probe/GetProfiles；发布流探针 firstDecodableFrameMs 3452（首次）/1844（恢复）、windowTimedOut true、returnCode 1，伴随 h264 中途加入解码告警。本机 test_build_contract.py 52/52、native-host/tests/test_*.py 全套通过（两个需显式 --probe 的真机探针除外）、git diff --check 干净。链式同步后 #67 0874fd4、#70 559a0f9、#71 dd92696、#74 33ce403、#75 c5ed74f、#76 2c0e99d（各分支自身提交数不变）。rc.68 run 44577184643 源码 2c0e99dc04a81fd8d92f878a5e2f6da682507420、soak_minutes=0。NSIS 安装态、两小时长稳与目标机 OBS 对照仍未执行；本机无 PowerShell，NSIS 脚本只静态核对了 Python 参数与文件存在性。",
         "rc.67 run 44568325933 首个失败点 phase=program-publish-disconnect、detail=TypeError: list indices must be integers or slices, not str（门禁把混音观察返回的 PID 列表当成回执行），已由 0874fd4 修复；该轮 49 项通过并保留 TAKE、双总线隔离、逐轨静音、逐轨增益 0.2007、录像失败路径、设备操作入口、发布/恢复解码帧等有效证据。本机 test_build_contract.py 53/53 通过；把 product_windows.py 换回修复前版本（deaec20）后新回归失败于 ，换回修复版即通过。Fedora 容器 v51qt（fedora:44，Python 3.14.10）内  3 项通过，脱敏回执回放输出：publish-disconnect-start live=[51078,51389] claimed=[51389] unserved=[] orphan=[51078]、before/after stop live=[51389] claimed=[51389] unserved=[] orphan=[]、converged=True、MIX-PORT VERDICT: PASS。链式同步后 #67 c64a76b、#70 0f3f078、#71 3a282f8、#74 b7f0f01、#75 f964680、#76 a71d561（栈顶自身提交数仍 24，相对 2c0e99d 只多 1 个测试文件 80 行）。",
         "rc.67 run 44568325933 首个失败点 phase=program-publish-disconnect、detail=TypeError: list indices must be integers or slices, not str（门禁把混音观察返回的 PID 列表当成回执行），已由 0874fd4 修复；该轮 49 项通过并保留 TAKE、双总线隔离、逐轨静音、逐轨增益 0.2007、录像失败路径、设备操作入口、发布与恢复解码帧等有效证据。本机 test_build_contract.py 53/53 通过；把 product_windows.py 换回修复前版本（deaec20）后新回归失败于 AssertionError: [12, 13] is not an instance of <class dict>，换回修复版即通过。Fedora 容器 v51qt（fedora:44，Python 3.14.10）内 -k mix 3 项通过，脱敏回执回放：publish-disconnect-start live=[51078,51389] claimed=[51389] unserved=[] orphan=[51078]；before/after stop live=[51389] claimed=[51389] unserved=[] orphan=[]；converged=True；MIX-PORT VERDICT: PASS。链式同步后 #67 c64a76b、#70 0f3f078、#71 3a282f8、#74 b7f0f01、#75 f964680、#76 a71d561（栈顶自身提交数仍 24，相对 2c0e99d 只多 1 个测试文件 80 行）。",
-        "codex/v51-r3-output 768fa07；栈已重放推送：#70 4f81086、#71 5348d3b、#74 04370d4、#75 0b387c8、#76 e955d9e（顶层完整 SHA e955d9ea5d7947917a4a85292b923c5e91afc6f6，与旧栈顶 a71d561 的树差仅为本次 4 个测试文件 236+/19-）；本机 native-host/tests/test_pixels.py 31 项 OK（2 skip）、test_build_contract.py 54/54 OK、native-host/tests/test_*.py 全套 exit 0（仅两个需显式 --probe 的 Windows 真机探针 exit 2）、test_product_lan 24 OK、test_legacy_import OK、git diff --check 干净；把 pixel_windows.py 换回 HEAD 版本回放：丢弃块对照 0.343/0.814 失败、偏离标称音调 0.286 失败、toneReadings KeyError，换回修复版全部通过。非 v51 worktree 未初始化 obs/obs-studio 子模块时 test_lock_matches_pinned_obs_and_only_needed_dependencies 报缺 CMakePresets.json，与本轮改动无关（#69 待补）。"
+        "codex/v51-r3-output 768fa07；栈已重放推送：#70 4f81086、#71 5348d3b、#74 04370d4、#75 0b387c8、#76 e955d9e（顶层完整 SHA e955d9ea5d7947917a4a85292b923c5e91afc6f6，与旧栈顶 a71d561 的树差仅为本次 4 个测试文件 236+/19-）；本机 native-host/tests/test_pixels.py 31 项 OK（2 skip）、test_build_contract.py 54/54 OK、native-host/tests/test_*.py 全套 exit 0（仅两个需显式 --probe 的 Windows 真机探针 exit 2）、test_product_lan 24 OK、test_legacy_import OK、git diff --check 干净；把 pixel_windows.py 换回 HEAD 版本回放：丢弃块对照 0.343/0.814 失败、偏离标称音调 0.286 失败、toneReadings KeyError，换回修复版全部通过。非 v51 worktree 未初始化 obs/obs-studio 子模块时 test_lock_matches_pinned_obs_and_only_needed_dependencies 报缺 CMakePresets.json，与本轮改动无关（#69 待补）。",
+        "codex/v51-r3-output e5a87b0；栈再次重放推送：#70 d475a70、#71 da082ee、#74 1861627、#75 9c59f49、#76 6971a60（顶层完整 SHA 6971a60aadd5fe7244b16192c24450f2a1705f52；相对 e955d9e 的树差只有 test_build_contract.py 与两个审计入口）；本机 native-host/tests/test_build_contract.py 54/54 OK、审计 RTSP 规则复跑 OK、git diff --check 干净。"
       ],
       "blocker": "",
-      "next_step": "rc.69 run 44587525224 @ e955d9ea5d7947917a4a85292b923c5e91afc6f6（soak_minutes=0，监视日志 /tmp/watch69.log）。完成后：python3 scripts/v51-ci-gate.py 44587525224 --sha e955d9ea5d7947917a4a85292b923c5e91afc6f6 --version 5.1.0-rc.69。通过则核对同 SHA 的 nsis/installed-ui/restore-pair/legacy-import/lan/updater/upgraded-ui 回执；失败则从新回执首个失败点继续，并先读 programTrackGain.toneReadings（本轮起参考与复测的分段读数与带宽峰值都在断言之前写入）。",
-      "updated_at": "2026-11-20T02:25:35+08:00",
-      "last_note": "rc.68 run 44577184643（源码 2c0e99dc，soak_minutes=0）已完成并失败：49 项通过，首个失败点 phase=program-track-controls、detail=AssertionError: the unchanged gain configuration measured differently twice: {'440': 0.58, '880': 0.359}（checkpoint program-mix-audible-per-track gain reference repeat）；该轮只有 entry-ui 与 restore 两份回执，NSIS 安装、逐轨增益、成对恢复均未跑到。本轮只验证一个已定位失败点：测量把整窗一次性投影当成音调本身。用真实 FFmpeg（ffmpeg 8.1.3，本机 Fedora）回放录制形状复现——在 1.2 s 处丢掉 40 ms 音频块后，440 Hz 的整窗投影从 2890.0 掉到 991.3（比值 0.343）、880 Hz 掉到 0.814；偏离标称 0.4 Hz 时比值 0.286，而音调始终明显可闻。混音重采样带漂移校正并在流抖动时交接丢弃块，相位断裂后整窗投影读的是各段之和。修复 768fa07：幅度改为 0.5 s 短段在 ±1 Hz 带宽内最强投影的平均（平均而非中位数，保证窗口内静音仍按比例低估，lead-in 保护仍有效），并把增益对照的测量证据写在断言之前（rc.68 的比值是失败回执里唯一的数字）。验收阈值一字未改。"
+      "next_step": "继续等 rc.69 run 44587525224（源码 e955d9ea5d7947917a4a85292b923c5e91afc6f6，soak_minutes=0，监视 /tmp/watch69.log）。同轮新头的 public CI 需确认 public-audit 转绿。通过则按 #67→#70→#71→#74→#75→#76 双语合入 dev，再从 dev 集成源码派发 soak_minutes=120 冻结候选。",
+      "updated_at": "2026-11-20T02:30:16+08:00",
+      "last_note": "第二个本轮修复：public-audit 在 native-host/tests/test_build_contract.py:322 报 non-placeholder RTSP credentials，#67/#70/#71/#74/#75/#76 的 PR 检查因此全部失败（run 44587405965 与 44578735870 都是 public-audit → Audit and build the public PWA 步骤 exit 1），合并被阻塞。混音辅助进程夹具必须携带 userinfo 才能证明净化器真的剥离凭据，故按仓库既有测试约定改为 fixture-user:fixture-password 与 TEST-NET 文档网段 192.0.2.9，并把该引用登记进 tests/run-public-audit.sh 与 .ps1 两个允许列表（与其余 17 条既有登记同流程）。为此把这两个审计入口加入本任务声明范围。本机按审计脚本同一规则复跑：RTSP AUDIT OK；净化断言仍要求身份与 tail 不含 userinfo 与远端主机。"
     },
     {
       "id": "COORD-008",
@@ -4637,6 +4641,18 @@
         "codex/v51-r3-output 768fa07；栈已重放推送：#70 4f81086、#71 5348d3b、#74 04370d4、#75 0b387c8、#76 e955d9e（顶层完整 SHA e955d9ea5d7947917a4a85292b923c5e91afc6f6，与旧栈顶 a71d561 的树差仅为本次 4 个测试文件 236+/19-）；本机 native-host/tests/test_pixels.py 31 项 OK（2 skip）、test_build_contract.py 54/54 OK、native-host/tests/test_*.py 全套 exit 0（仅两个需显式 --probe 的 Windows 真机探针 exit 2）、test_product_lan 24 OK、test_legacy_import OK、git diff --check 干净；把 pixel_windows.py 换回 HEAD 版本回放：丢弃块对照 0.343/0.814 失败、偏离标称音调 0.286 失败、toneReadings KeyError，换回修复版全部通过。非 v51 worktree 未初始化 obs/obs-studio 子模块时 test_lock_matches_pinned_obs_and_only_needed_dependencies 报缺 CMakePresets.json，与本轮改动无关（#69 待补）。"
       ],
       "git_revision": "c435bb063ee94d3dd8acde1640bef95c345e5bd7"
+    },
+    {
+      "sequence": 269,
+      "at": "2026-11-20T02:30:16+08:00",
+      "agent": "qwen38-next-v51-20261119-01",
+      "task": "V51-008",
+      "action": "update",
+      "note": "第二个本轮修复：public-audit 在 native-host/tests/test_build_contract.py:322 报 non-placeholder RTSP credentials，#67/#70/#71/#74/#75/#76 的 PR 检查因此全部失败（run 44587405965 与 44578735870 都是 public-audit → Audit and build the public PWA 步骤 exit 1），合并被阻塞。混音辅助进程夹具必须携带 userinfo 才能证明净化器真的剥离凭据，故按仓库既有测试约定改为 fixture-user:fixture-password 与 TEST-NET 文档网段 192.0.2.9，并把该引用登记进 tests/run-public-audit.sh 与 .ps1 两个允许列表（与其余 17 条既有登记同流程）。为此把这两个审计入口加入本任务声明范围。本机按审计脚本同一规则复跑：RTSP AUDIT OK；净化断言仍要求身份与 tail 不含 userinfo 与远端主机。",
+      "evidence": [
+        "codex/v51-r3-output e5a87b0；栈再次重放推送：#70 d475a70、#71 da082ee、#74 1861627、#75 9c59f49、#76 6971a60（顶层完整 SHA 6971a60aadd5fe7244b16192c24450f2a1705f52；相对 e955d9e 的树差只有 test_build_contract.py 与两个审计入口）；本机 native-host/tests/test_build_contract.py 54/54 OK、审计 RTSP 规则复跑 OK、git diff --check 干净。"
+      ],
+      "git_revision": "d803d1283290c888a5f86a4a491415c1bf7dfc41"
     }
   ]
 }
