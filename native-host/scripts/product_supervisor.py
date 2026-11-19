@@ -103,6 +103,39 @@ class ProductSupervisor:
             json.dump(value, output)
         temporary.replace(target)
 
+    def recover_interrupted_restore(self):
+        """Converge a half restore while still holding the exclusive data lock.
+
+        A restore swaps ``config`` and ``native-profile`` as one pair. If that
+        process was killed between the two swaps, this ordinary product start is
+        the first place that can finish or undo the pair, so it must run before
+        any directory is created and before the configuration or OBS profile is
+        read; otherwise the control server and OBS would start on mismatched
+        halves. Previous data is never deleted here, and an unreadable journal
+        fails closed with a bounded reason instead of silently continuing.
+        """
+        backup = self.runtime / "services/backup/encrypted_backup.py"
+        if not backup.is_file() or backup.is_symlink():
+            return None
+        specification = importlib.util.spec_from_file_location("interrupted_restore_recovery", backup)
+        module = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(module)
+        journal = self.root / module.JOURNAL_NAME
+        marker = self.root / "run/restore-recovery.json"
+        try:
+            outcome = module.recover_interrupted(journal)
+        except Exception as error:
+            reason = str(error)[:200]
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(json.dumps({"schema": 1, "state": "unresolved", "reason": reason},
+                indent=2) + "\n", encoding="utf-8")
+            raise ValueError(f"interrupted restore needs repair: run the product backup "
+                f"recover action before starting ({reason})") from error
+        if outcome:
+            marker.unlink(missing_ok=True)
+            print(f"converged the interrupted restore as {outcome}", flush=True)
+        return outcome
+
     def prepare(self):
         manifest = self.runtime / "webobs-native-prototype.json"
         value = json.loads(manifest.read_text(encoding="utf-8"))
@@ -137,6 +170,7 @@ class ProductSupervisor:
             return False
         self.owns_profile = True
         protect(self.root, self.runtime)
+        self.recover_interrupted_restore()
         directories = ["config", "logs", "native-profile/obs-studio"]
         if self.complete:
             directories += ["recordings", "backups", "snapshots", "config/go2rtc", "config/keys",
