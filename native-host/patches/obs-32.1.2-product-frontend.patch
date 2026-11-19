@@ -189,6 +189,56 @@
  
  	friend class SourceTree;
  	friend class SourceTreeItem;
+--- a/libobs/obs-source.c
++++ b/libobs/obs-source.c
+@@ -3500,6 +3500,9 @@ static void clean_cache(obs_source_t *source)
+ 	}
+ }
+ 
++static volatile long webobs_async_backlog_logs = 0;
++static volatile long webobs_async_jump_logs = 0;
++
+ #define MAX_ASYNC_FRAMES 30
+ //if return value is not null then do (os_atomic_dec_long(&output->refs) == 0) && obs_source_frame_destroy(output)
+ static inline struct obs_source_frame *cache_video(struct obs_source *source, const struct obs_source_frame *frame)
+@@ -3509,6 +3512,21 @@ static inline struct obs_source_frame *cache_video(struct obs_source *source, co
+ 	pthread_mutex_lock(&source->async_mutex);
+ 
+ 	if (source->async_frames.num >= MAX_ASYNC_FRAMES) {
++		/* Product diagnostic: media callbacks reached this async source faster than the
++		 * render loop drew them, so OBS drops the whole queue and the drawn frame stays
++		 * stale while the input's callback counter keeps rising. A frozen tile cannot be
++		 * attributed without this; bounded so the log cannot grow. */
++		if (webobs_async_backlog_logs < 24) {
++			++webobs_async_backlog_logs;
++			const long long gap = frame->timestamp > source->last_frame_ts
++					? (long long)((frame->timestamp - source->last_frame_ts) / 1000000ULL)
++					: -(long long)((source->last_frame_ts - frame->timestamp) / 1000000ULL);
++			blog(LOG_WARNING,
++				"WebOBS async video backlog: '%s' queued %lu undrawn frames, dropped them "
++				"(drawn timestamp %llu, incoming timestamp %llu, gap %lld ms)",
++				source->context.name ? source->context.name : "unnamed", (unsigned long)source->async_frames.num,
++				(unsigned long long)source->last_frame_ts, (unsigned long long)frame->timestamp, gap);
++		}
+ 		free_async_cache(source);
+ 		source->last_frame_ts = 0;
+ 		pthread_mutex_unlock(&source->async_mutex);
+@@ -4117,6 +4135,15 @@ static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
+ #if DEBUG_ASYNC_FRAMES
+ 		blog(LOG_DEBUG, "timing jump");
+ #endif
++		/* Product diagnostic: the incoming media timestamp left the tolerated window, so OBS
++		 * re-bases this input's clock instead of drawing on time. Both stamps are named so a
++		 * frozen tile can be attributed to the media timebase rather than to the renderer. */
++		if (webobs_async_jump_logs < 16) {
++			++webobs_async_jump_logs;
++			blog(LOG_INFO, "WebOBS async timestamp jump: '%s' drawn %llu, incoming %llu",
++				source->context.name ? source->context.name : "unnamed", (unsigned long long)source->last_frame_ts,
++				(unsigned long long)frame_time);
++		}
+ 		source->last_frame_ts = next_frame->timestamp;
+ 		return true;
+ 	} else {
 --- a/plugins/obs-ffmpeg/obs-ffmpeg-source.c
 +++ b/plugins/obs-ffmpeg/obs-ffmpeg-source.c
 @@ -15,6 +15,7 @@
@@ -199,17 +249,54 @@
  #include <util/threading.h>
  #include <util/platform.h>
  #include <util/dstr.h>
-@@ -29,6 +30,9 @@
+@@ -29,6 +30,17 @@
  #define FF_BLOG(level, format, ...) FF_LOG_S(s->source, level, format, ##__VA_ARGS__)
  
  struct ffmpeg_source {
 +	// Opaque progress serial: delivered video callbacks, not rendered frames or hardware proof.
 +	volatile long webobs_video_serial;
 +
++	// Delivered-frame identity from the same media callback: the frame timestamp, a
++	// content digest and the monotonic millisecond (os_gettime_ns) it arrived. A frozen
++	// tile needs all three to separate "the feed repeats this frame" from "new frames
++	// arrive but nothing repaints". One media-thread writer; UI reads are plain loads.
++	volatile long long webobs_last_frame_ts;
++	volatile long long webobs_last_frame_ms;
++	volatile long webobs_last_frame_hash;
++
  	media_playback_t *media;
  	bool destroy_media;
  
-@@ -241,6 +245,13 @@
+@@ -237,10 +249,45 @@ static void dump_source_info(struct ffmpeg_source *s, const char *input, const c
+ 		s->close_when_inactive ? "yes" : "no", s->full_decode ? "yes" : "no", s->ffmpeg_options);
+ }
+ 
++/* Content digest of one delivered frame: sampled bytes only, never a copy of the
++ * frame. A frame whose visible timecode or markers differ changes this digest. */
++static long webobs_frame_digest(const struct obs_source_frame *f)
++{
++	if (!f || !f->data[0] || !f->linesize[0] || !f->width || !f->height)
++		return 0;
++	unsigned long hash = 2166136261UL;
++	const uint32_t row_bytes = f->linesize[0] < f->width ? f->linesize[0] : f->width;
++	for (uint32_t y = 0; y < f->height; y += 17) {
++		const uint8_t *row = f->data[0] + (size_t)y * (size_t)f->linesize[0];
++		for (uint32_t x = 0; x + 3 < row_bytes; x += 31) {
++			hash = (hash ^ row[x]) * 16777619UL;
++			hash = (hash ^ row[x + 1]) * 16777619UL;
++			hash = (hash ^ row[x + 2]) * 16777619UL;
++		}
++	}
++	if (f->data[1] && f->linesize[1]) {
++		const uint8_t *row = f->data[1];
++		const uint32_t chroma_bytes = f->linesize[1] < f->width ? f->linesize[1] : f->width;
++		for (uint32_t x = 0; x + 1 < chroma_bytes; x += 41)
++			hash = (hash ^ row[x]) * 16777619UL;
++	}
++	return (long)hash;
++}
++
+ static void get_frame(void *opaque, struct obs_source_frame *f)
  {
  	struct ffmpeg_source *s = opaque;
  	obs_source_output_video(s->source, f);
@@ -219,29 +306,35 @@
 +			os_atomic_store_long(&s->webobs_video_serial, 1);
 +		else
 +			os_atomic_inc_long(&s->webobs_video_serial);
++		s->webobs_last_frame_ts = (long long)f->timestamp;
++		s->webobs_last_frame_ms = (long long)(os_gettime_ns() / 1000000ULL);
++		s->webobs_last_frame_hash = webobs_frame_digest(f);
 +	}
  }
  
  static void preload_frame(void *opaque, struct obs_source_frame *f)
-@@ -592,6 +603,13 @@
+@@ -592,6 +639,16 @@ static void ffmpeg_source_stop_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t
  		obs_source_media_stop(s->source);
  }
  
 +static void webobs_get_video_progress(void *data, calldata_t *cd)
 +{
 +	struct ffmpeg_source *s = data;
-+	calldata_set_int(cd, "schema", 1);
++	calldata_set_int(cd, "schema", 2);
 +	calldata_set_int(cd, "serial", os_atomic_load_long(&s->webobs_video_serial));
++	calldata_set_int(cd, "frameTs", (long long)s->webobs_last_frame_ts);
++	calldata_set_int(cd, "frameMs", (long long)s->webobs_last_frame_ms);
++	calldata_set_int(cd, "frameHash", (long long)s->webobs_last_frame_hash);
 +}
 +
  static void *ffmpeg_source_create(obs_data_t *settings, obs_source_t *source)
  {
  	struct ffmpeg_source *s = bzalloc(sizeof(struct ffmpeg_source));
-@@ -623,6 +641,8 @@
+@@ -623,6 +680,8 @@ static void *ffmpeg_source_create(obs_data_t *settings, obs_source_t *source)
  						    ffmpeg_source_stop_hotkey, s);
  
  	proc_handler_t *ph = obs_source_get_proc_handler(source);
-+	proc_handler_add(ph, "void webobs_get_video_progress(out int schema, out int serial)",
++	proc_handler_add(ph, "void webobs_get_video_progress(out int schema, out int serial, out int frameTs, out int frameMs, out int frameHash)",
 +			 webobs_get_video_progress, s);
  	proc_handler_add(ph, "void restart()", restart_proc, s);
  	proc_handler_add(ph, "void preload_first_frame()", preload_first_frame_proc, s);
