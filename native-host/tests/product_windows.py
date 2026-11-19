@@ -282,6 +282,56 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             except (OSError, ValueError):
                 return {}
 
+        def render_probe_control_file():
+            """The host's render-probe window file, beside its own state observation.
+
+            The frontend reads it only while WEBOBS_PRODUCT_RENDER_PROBE=1, and it draws
+            nothing unless a window is open, so the probe cannot slow the encoder or keep
+            a media source showing outside the window the harness asked for.
+            """
+            paths = list((profile / "native-profile").rglob("product-state.json"))
+            return paths[0].parent / "product-render-probe.control" if len(paths) == 1 else None
+
+        def render_probe_write(requested):
+            control = render_probe_control_file()
+            if control is None:
+                return False
+            tmp = control.with_name(control.name + ".tmp")
+            try:
+                tmp.write_text(json.dumps(requested), encoding="utf-8")
+                os.replace(tmp, control)
+            except OSError:
+                return False
+            return True
+
+        def render_probe_window(seconds):
+            return render_probe_write({"schema": 1, "scope": "synthetic-test-only",
+                "untilMs": int(time.time() * 1000 + seconds * 1000)})
+
+        def render_probe_close():
+            return render_probe_write({"schema": 1, "scope": "synthetic-test-only", "untilMs": 0})
+
+        def render_probe_summary(snapshot):
+            """Compact host-side probe health for a non-pixel failure receipt.
+
+            Full timelines stay in the capture windows; this only says whether the probe
+            was allowed to draw and whether the Scene/Program render content changed.
+            """
+            probe = snapshot.get("renderProbe")
+            if not isinstance(probe, dict):
+                return {"available": False}
+            def channel(items):
+                items = items if isinstance(items, list) else []
+                rows = [item.get("cells") for item in items if isinstance(item, dict)
+                        and isinstance(item.get("cells"), list)]
+                return {"samples": len(items),
+                    "distinctCellsPerTile": [len({row[index] for row in rows if index < len(row)})
+                                             for index in range(6)] if rows else []}
+            return {"enabled": probe.get("enabled") is True,
+                "windowOpen": probe.get("windowOpen") is True,
+                "windowUntilMs": probe.get("windowUntilMs"),
+                "preview": channel(probe.get("preview")), "program": channel(probe.get("program"))}
+
         def apply_attempt(value):
             """Bounded snapshot of the Program apply machine when a wait stalls.
 
@@ -741,6 +791,61 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                                if entry.get("flowing") is False]
                     return harness, sorted(set(dead) | set(unreadable) | set(stalled))
 
+                def probe_on_window(role, order):
+                    """One extra capture window taken with the host's render probe open.
+
+                    Diagnostic only: it never replaces the pixel assertion. The probe draws the
+                    preview Scene and the Program channel itself, so if this window moves while
+                    the asserted window stayed frozen, the freeze depended on something the
+                    probe changes (source show/activate state, or a graphics thread that only
+                    runs while it draws). If it stays frozen too, the probe's own per-cell
+                    digests say whether the Scene render changed underneath the stale capture.
+                    """
+                    if not render_probe_window(9.0):
+                        return {"opened": False}
+                    report = {"opened": True, "role": role}
+                    watch = SerialWatch()
+                    watch.start()
+                    target = private / ("pixels-" + label + "-" + role + "-probe-on")
+                    try:
+                        target.mkdir()
+                        process = subprocess.Popen([str(powershell), "-NoLogo", "-NoProfile", "-NonInteractive",
+                            "-File", str(HERE / "capture-pixels.ps1"), "-ExpectedProcessId", str(frontend_pid),
+                            "-ExpectedExecutable", str(runtime / "bin/64bit/obs64.exe"),
+                            "-ExpectedCreationTime", str(created), "-StateFile", str(metadata),
+                            "-OutputDirectory", str(target)],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            encoding="utf-8", errors="replace", close_fds=True,
+                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                        try:
+                            stdout, stderr = process.communicate(timeout=35)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            stdout, stderr = process.communicate()
+                            raise
+                        report["returnCode"] = int(process.returncode)
+                        capture = pixel_windows.capture_report(
+                            subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr))
+                        report["captureFailed"] = capture.get("captureFailed") is True
+                        if capture.get("captureFailed") is not True:
+                            analysis = subprocess.run([shutil.which("node"), str(HERE / "pixel-pattern.cjs"),
+                                "analyze", str(target / role), role, order, "true"], capture_output=True,
+                                text=True, encoding="utf-8", errors="replace", timeout=20)
+                            moved = json.loads(analysis.stdout or "{}")
+                            report["passed"] = moved.get("passed") is True
+                            report["distinctTileCounts"] = moved.get("distinctTileCounts")
+                            report["staleTiles"] = moved.get("staleTiles")
+                        watched = watch.report()
+                        report["renderFramesPerSecond"] = watched.get("renderFramesPerSecond")
+                        report["renderProbe"] = {channel: {key: value for key, value in
+                            (watched.get("renderProbe") or {}).get(channel, {}).items() if key != "timeline"}
+                            for channel in ("preview", "program")}
+                    except Exception as error:  # a diagnostic must never mask the real failure
+                        report["probeWindowFailed"] = type(error).__name__
+                    finally:
+                        render_probe_close()
+                    return report
+
                 def measure_window(budget_seconds):
                     """Watch real per-input frame progress; return None when every input advanced."""
                     deadline = time.monotonic() + budget_seconds
@@ -1080,6 +1185,10 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                             expected_media=expected_media, projector_orders=projector_orders,
                             quick_order=quick_order, program_scene=program_scene,
                             program_media=program_media, fixture_retry=False)
+                    # Fixture healthy and pixels still frozen: one probe-open window
+                    # before failing, so the next receipt names the layer instead of
+                    # guessing. Diagnostic only; the assertion below is unchanged.
+                    evidence["pixelFailureDiagnostics"]["probeOnWindow"] = probe_on_window(role, order)
                 assert analysis.returncode == 0 and result.get("passed") is True, "product view failed its expected final-pixel state"
 
         frontend_pid = 0
@@ -1978,11 +2087,36 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 assert published_low > 150 and published_high > 150, \
                     "published Program audio lost one of the two fixture pitches"
                 evidence["checks"].append("program-publish-decodes-both-fixture-pitches")
+                # The frame count alone could not say whether the encoder paced too slowly,
+                # the relay refused the read, or the host's own graphics thread stalled, so
+                # this read now carries its return code, the parsed frames, the measured
+                # pace from their timestamps and the host's render counters for the same
+                # window. The required count is unchanged.
+                render_before = state().get("renderFrames")
+                lagged_before = state().get("laggedFrames")
                 stream_frames = subprocess.run([str(runtime / "bin/ffprobe.exe"), "-v", "error",
                     "-rtsp_transport", "tcp", "-select_streams", "v:0", "-read_intervals", "%+#20",
                     "-show_entries", "frame=pts_time", "-of", "json", playback_url],
                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
-                assert stream_frames.returncode == 0 and len(json.loads(stream_frames.stdout).get("frames", [])) >= 10, \
+                frames = []
+                if stream_frames.returncode == 0:
+                    frames = json.loads(stream_frames.stdout or "{}").get("frames", []) or []
+                stamps = [entry.get("pts_time") for entry in frames if isinstance(entry, dict)
+                          and type(entry.get("pts_time")) in (int, float)]
+                span = (max(stamps) - min(stamps)) if len(stamps) > 1 else 0.0
+                after = state()
+                evidence["programStreamVideoProbe"] = {
+                    "returnCode": int(stream_frames.returncode),
+                    "timedOut": stream_frames.returncode == 124,
+                    "stderrTail": (stream_frames.stderr or "")[-260:],
+                    "frames": len(frames),
+                    "ptsSpanSeconds": round(float(span), 3),
+                    "measuredFramesPerSecond": round(len(frames) / span, 2) if span > 0 else 0,
+                    "hostRenderFramesBefore": render_before, "hostRenderFramesAfter": after.get("renderFrames"),
+                    "hostLaggedFramesBefore": lagged_before, "hostLaggedFramesAfter": after.get("laggedFrames"),
+                    "streamError": str((after.get("programOutput") or {}).get("streamError") or "")[:200],
+                    "streamConnected": (after.get("programOutput") or {}).get("streamConnected")}
+                assert stream_frames.returncode == 0 and len(frames) >= 10, \
                     "published Program did not deliver enough video frames"
                 # The relay also republishes the same path for browsers. This gate
                 # does not perform a WebRTC handshake; it requires the WHEP endpoint
@@ -2625,6 +2759,13 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             evidence["observedState"]["windowRoles"] = [window.get("role") for window in observed.get("windows", [])
                                                        if isinstance(window, dict)]
             evidence["observedState"]["audioSources"] = observed.get("audioSources", [])
+            # Graphics-thread pacing and probe window state: a "not enough frames" failure
+            # has to say whether the host itself stopped rendering or only the published
+            # path delivered too little.
+            for key in ("renderFrames", "laggedFrames", "publishedAtMs", "videoAvailable"):
+                if key in observed:
+                    evidence["observedState"][key] = observed[key]
+            evidence["observedState"]["renderProbe"] = render_probe_summary(observed)
             # Only fixed categories/counts from this boot's newest OBS log.
             # Never publish its contents, path, exception text or camera URL.
             # The two reconnect markers are OBS's own words for a media input that lost
