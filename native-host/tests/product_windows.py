@@ -1981,13 +1981,22 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     f"bus isolation recording encoded mask {isolation.get('audioTracks')}, expected 6"
                 assert audio_stream_count(isolation_path) == 2, \
                     "bus isolation recording did not encode one audio track per selected bus"
-                isolation_first_440 = pixel_windows.tone_amplitude(ffmpeg, str(isolation_path), 0, 440)
-                isolation_first_1200 = pixel_windows.tone_amplitude(ffmpeg, str(isolation_path), 0, 1200)
-                isolation_second_1200 = pixel_windows.tone_amplitude(ffmpeg, str(isolation_path), 1, 1200)
-                isolation_second_440 = pixel_windows.tone_amplitude(ffmpeg, str(isolation_path), 1, 440)
+                # Each encoded bus is read inside a window where its own pitch holds the
+                # same amplitude across both halves, so lead-in silence cannot hide a
+                # leak or fake an absence.
+                isolation_first = pixel_windows.steady_tone_window(ffmpeg, str(isolation_path), 0,
+                    steady=(440,), measure=(1200,))
+                isolation_second = pixel_windows.steady_tone_window(ffmpeg, str(isolation_path), 1,
+                    steady=(1200,), measure=(440,))
+                isolation_first_440 = isolation_first["amplitudes"]["440"]
+                isolation_first_1200 = isolation_first["amplitudes"]["1200"]
+                isolation_second_1200 = isolation_second["amplitudes"]["1200"]
+                isolation_second_440 = isolation_second["amplitudes"]["440"]
                 evidence["programBusIsolation"] = {
                     "busTwo": {"at440Hz": isolation_first_440, "at1200Hz": isolation_first_1200},
-                    "busThree": {"at1200Hz": isolation_second_1200, "at440Hz": isolation_second_440}}
+                    "busThree": {"at1200Hz": isolation_second_1200, "at440Hz": isolation_second_440},
+                    "steadyWindowStarts": {"busTwo": isolation_first["start"],
+                        "busThree": isolation_second["start"]}}
                 assert isolation_first_440 > 200 and isolation_first_1200 < 60, \
                     "bus two recording lost its 440 Hz tone or leaked the other bus's pitch"
                 assert isolation_second_1200 > 200 and isolation_second_440 < 60, \
@@ -2008,10 +2017,13 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 apply_program_scene(muted_scene, 2)
                 muted = record_program_output("per-track mute")
                 muted_path = Path(muted["recordingPath"])
-                muted_440 = pixel_windows.tone_amplitude(ffmpeg, str(muted_path), 0, 440)
-                muted_880 = pixel_windows.tone_amplitude(ffmpeg, str(muted_path), 0, 880)
+                muted_window = pixel_windows.steady_tone_window(ffmpeg, str(muted_path), 0,
+                    steady=(440,), measure=(880,))
+                muted_440 = muted_window["amplitudes"]["440"]
+                muted_880 = muted_window["amplitudes"]["880"]
                 evidence["programTrackMute"] = {"at440Hz": muted_440, "at880Hz": muted_880,
-                    "audioTrackMask": muted.get("audioTracks")}
+                    "audioTrackMask": muted.get("audioTracks"),
+                    "steadyWindowStart": muted_window["start"]}
                 assert muted.get("audioTracks") == 2, \
                     f"muted-track recording encoded mask {muted.get('audioTracks')}, expected 2"
                 assert muted_440 > 200 and muted_880 < 60, \
@@ -2024,21 +2036,42 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 apply_program_scene(full_gain, 2)
                 gain_full = record_program_output("per-track gain reference")
                 gain_full_path = Path(gain_full["recordingPath"])
-                gain_full_440 = pixel_windows.tone_amplitude(ffmpeg, str(gain_full_path), 0, 440)
-                gain_full_880 = pixel_windows.tone_amplitude(ffmpeg, str(gain_full_path), 0, 880)
+                # rc.59 read the reference over the first three seconds of the file. The
+                # mixer was still emitting adelay/late-track silence for part of that
+                # window, so every pitch was understated by its silence fraction and the
+                # untouched track then looked as if it had risen by 1.7x. The amplitude is
+                # taken where both pitches hold steady instead.
+                reference_window = pixel_windows.steady_tone_window(
+                    ffmpeg, str(gain_full_path), 0, steady=(440, 880))
+                gain_full_440 = reference_window["amplitudes"]["440"]
+                gain_full_880 = reference_window["amplitudes"]["880"]
+                assert gain_full_440 > 200 and gain_full_880 > 200, \
+                    "both tracks at gain one were not audible in the received file"
+                # The identical configuration recorded again must measure the same two
+                # pitches. Drift at this step is a measurement fault and gets named here,
+                # before a later gain change can be mistaken for a mixer fault.
+                gain_repeat = record_program_output("per-track gain reference repeat")
+                repeat_window = pixel_windows.steady_tone_window(
+                    ffmpeg, str(Path(gain_repeat["recordingPath"])), 0, steady=(440, 880))
+                control_ratios = {"440": round(repeat_window["amplitudes"]["440"] / gain_full_440, 3),
+                    "880": round(repeat_window["amplitudes"]["880"] / gain_full_880, 3)}
+                assert all(0.8 <= ratio <= 1.25 for ratio in control_ratios.values()), \
+                    f"the unchanged gain configuration measured differently twice: {control_ratios}"
                 low_gain = alt_variant("fixture-alt-gain-low", [
                     {"track": 0, "gain": 1, "muted": False, "syncOffsetMs": 0},
                     {"track": 1, "gain": 0.2, "muted": False, "syncOffsetMs": 0}])
                 apply_program_scene(low_gain, 2)
                 gain_low = record_program_output("per-track gain reduced")
                 gain_low_path = Path(gain_low["recordingPath"])
-                gain_low_440 = pixel_windows.tone_amplitude(ffmpeg, str(gain_low_path), 0, 440)
-                gain_low_880 = pixel_windows.tone_amplitude(ffmpeg, str(gain_low_path), 0, 880)
+                reduced_window = pixel_windows.steady_tone_window(ffmpeg, str(gain_low_path), 0,
+                    steady=(440,), measure=(880,))
+                gain_low_440 = reduced_window["amplitudes"]["440"]
+                gain_low_880 = reduced_window["amplitudes"]["880"]
                 evidence["programTrackGain"] = {"gainOne": {"at440Hz": gain_full_440,
                     "at880Hz": gain_full_880}, "gainPointTwo": {"at440Hz": gain_low_440,
-                    "at880Hz": gain_low_880}}
-                assert gain_full_440 > 200 and gain_full_880 > 200, \
-                    "both tracks at gain one were not audible in the received file"
+                    "at880Hz": gain_low_880}, "controlRatios": control_ratios,
+                    "steadyWindowStarts": {"reference": reference_window["start"],
+                        "repeat": repeat_window["start"], "reduced": reduced_window["start"]}}
                 # Linear gain 0.2 leaves about a fifth of that pitch's amplitude.
                 # The tolerance excludes "gain reached the mix source but the
                 # mixer ignored it" while allowing for AAC and resampler loss.
