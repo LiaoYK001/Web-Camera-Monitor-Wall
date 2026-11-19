@@ -8,6 +8,7 @@
 - 同一 checkout 的更新由脚本加锁；跨 worktree 指定一个共享账本入口，跨机器按正常 Git 流程同步，不能声称本地文件锁提供分布式实时同步。详细规则见 PLAYBOOK。
 - Close tasks only with current evidence and satisfied dependencies. Preserve historical product evidence in `docs/windows-obs-parity-execution.md` and update the feature matrix when behavior/qualification changes. Run `python3 scripts/agent-sync.py check` and `git diff --check` before handoff; never equate a scoped preview/fixture with complete R0–R7 qualification.
 - 本机提权仍只限用户已授权任务：先 `sudo -n true`，有效期内使用 `sudo -n`；不得自行 grant/延长租期/创建永久免密规则，不索要或记录密码。协作任务登记本身不扩大系统或发布授权。
+- 本地 Qwen 接手 Windows v5.1 时，从 [Qwen 执行手册](docs/coordination/V51-QWEN-RUNBOOK.md) 开始。固定任务、worktree、源码 SHA 与 CI run；用 `scripts/v51-ci-gate.py` 读取当前回执，一轮处理一个已验证的失败点。 / Local Qwen sessions working on Windows v5.1 follow the Qwen runbook and use the read-only CI receipt checker for the exact source and run.
 
 ## Architecture
 
