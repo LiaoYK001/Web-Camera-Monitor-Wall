@@ -282,6 +282,53 @@ class BuildContractTests(unittest.TestCase):
             self.assertIn(assertion, gate)
 
 
+    def test_published_packet_window_formats_the_interval_and_reports_its_own_failure(self):
+        """The keyframe diagnostic must not break the measurement it accompanies.
+
+        Run 44544305133 lost the decodable-frame result because the packet probe
+        built its read interval with %-formatting, and MediaMTX's own "%+00:00:6"
+        made Python raise "unsupported format character" before the frames were
+        recorded. The interval is concatenated now, and a failing diagnostic returns
+        its error text instead of replacing the assertion.
+        """
+        if os.name == "nt":
+            self.skipTest("fake ffprobe needs a POSIX executable")
+        spec = importlib.util.spec_from_file_location("product_windows",
+            ROOT / "native-host/tests/product_windows.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        gate = (ROOT / "native-host/tests/product_windows.py").read_text(encoding="utf-8")
+        self.assertNotIn('"-read_intervals", "%+00:00:%d" %', gate)
+        self.assertIn('read_interval = "%+00:00:" + str(window_seconds)', gate)
+        with tempfile.TemporaryDirectory() as temporary:
+            argv_record = Path(temporary) / "argv.txt"
+            fake = Path(temporary) / "ffprobe"
+            fake.write_text("#!/usr/bin/env python3\n"
+                "import json, os, sys\n"
+                "with open(os.environ['FAKE_ARGV'], 'w', encoding='utf-8') as handle:\n"
+                "    handle.write(json.dumps(sys.argv[1:]))\n"
+                "print(json.dumps({'packets': [{'pts_time': '1.0', 'flags': '___'},"
+                " {'pts_time': '2.0', 'flags': 'K'}, {'pts_time': 'N/A', 'flags': 'K'},"
+                " {'pts_time': '4.0', 'flags': 'K'}]}))\n", encoding="utf-8")
+            fake.chmod(0o755)
+            os.environ["FAKE_ARGV"] = str(argv_record)
+            try:
+                summary = module.published_packet_window(fake, "rtsp://127.0.0.1:1/program", 6)
+            finally:
+                os.environ.pop("FAKE_ARGV", None)
+            argv = json.loads(argv_record.read_text(encoding="utf-8"))
+            self.assertEqual(argv[argv.index("-read_intervals") + 1], "%+00:00:6")
+            self.assertEqual(summary["readInterval"], "%+00:00:6")
+            self.assertEqual(summary["packets"], 4)
+            self.assertEqual(summary["keyframes"], 2, "an unparsable key stamp is not counted")
+            self.assertEqual(summary["firstKeyPacketPts"], 2.0)
+            self.assertFalse(summary["firstPacketIsKey"])
+            self.assertNotIn("diagnosticFailed", summary)
+            missing = module.published_packet_window(Path(temporary) / "absent",
+                "rtsp://127.0.0.1:1/program", 6)
+            self.assertIn("diagnosticFailed", missing)
+            self.assertEqual(missing["readInterval"], "%+00:00:6")
+
     def test_published_video_window_parses_string_stamps_and_keeps_bounded_noise(self):
         """The shared window reader must not drop ffprobe's string pts_time.
 

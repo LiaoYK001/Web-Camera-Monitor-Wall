@@ -215,16 +215,30 @@ def published_packet_window(ffprobe, url, window_seconds):
     """Ask the relay, on a second connection, whether a late client gets an IDR.
 
     Zero key packets across the window points at the published stream; key packets
-    that still decode nothing points at the parameter sets reaching the decoder.
+    that still decode nothing points at the parameter sets reaching the decoder. Run
+    44544305133 lost the primary frame measurement because this diagnostic raised
+    "unsupported format character" from its own %%-style interval, so the interval is
+    concatenated and every failure here is reported as a diagnostic instead of
+    replacing the decodable-frame assertion.
     """
-    probe = subprocess.run([str(ffprobe), "-v", "error", "-rtsp_transport", "tcp",
-        "-select_streams", "v:0", "-read_intervals", "%+00:00:%d" % window_seconds,
-        "-show_entries", "packet=pts_time,flags", "-of", "json", url],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-        timeout=window_seconds + 25)
+    read_interval = "%+00:00:" + str(window_seconds)
+    summary = {"readInterval": read_interval, "packets": 0, "keyframes": 0,
+        "firstPacketIsKey": False, "firstKeyPacketPts": -1, "keyPacketGapsSeconds": [],
+        "returnCode": -1, "stderrTail": ""}
+    try:
+        probe = subprocess.run([str(ffprobe), "-v", "error", "-rtsp_transport", "tcp",
+            "-select_streams", "v:0", "-read_intervals", read_interval,
+            "-show_entries", "packet=pts_time,flags", "-of", "json", url],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=window_seconds + 25)
+    except (OSError, subprocess.TimeoutExpired, ValueError) as error:
+        summary["diagnosticFailed"] = f"{type(error).__name__}: {error}"[:200]
+        return summary
     entries = []
-    if probe.returncode == 0:
-        entries = json.loads(probe.stdout or "{}").get("packets", []) or []
+    try:
+        entries = json.loads(probe.stdout or "{}").get("packets", []) or [] if probe.returncode == 0 else []
+    except ValueError as error:
+        summary["diagnosticFailed"] = f"invalid packet probe JSON: {type(error).__name__}"
     key_stamps = []
     for entry in entries:
         if "K" not in str(entry.get("flags") or ""):
@@ -233,12 +247,13 @@ def published_packet_window(ffprobe, url, window_seconds):
             key_stamps.append(float(entry.get("pts_time")))
         except (TypeError, ValueError):
             pass
-    return {"returnCode": int(probe.returncode), "packets": len(entries),
+    summary.update({"returnCode": int(probe.returncode), "packets": len(entries),
         "keyframes": len(key_stamps),
         "firstPacketIsKey": bool(entries and "K" in str(entries[0].get("flags") or "")),
         "firstKeyPacketPts": key_stamps[0] if key_stamps else -1,
         "keyPacketGapsSeconds": [round(b - a, 3) for a, b in zip(key_stamps, key_stamps[1:])][:6],
-        "stderrTail": (probe.stderr or "")[-200:]}
+        "stderrTail": (probe.stderr or "")[-200:]})
+    return summary
 
 
 def child_processes(powershell, pid):
