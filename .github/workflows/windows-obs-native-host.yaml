@@ -12,6 +12,7 @@ on:
       native_preview: { type: boolean, default: false }
       measure_obs_baseline: { type: boolean, default: false }
       upgrade_previous: { type: boolean, default: false }
+      soak_minutes: { type: number, default: 0 }
   workflow_dispatch:
     inputs:
       product_mode:
@@ -41,6 +42,10 @@ on:
         description: 'Install the pinned previous prototype, upgrade it in place and verify the private profile survives'
         type: boolean
         default: false
+      soak_minutes:
+        description: 'Keep the installed five-input wall running for this many minutes and sample per-stream progress, CPU and private memory'
+        type: number
+        default: 0
       version:
         type: string
         required: true
@@ -53,7 +58,7 @@ permissions:
 jobs:
   native-host:
     runs-on: windows-2022
-    timeout-minutes: ${{ inputs.complete && 180 || 75 }}
+    timeout-minutes: ${{ inputs.soak_minutes > 0 && 260 || (inputs.complete && 180 || 75) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -200,7 +205,7 @@ jobs:
             $restore = Get-Content -LiteralPath $restoreReceipt -Raw | ConvertFrom-Json
             if ($restore.cleanupFailed) { throw 'Owned restore-control cleanup failed; do not start another product.' }
           }
-          ./desktop/scripts/test-native-product-install.ps1 -BuildDirectory "$env:GITHUB_WORKSPACE/build/obs-native-ci"
+          ./desktop/scripts/test-native-product-install.ps1 -BuildDirectory "$env:GITHUB_WORKSPACE/build/obs-native-ci" -SoakMinutes ${{ inputs.soak_minutes }}
       - name: Generate and verify complete candidate update metadata
         if: inputs.complete && steps.product-control.outcome == 'success'
         shell: pwsh
