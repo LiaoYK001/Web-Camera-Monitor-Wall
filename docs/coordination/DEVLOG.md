@@ -1,12 +1,48 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 245 · 2026-11-19T04:02:29+08:00（UTC+08）
+> 快照版本 251 · 2026-11-19T14:45:03+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #251 · 2026-11-19T14:45:03+08:00 · log
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：V51-008 | worktree .worktrees/v51 (codex/v51-r3-output) | rc.59 run 44385767337 @ a5337f8 | failurePhase program-track-controls | 本轮只验证逐轨增益。结论：不是混音增益缺陷——回执同一文件内 432.2/2164.5=0.1997，说明第二轨被线性缩放 0.2 且第一轨未受影响；两轨都为 1.0 的对照低到 0.58/0.38，原因是门禁在录制文件前 3 秒做相关测量，那段仍含 owned 混音器 adelay 与后到音频轨的前导静音。产品混音图未改。修复只在测量层：pixel_windows 新增 steady_tone_window()（跳过前导静音、要求半窗一致 ±25%，无连续窗口以实测数值失败），隔离/静音/增益都改用它，并新增同配置二次录制的 1.0→1.0 对照（0.8–1.25）；原阈值不变。本机 Fedora 复现 1250/1850ms 前导静音得 1.63/0.50，与 rc.59 的 1.716/0.522 同形；稳态窗口回到 1.000/0.200；写错轨(0.2)与忽略增益(1.0)仍被判失败；全静音报无连续窗口。test_build_contract 47/47、test_pixels 28/28（2 跳过）。已派发 rc.60 run 44474401536 @ 3c9d6f67591aece94a69a8c5d7bc2beeadc4f8cd（product_mode/complete，soak 0）。 / Diagnosis: mixer gain was correct (0.1997 in the same file); the reference window held lead-in silence. Fix confined to the measurement layer plus a 1.0-to-1.0 control; thresholds unchanged; rc.60 dispatched.
+- 证据：run 44385767337 receipt programTrackGain {1261.6,828.1}/{2164.5,432.2}; local Fedora reproduction with the product graph; native-host/tests/test_pixels.py AudioWindowContractTests 4/4; run 44474401536 queued at 3c9d6f6
+- 源码：`b99027bb2dcc4f1c28ff2359e5818085a795da8f`
+## #250 · 2026-11-19T14:37:29+08:00 · claim
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：V51-008 | worktree .worktrees/v51 (codex/v51-r3-output) | rc.59 run 44385767337 @ a5337f8c205180de1f45ec5f6276ec84d44eb287 | failurePhase program-track-controls | 本轮只验证：逐轨增益 1.0→1.0→0.2 对照，先区分录制启动窗口波动与真实轨道增益缺陷。 / Handover taken from the retired session; this round only tests the 1.0 to 1.0 to 0.2 gain control and whether the drift comes from the recording start window instead of the mixer.
+- 证据：python3 scripts/v51-ci-gate.py 44385767337 --sha a5337f8... --version 5.1.0-rc.59 → result inspect-first-failure; gainOne 440=1261.6 880=828.1; gainPointTwo 440=2164.5 880=432.2
+- 源码：`b99027bb2dcc4f1c28ff2359e5818085a795da8f`
+## #249 · 2026-11-19T14:37:25+08:00 · release
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：原会话退出，按用户指示交接 V51-008 给本地 Qwen 会话；当前失败点为 rc.59 program-track-controls。 / Retiring the departed session claim for V51-008 so the local Qwen session can take it over; current failure is rc.59 program-track-controls.
+- 证据：run 44385767337 receipt native-product-entry-ui.json phase=program-track-controls
+- 源码：`b99027bb2dcc4f1c28ff2359e5818085a795da8f`
+## #248 · 2026-11-19T14:05:18+08:00 · update
+
+- Agent：`codex-qwen-handoff-20261119`；任务：`HANDOFF-005`
+- 记录：后续由本地 Qwen 3.8 Next 接手。新增 Qwen 手册和只读 CI 检查脚本。真实 rc.59 run 44385767337 已失败于 program-track-controls，NSIS 未执行；旧任务认领原样保留，按手册交接。
+- 证据：docs/coordination/V51-QWEN-RUNBOOK.md；scripts/v51-ci-gate.py 对 rc.59 实测退出 3 并输出失败断言和双频幅度；模拟验证进行中、安装检查、两小时缺失、长稳通过、错 SHA、失败回执、缺 portable 回执的编译失败；git diff --check 通过
+- 源码：`b99027bb2dcc4f1c28ff2359e5818085a795da8f`
+## #247 · 2026-11-19T14:01:07+08:00 · claim
+
+- Agent：`codex-qwen-handoff-20261119`；任务：`HANDOFF-005`
+- 记录：仅提交接手指南、项目入口和只读 CI 检查工具的变更；原开发任务归属另外交接
+- 证据：无新增验收证据
+- 源码：`b99027bb2dcc4f1c28ff2359e5818085a795da8f`
+## #246 · 2026-11-19T14:01:07+08:00 · add
+
+- Agent：`codex-qwen-handoff-20261119`；任务：`HANDOFF-005`
+- 记录：用户指定后续本地 Qwen 3.8 Next 接手，要求详细流程和 harness 控制
+- 证据：无新增验收证据
+- 源码：`b99027bb2dcc4f1c28ff2359e5818085a795da8f`
 ## #245 · 2026-11-19T04:02:29+08:00 · log
 
 - Agent：`deepseek-v51-20261118-01`；任务：`V51-008`

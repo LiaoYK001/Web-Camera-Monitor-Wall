@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 245,
-  "updated_at": "2026-11-19T04:02:29+08:00",
+  "revision": 251,
+  "updated_at": "2026-11-19T14:45:03+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1254,7 +1254,7 @@
       "title": "把 Program 合成输出验收落到用户实际收到的产物 / accept Program output from the delivered recording and stream",
       "priority": "P1",
       "status": "in_progress",
-      "owner": "deepseek-v51-20261118-01",
+      "owner": "qwen38-next-v51-20261119-01",
       "scope": [
         "native-host/src/product_output.cpp",
         "native-host/src/product_window.cpp",
@@ -1298,12 +1298,15 @@
         "PR #67 head b003ae7; run 44374662264 in progress (rc.57, sha 738a62a)",
         "run 44374662264 artifact native-product-integration-receipts-5.1.0-rc.57 (failurePhase program-streaming, streamError stream-service-unavailable); rc.58 run 44380596633 sha 99b6734",
         "rc.58 receipt failurePhase program-publish-disconnect / lastCheckpoint program-publish-disconnect-reported; fix commit 92238a3; rc.59 run 44385767337 sha a5337f8",
-        "gh run 44385767337; native-host/scripts/migrate_legacy.py DATABASES; native-host/scripts/product_supervisor.py prepare()/recover_interrupted_restore(); native-host/scripts/product_lan.py plan(); .github/workflows/windows-obs-native-host.yaml timeout-minutes"
+        "gh run 44385767337; native-host/scripts/migrate_legacy.py DATABASES; native-host/scripts/product_supervisor.py prepare()/recover_interrupted_restore(); native-host/scripts/product_lan.py plan(); .github/workflows/windows-obs-native-host.yaml timeout-minutes",
+        "run 44385767337 receipt native-product-entry-ui.json phase=program-track-controls",
+        "python3 scripts/v51-ci-gate.py 44385767337 --sha a5337f8... --version 5.1.0-rc.59 → result inspect-first-failure; gainOne 440=1261.6 880=828.1; gainPointTwo 440=2164.5 880=432.2",
+        "run 44385767337 receipt programTrackGain {1261.6,828.1}/{2164.5,432.2}; local Fedora reproduction with the product graph; native-host/tests/test_pixels.py AudioWindowContractTests 4/4; run 44474401536 queued at 3c9d6f6"
       ],
       "blocker": "",
       "next_step": "rc.52 结果决定下一步：若停滞输入名与逐路包数证明回环仍流动而 Program 专用输入零帧，则需在宿主做有界媒体重开；否则按 #67→#70→#71→#74 顺序合并并复跑 rc.53。",
-      "updated_at": "2026-11-19T04:02:29+08:00",
-      "last_note": "rc.59 已派发并处于 OBS 编译阶段（run 44385767337，sha a5337f8，含 #67→#76 全栈）；等待期间对四个尚无 Windows 证据的安装态门禁做了静态预审：导入入口文本断言由 stage_product_runtime.py 复制的 migrate-legacy.cmd 满足（含 %LOCALAPPDATA%\\WebOBS\\Native\\config、--confirm-stopped、--include-backup-key）；会话库 config/auth-sessions.db 不在 migrate_legacy 的 DATABASES 列表内，因此旧 cookie 在导入档必为 401；supervisor.prepare 在持有独占锁后、创建 config/native-profile 之前调用 recover_interrupted_restore，且 encrypted_backup 仅在 SodiumStream 实例化时才加载 libsodium；无私网 IPv4 时 plan 仍 enabled=true 且 start_lan_switch 无条件启动，故 LAN 降级分支可成立；complete 且 soak=0 时 job 超时 180 分钟。 / rc.59 dispatched (run 44385767337, sha a5337f8, full #67→#76 stack) and compiling OBS; while waiting I statically pre-reviewed the four install-gate suites that still lack Windows evidence."
+      "updated_at": "2026-11-19T14:45:03+08:00",
+      "last_note": "V51-008 | worktree .worktrees/v51 (codex/v51-r3-output) | rc.59 run 44385767337 @ a5337f8 | failurePhase program-track-controls | 本轮只验证逐轨增益。结论：不是混音增益缺陷——回执同一文件内 432.2/2164.5=0.1997，说明第二轨被线性缩放 0.2 且第一轨未受影响；两轨都为 1.0 的对照低到 0.58/0.38，原因是门禁在录制文件前 3 秒做相关测量，那段仍含 owned 混音器 adelay 与后到音频轨的前导静音。产品混音图未改。修复只在测量层：pixel_windows 新增 steady_tone_window()（跳过前导静音、要求半窗一致 ±25%，无连续窗口以实测数值失败），隔离/静音/增益都改用它，并新增同配置二次录制的 1.0→1.0 对照（0.8–1.25）；原阈值不变。本机 Fedora 复现 1250/1850ms 前导静音得 1.63/0.50，与 rc.59 的 1.716/0.522 同形；稳态窗口回到 1.000/0.200；写错轨(0.2)与忽略增益(1.0)仍被判失败；全静音报无连续窗口。test_build_contract 47/47、test_pixels 28/28（2 跳过）。已派发 rc.60 run 44474401536 @ 3c9d6f67591aece94a69a8c5d7bc2beeadc4f8cd（product_mode/complete，soak 0）。 / Diagnosis: mixer gain was correct (0.1997 in the same file); the reference window held lead-in silence. Fix confined to the measurement layer plus a 1.0-to-1.0 control; thresholds unchanged; rc.60 dispatched."
     },
     {
       "id": "COORD-008",
@@ -1486,6 +1489,30 @@
       "next_step": "本机语法与 Linux 契约复跑后，随下一次完整候选在 Windows 安装态产出 native-product-legacy-import.json；用户本人旧档案迁移留待目标机。",
       "updated_at": "2026-11-19T02:55:24+08:00",
       "last_note": "window_close 助手归属 V51-010，本任务只复用"
+    },
+    {
+      "id": "HANDOFF-005",
+      "milestone": "COORD",
+      "title": "交接本地 Qwen 并接入 Windows CI 回执检查 / hand off to local Qwen and add Windows CI receipt checks",
+      "priority": "P1",
+      "status": "done",
+      "owner": null,
+      "scope": [
+        "AGENTS.md",
+        "docs/coordination/V51-QWEN-RUNBOOK.md",
+        "scripts/v51-ci-gate.py"
+      ],
+      "depends_on": [],
+      "acceptance": [
+        "提供可逐步执行的交接指南与只读回执脚本；用 rc.59 实测脚本准确定位失败并拒绝将旧或不完整证据用于候选评审"
+      ],
+      "evidence": [
+        "docs/coordination/V51-QWEN-RUNBOOK.md；scripts/v51-ci-gate.py 对 rc.59 实测退出 3 并输出失败断言和双频幅度；模拟验证进行中、安装检查、两小时缺失、长稳通过、错 SHA、失败回执、缺 portable 回执的编译失败；git diff --check 通过"
+      ],
+      "blocker": "",
+      "next_step": "本地 Qwen 先核对 V51-008 归属与 PR #67 源码，复现逐轨增益 A/A 与 A/B；修复后由全栈顶层派发 Windows 安装回归。",
+      "updated_at": "2026-11-19T14:05:18+08:00",
+      "last_note": "后续由本地 Qwen 3.8 Next 接手。新增 Qwen 手册和只读 CI 检查脚本。真实 rc.59 run 44385767337 已失败于 program-track-controls，NSIS 未执行；旧任务认领原样保留，按手册交接。"
     }
   ],
   "events": [
@@ -4305,6 +4332,74 @@
         "gh run 44385767337; native-host/scripts/migrate_legacy.py DATABASES; native-host/scripts/product_supervisor.py prepare()/recover_interrupted_restore(); native-host/scripts/product_lan.py plan(); .github/workflows/windows-obs-native-host.yaml timeout-minutes"
       ],
       "git_revision": "a0377c781ccaa725ba32c604c09c72fd4b2e52da"
+    },
+    {
+      "sequence": 246,
+      "at": "2026-11-19T14:01:07+08:00",
+      "agent": "codex-qwen-handoff-20261119",
+      "task": "HANDOFF-005",
+      "action": "add",
+      "note": "用户指定后续本地 Qwen 3.8 Next 接手，要求详细流程和 harness 控制",
+      "evidence": [],
+      "git_revision": "b99027bb2dcc4f1c28ff2359e5818085a795da8f"
+    },
+    {
+      "sequence": 247,
+      "at": "2026-11-19T14:01:07+08:00",
+      "agent": "codex-qwen-handoff-20261119",
+      "task": "HANDOFF-005",
+      "action": "claim",
+      "note": "仅提交接手指南、项目入口和只读 CI 检查工具的变更；原开发任务归属另外交接",
+      "evidence": [],
+      "git_revision": "b99027bb2dcc4f1c28ff2359e5818085a795da8f"
+    },
+    {
+      "sequence": 248,
+      "at": "2026-11-19T14:05:18+08:00",
+      "agent": "codex-qwen-handoff-20261119",
+      "task": "HANDOFF-005",
+      "action": "update",
+      "note": "后续由本地 Qwen 3.8 Next 接手。新增 Qwen 手册和只读 CI 检查脚本。真实 rc.59 run 44385767337 已失败于 program-track-controls，NSIS 未执行；旧任务认领原样保留，按手册交接。",
+      "evidence": [
+        "docs/coordination/V51-QWEN-RUNBOOK.md；scripts/v51-ci-gate.py 对 rc.59 实测退出 3 并输出失败断言和双频幅度；模拟验证进行中、安装检查、两小时缺失、长稳通过、错 SHA、失败回执、缺 portable 回执的编译失败；git diff --check 通过"
+      ],
+      "git_revision": "b99027bb2dcc4f1c28ff2359e5818085a795da8f"
+    },
+    {
+      "sequence": 249,
+      "at": "2026-11-19T14:37:25+08:00",
+      "agent": "deepseek-v51-20261118-01",
+      "task": "V51-008",
+      "action": "release",
+      "note": "原会话退出，按用户指示交接 V51-008 给本地 Qwen 会话；当前失败点为 rc.59 program-track-controls。 / Retiring the departed session claim for V51-008 so the local Qwen session can take it over; current failure is rc.59 program-track-controls.",
+      "evidence": [
+        "run 44385767337 receipt native-product-entry-ui.json phase=program-track-controls"
+      ],
+      "git_revision": "b99027bb2dcc4f1c28ff2359e5818085a795da8f"
+    },
+    {
+      "sequence": 250,
+      "at": "2026-11-19T14:37:29+08:00",
+      "agent": "qwen38-next-v51-20261119-01",
+      "task": "V51-008",
+      "action": "claim",
+      "note": "V51-008 | worktree .worktrees/v51 (codex/v51-r3-output) | rc.59 run 44385767337 @ a5337f8c205180de1f45ec5f6276ec84d44eb287 | failurePhase program-track-controls | 本轮只验证：逐轨增益 1.0→1.0→0.2 对照，先区分录制启动窗口波动与真实轨道增益缺陷。 / Handover taken from the retired session; this round only tests the 1.0 to 1.0 to 0.2 gain control and whether the drift comes from the recording start window instead of the mixer.",
+      "evidence": [
+        "python3 scripts/v51-ci-gate.py 44385767337 --sha a5337f8... --version 5.1.0-rc.59 → result inspect-first-failure; gainOne 440=1261.6 880=828.1; gainPointTwo 440=2164.5 880=432.2"
+      ],
+      "git_revision": "b99027bb2dcc4f1c28ff2359e5818085a795da8f"
+    },
+    {
+      "sequence": 251,
+      "at": "2026-11-19T14:45:03+08:00",
+      "agent": "qwen38-next-v51-20261119-01",
+      "task": "V51-008",
+      "action": "log",
+      "note": "V51-008 | worktree .worktrees/v51 (codex/v51-r3-output) | rc.59 run 44385767337 @ a5337f8 | failurePhase program-track-controls | 本轮只验证逐轨增益。结论：不是混音增益缺陷——回执同一文件内 432.2/2164.5=0.1997，说明第二轨被线性缩放 0.2 且第一轨未受影响；两轨都为 1.0 的对照低到 0.58/0.38，原因是门禁在录制文件前 3 秒做相关测量，那段仍含 owned 混音器 adelay 与后到音频轨的前导静音。产品混音图未改。修复只在测量层：pixel_windows 新增 steady_tone_window()（跳过前导静音、要求半窗一致 ±25%，无连续窗口以实测数值失败），隔离/静音/增益都改用它，并新增同配置二次录制的 1.0→1.0 对照（0.8–1.25）；原阈值不变。本机 Fedora 复现 1250/1850ms 前导静音得 1.63/0.50，与 rc.59 的 1.716/0.522 同形；稳态窗口回到 1.000/0.200；写错轨(0.2)与忽略增益(1.0)仍被判失败；全静音报无连续窗口。test_build_contract 47/47、test_pixels 28/28（2 跳过）。已派发 rc.60 run 44474401536 @ 3c9d6f67591aece94a69a8c5d7bc2beeadc4f8cd（product_mode/complete，soak 0）。 / Diagnosis: mixer gain was correct (0.1997 in the same file); the reference window held lead-in silence. Fix confined to the measurement layer plus a 1.0-to-1.0 control; thresholds unchanged; rc.60 dispatched.",
+      "evidence": [
+        "run 44385767337 receipt programTrackGain {1261.6,828.1}/{2164.5,432.2}; local Fedora reproduction with the product graph; native-host/tests/test_pixels.py AudioWindowContractTests 4/4; run 44474401536 queued at 3c9d6f6"
+      ],
+      "git_revision": "b99027bb2dcc4f1c28ff2359e5818085a795da8f"
     }
   ]
 }

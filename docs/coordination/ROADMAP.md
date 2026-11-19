@@ -1,7 +1,7 @@
 # 详细执行路线图 / Execution roadmap
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 245 · 2026-11-19T04:02:29+08:00（UTC+08）
+> 快照版本 251 · 2026-11-19T14:45:03+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -21,6 +21,7 @@
 - **HANDOFF-003 · 完成**：交接v5.1接续开发与正式交付 / hand off v5.1 completion；依赖：无。验收：单文件含最新代码/PR/运行身份、已改/未做/风险、认领命令和v5.1完整发布任务；释放本会话V51-002便于下一Agent接手；不修改产品或发布
 - **HANDOFF-004 · 完成**：编写 DeepSeek 的 v5.1 成品执行指南 / write the v5.1 completion guide；依赖：无。验收：核对最新源码、PR 和 Windows 失败回执，给出可执行定位、分支顺序、完整功能与发布验收，不接管进行中开发
 - **COORD-008 · 完成**：记录 CI 下载临时目录约定 / document temporary directories for CI downloads；依赖：无。验收：AGENTS.md 指定每次 CI 下载使用 mktemp -d 和带引号的下载路径，不清空旧目录或改变 Codex 审批配置
+- **HANDOFF-005 · 完成**：交接本地 Qwen 并接入 Windows CI 回执检查 / hand off to local Qwen and add Windows CI receipt checks；依赖：无。验收：提供可逐步执行的交接指南与只读回执脚本；用 rc.59 实测脚本准确定位失败并拒绝将旧或不完整证据用于候选评审
 
 ## R0 · 冻结基线与差距清单
 
