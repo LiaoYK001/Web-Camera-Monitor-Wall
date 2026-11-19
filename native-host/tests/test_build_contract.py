@@ -1308,6 +1308,38 @@ class BuildContractTests(unittest.TestCase):
                 with self.subTest(wrong=wrong), self.assertRaises(AssertionError):
                     smoke_windows.check_product_receipt(path, expect_hardware_requests=5)
 
+    def test_the_gain_control_step_records_its_measurement_before_rejecting_it(self):
+        """A rejected Program control step still has to say what it measured.
+
+        Run 44577184643 failed its unchanged-gain control step and the receipt that
+        arrived carried only the two ratios. The reference amplitudes, the window each
+        was taken in and the per-segment readings behind them were written to the
+        evidence AFTER the assertion, so the next session had nothing to re-check. This
+        fixes the order of the statements, not the thresholds: the control step keeps
+        its 0.8-1.25 bound, the gain bounds stay as written, and the amplitude comes
+        from the shared measurement rule in pixel_windows rather than a local copy.
+        """
+        gate = (ROOT / "native-host/tests/product_windows.py").read_text(encoding="utf-8")
+        record = gate.index('evidence["programTrackGain"] = {')
+        reject = gate.index("measured differently twice")
+        self.assertLess(record, reject,
+            "the gain control step must record its measurement before rejecting it")
+        self.assertLess(gate.index('evidence["programTrackGain"].update('),
+            gate.index("did not scale the second track"),
+            "the reduced-gain reading has to be recorded before it is judged")
+        for wiring in ('"toneReadings"', '"steadyWindowStarts"', '"controlRatios"',
+                       '"reducedToneReadings"'):
+            self.assertIn(wiring, gate)
+        for bound in ("0.8 <= ratio <= 1.25", "0.05 < gain_low_880 / gain_full_880 < 0.55",
+                      "0.6 < gain_low_440 / gain_full_440 < 1.5",
+                      "muted_440 > 200 and muted_880 < 60"):
+            self.assertIn(bound, gate, "the Program audio acceptance bound changed")
+        # The amplitude rule lives in one place, so a Windows gate and a local FFmpeg
+        # fixture measure the same thing.
+        self.assertNotIn("def _correlate(", gate)
+        self.assertIn("pixel_windows.steady_tone_window", gate)
+
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
