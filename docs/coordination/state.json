@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 260,
-  "updated_at": "2026-11-19T23:54:56+08:00",
+  "revision": 261,
+  "updated_at": "2026-11-19T23:57:09+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1259,8 +1259,11 @@
         "native-host/src/product_output.cpp",
         "native-host/src/product_window.cpp",
         "native-host/src/product_scene.hpp",
+        "native-host/src/product_scene.cpp",
         "native-host/tests/product_windows.py",
-        "native-host/tests/pixel_windows.py"
+        "native-host/tests/pixel_windows.py",
+        "native-host/tests/test_build_contract.py",
+        "docs/windows-obs-parity-execution.md"
       ],
       "depends_on": [],
       "acceptance": [
@@ -1322,8 +1325,8 @@
       ],
       "blocker": "",
       "next_step": "读 rc.65（run 44557855349 / 8603c025）回执，判断 [5092,6176]->[6176] 是混音辅助进程还是收尾重混退出；随后从栈顶 5237e79 以 rc.66、soak_minutes=0 复跑，确认 TAKE、发布视频、逐轨增益、NSIS 同轮齐全后再合并",
-      "updated_at": "2026-11-19T23:54:56+08:00",
-      "last_note": "rc.65 仍在运行；本轮把混音辅助进程与混音源用回环端口绑定：ProductAudioProgress 增加 mixer_port、audioSources 行新增 mixerPort，门禁净化命令行保留 tcp:<port> 并把归属断言改为混音端口多重集相等；同时记录 otherHelpers（录像收尾重混）与夹具发布进程状态，避免把一次性子进程或夹具断流算作混音缺失"
+      "updated_at": "2026-11-19T23:57:09+08:00",
+      "last_note": "补齐 V51-008 实际改动范围：混音端口需要 product_scene.cpp 记录监听端口、test_build_contract.py 承载门禁契约与单元测试，两者此前未写进声明范围"
     },
     {
       "id": "COORD-008",
@@ -4533,6 +4536,16 @@
         "codex/v51-r3-output c6ffb7f；build contract 52/52；Fedora 容器 -fsyntax-only 通过 product_scene.cpp/product_window.cpp；栈已重放到 #67 c6ffb7f：#70 b3c16b5、#71 b1df906、#74 4b9d9cc、#75 90aff05、#76 5237e79（均已 --force-with-lease 推送）"
       ],
       "git_revision": "b45dd8690cf1b56faaeff848ef6ce661e46a7454"
+    },
+    {
+      "sequence": 261,
+      "at": "2026-11-19T23:57:09+08:00",
+      "agent": "qwen38-next-v51-20261119-01",
+      "task": "V51-008",
+      "action": "update",
+      "note": "补齐 V51-008 实际改动范围：混音端口需要 product_scene.cpp 记录监听端口、test_build_contract.py 承载门禁契约与单元测试，两者此前未写进声明范围",
+      "evidence": [],
+      "git_revision": "832c25e175d281ced0ca49784dd9df8e348f994b"
     }
   ]
 }

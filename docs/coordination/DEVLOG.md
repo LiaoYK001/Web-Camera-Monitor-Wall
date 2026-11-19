@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 260 · 2026-11-19T23:54:56+08:00（UTC+08）
+> 快照版本 261 · 2026-11-19T23:57:09+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #261 · 2026-11-19T23:57:09+08:00 · update
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：补齐 V51-008 实际改动范围：混音端口需要 product_scene.cpp 记录监听端口、test_build_contract.py 承载门禁契约与单元测试，两者此前未写进声明范围
+- 证据：无新增验收证据
+- 源码：`832c25e175d281ced0ca49784dd9df8e348f994b`
 ## #260 · 2026-11-19T23:54:56+08:00 · update
 
 - Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
