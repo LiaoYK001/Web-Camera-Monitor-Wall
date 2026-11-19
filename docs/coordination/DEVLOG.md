@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 257 · 2026-11-19T22:35:30+08:00（UTC+08）
+> 快照版本 258 · 2026-11-19T22:55:36+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #258 · 2026-11-19T22:55:36+08:00 · update
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：rc.63 的失败是门禁自身的缺陷：副连接包探针用 %-格式化生成含 % 的 MediaMTX 读取区间，抛 ValueError 并因两个探针完成后才写回执而丢掉已跑完的 6 秒帧窗口结果。已改为字符串拼接读取区间、诊断整体 try/except 记为 diagnosticFailed 并保留 readInterval，主断言不再受诊断影响。
+- 证据：rc.63 run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44544305133 @ dab2e0fa3e87db7f11d0331f6ccf2043266be9f1：42 项通过，failurePhase=program-streaming，detail 'ValueError: unsupported format character ':' (0x3a) at index 4'，无 programStreamVideoProbe；同轮通过项含录像 13558804 字节/19 秒、录像双音、发布流双音 1384.1/907.3、streamConnected true、laggedFrames 0；codex/v51-r3-output@c28ddea；test_build_contract.py 50/50（新增假 ffprobe 区间/关键帧计数/缺可执行文件三条断言）；栈已再次同步推送：#70 fdf4c9c、#71 3c31f7c、#74 54fc756、#75 f18fe12、#76 0a7726a（顶层完整 SHA 0a7726a983694bd62621e46617d90b3c0f3ccb2b）；run 44548882087 = 5.1.0-rc.64 @ 0a7726a983694bd62621e46617d90b3c0f3ccb2b（soak_minutes=0）in_progress；回执目录将落在 mktemp 的 /tmp/rc64.*；门禁 /tmp/watch64.log
+- 源码：`39266e04bafb177c65cd54dc538740c6a8859473`
 ## #257 · 2026-11-19T22:35:30+08:00 · update
 
 - Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`

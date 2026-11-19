@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 257,
-  "updated_at": "2026-11-19T22:35:30+08:00",
+  "revision": 258,
+  "updated_at": "2026-11-19T22:55:36+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1311,12 +1311,15 @@
         "run 44544305133 = 5.1.0-rc.63 @ dab2e0fa3e87db7f11d0331f6ccf2043266be9f1（codex/v51-r4-legacy-import，soak_minutes=0）in_progress",
         "本机实验目录 /tmp/latejoin.elgB；mediamtx v1.18.2（与 docker/Dockerfile 固定版本一致），配置与 product_output.cpp::media_mtx_config 同形状；旧探针 returnCode 0/jsonFrames 0；新探针 frames 148、monotonic true、span 4.9 s、firstDecodableFrameMs 1977、fps 30.2；packetProbe packets 181/keyframes 3/firstPacketIsKey false/firstKeyPacketPts 1.0676/keyGaps [2.0, 2.0]",
         "codex/v51-r3-output@b893905；test_build_contract.py 49/49（在 .worktrees/v51）；已 rebase 推送：#70 67699ee、#71 66facec、#74 893e3af、#75 f62004c、#76 8023fff（顶层完整 SHA 8023fff7cbc147cc38d0c5f3e838c16dd7c6827e）",
-        "rc.63 仍在跑 run 44544305133 @ dab2e0fa3e87db7f11d0331f6ccf2043266be9f1，回执将绑定该 SHA；b893905 之后仅新增测试文件，不改门禁行为。非 v51 worktree 未初始化 OBS 子模块时 test_lock_matches_pinned_obs_and_only_needed_dependencies 报缺文件，与本轮改动无关（属 #69 待补）。"
+        "rc.63 仍在跑 run 44544305133 @ dab2e0fa3e87db7f11d0331f6ccf2043266be9f1，回执将绑定该 SHA；b893905 之后仅新增测试文件，不改门禁行为。非 v51 worktree 未初始化 OBS 子模块时 test_lock_matches_pinned_obs_and_only_needed_dependencies 报缺文件，与本轮改动无关（属 #69 待补）。",
+        "rc.63 run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44544305133 @ dab2e0fa3e87db7f11d0331f6ccf2043266be9f1：42 项通过，failurePhase=program-streaming，detail 'ValueError: unsupported format character ':' (0x3a) at index 4'，无 programStreamVideoProbe；同轮通过项含录像 13558804 字节/19 秒、录像双音、发布流双音 1384.1/907.3、streamConnected true、laggedFrames 0",
+        "codex/v51-r3-output@c28ddea；test_build_contract.py 50/50（新增假 ffprobe 区间/关键帧计数/缺可执行文件三条断言）；栈已再次同步推送：#70 fdf4c9c、#71 3c31f7c、#74 54fc756、#75 f18fe12、#76 0a7726a（顶层完整 SHA 0a7726a983694bd62621e46617d90b3c0f3ccb2b）",
+        "run 44548882087 = 5.1.0-rc.64 @ 0a7726a983694bd62621e46617d90b3c0f3ccb2b（soak_minutes=0）in_progress；回执目录将落在 mktemp 的 /tmp/rc64.*；门禁 /tmp/watch64.log"
       ],
       "blocker": "",
-      "next_step": "读 rc.63（dab2e0f）回执：先看 programStreamVideoProbe.packetProbe 与 frames/firstDecodableFrameMs；若 TAKE、发布视频、逐轨增益、NSIS 安装同轮齐全，则把 #67→#70→#71→#74→#75→#76 合入 dev，再用 dev 头派发 soak_minutes=120 候选并冻结、发布 prerelease。",
-      "updated_at": "2026-11-19T22:35:30+08:00",
-      "last_note": "追加一个用假 ffprobe 直接驱动 published_video_window() 的单元测试，锁定字符串 pts_time 解析、N/A 记入 unparsableStamps 而非计数、stderr 噪声不阻塞窗口；栈已再次同步到新基线。"
+      "next_step": "读 rc.64 回执的 programStreamVideoProbe：frames>=10、monotonic、ptsSpanSeconds>=2、packetProbe.keyframes>=2 视为发布视频通过，随后核对 program-track-controls、program-track-offset、program-publish-disconnect 与 NSIS 安装是否同轮齐全；齐全才把 #67→#76 合入 dev 并派发 soak_minutes=120 候选。",
+      "updated_at": "2026-11-19T22:55:36+08:00",
+      "last_note": "rc.63 的失败是门禁自身的缺陷：副连接包探针用 %-格式化生成含 % 的 MediaMTX 读取区间，抛 ValueError 并因两个探针完成后才写回执而丢掉已跑完的 6 秒帧窗口结果。已改为字符串拼接读取区间、诊断整体 try/except 记为 diagnosticFailed 并保留 readInterval，主断言不再受诊断影响。"
     },
     {
       "id": "COORD-008",
@@ -4486,6 +4489,20 @@
         "rc.63 仍在跑 run 44544305133 @ dab2e0fa3e87db7f11d0331f6ccf2043266be9f1，回执将绑定该 SHA；b893905 之后仅新增测试文件，不改门禁行为。非 v51 worktree 未初始化 OBS 子模块时 test_lock_matches_pinned_obs_and_only_needed_dependencies 报缺文件，与本轮改动无关（属 #69 待补）。"
       ],
       "git_revision": "8a9be92ced0ec3b036f97fb3debac6e00faf3a3b"
+    },
+    {
+      "sequence": 258,
+      "at": "2026-11-19T22:55:36+08:00",
+      "agent": "qwen38-next-v51-20261119-01",
+      "task": "V51-008",
+      "action": "update",
+      "note": "rc.63 的失败是门禁自身的缺陷：副连接包探针用 %-格式化生成含 % 的 MediaMTX 读取区间，抛 ValueError 并因两个探针完成后才写回执而丢掉已跑完的 6 秒帧窗口结果。已改为字符串拼接读取区间、诊断整体 try/except 记为 diagnosticFailed 并保留 readInterval，主断言不再受诊断影响。",
+      "evidence": [
+        "rc.63 run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44544305133 @ dab2e0fa3e87db7f11d0331f6ccf2043266be9f1：42 项通过，failurePhase=program-streaming，detail 'ValueError: unsupported format character ':' (0x3a) at index 4'，无 programStreamVideoProbe；同轮通过项含录像 13558804 字节/19 秒、录像双音、发布流双音 1384.1/907.3、streamConnected true、laggedFrames 0",
+        "codex/v51-r3-output@c28ddea；test_build_contract.py 50/50（新增假 ffprobe 区间/关键帧计数/缺可执行文件三条断言）；栈已再次同步推送：#70 fdf4c9c、#71 3c31f7c、#74 54fc756、#75 f18fe12、#76 0a7726a（顶层完整 SHA 0a7726a983694bd62621e46617d90b3c0f3ccb2b）",
+        "run 44548882087 = 5.1.0-rc.64 @ 0a7726a983694bd62621e46617d90b3c0f3ccb2b（soak_minutes=0）in_progress；回执目录将落在 mktemp 的 /tmp/rc64.*；门禁 /tmp/watch64.log"
+      ],
+      "git_revision": "39266e04bafb177c65cd54dc538740c6a8859473"
     }
   ]
 }
