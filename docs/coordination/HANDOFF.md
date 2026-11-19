@@ -1,7 +1,7 @@
 # 当前交接 / Current handoff
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 259 · 2026-11-19T23:43:15+08:00（UTC+08）
+> 快照版本 260 · 2026-11-19T23:54:56+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -13,7 +13,7 @@
 - **HOLD-001 · 暂停**；负责人：未认领；阻塞：既有用户决定暂停 Android/容器候选同步与发布；扩展原生平台按主要版本节点安排。；下一步：保持暂停；不作为当前 Windows 预览发布阻塞项。
 - **V51-005 · 进行中**；负责人：deepseek-v51-20261118-01；阻塞：无；下一步：#67 合入 dev 后 rebase 到 dev（publish_candidate.py 为 add/add，保留 #69 的超集实现），再复跑发布链测试；发布链先验证到待发布状态，不自动发布
 - **V51-007 · 进行中**；负责人：deepseek-v51-20261118-01；阻塞：无；下一步：#67 合入 dev 后把 #70 base 改为 dev 并派发带 backup_restore_windows 门禁的 Windows 运行。
-- **V51-008 · 进行中**；负责人：qwen38-next-v51-20261119-01；阻塞：无；下一步：读 rc.65 的 audioMixHelperWatch：若同一 FFmpeg 混音在停止前就消失且宿主仍声明 mixers 2，则问题在混音生命周期而非 Program 停止路径，按身份定位到 product_scene/product_output 的混音持有；若只在停止后消失，则检查停止路径是否释放了仍需的混音或未回收退出码。同轮继续核对 NSIS 安装是否跑到，齐全才合入 dev 并派发 soak_minutes=120。
+- **V51-008 · 进行中**；负责人：qwen38-next-v51-20261119-01；阻塞：无；下一步：读 rc.65（run 44557855349 / 8603c025）回执，判断 [5092,6176]->[6176] 是混音辅助进程还是收尾重混退出；随后从栈顶 5237e79 以 rc.66、soak_minutes=0 复跑，确认 TAKE、发布视频、逐轨增益、NSIS 同轮齐全后再合并
 - **V51-010 · 进行中**；负责人：deepseek-v51-20261118-01；阻塞：无；下一步：随完整候选（含 #71）派发带 native-product-lan.json 的 Windows 运行；真实第二台设备验收仍待用户目标机
 - **V51-011 · 进行中**；负责人：deepseek-v51-20261118-01；阻塞：无；下一步：等 #67 合入 dev 后把 f0eb858 迁到 codex/v51-r5-soak 并转 dev 开 PR，随后随完整候选派发 soak_minutes=120 的运行
 - **V51-012 · 进行中**；负责人：deepseek-v51-20261118-01；阻塞：无；下一步：候选 run 结束后填入实际摘要并开 docs PR / fill real receipts after the candidate run and open the docs PR
@@ -22,6 +22,6 @@
 
 ## 最近一次同步
 
-rc.64 通过 49 项：关键帧窗口读取在 Windows 首次通过（首次推流 89 帧/跨度 3.866s/首个可解码帧 2437ms/包探针 3 个关键帧包），恢复推流 65 帧/跨度 2.2s 通过，逐轨静音·增益·偏移首次取得 Windows 声学实测。新的第一失败为辅助进程归属：停止 Program 输出后两个宿主拥有的 FFmpeg 混音进程只剩一个，而宿主仍报 mixers: 2、processExitCode: -1。已加身份观察（阶段开始/停止前/停止后三采样 + 脱敏命令行 + 宿主声明），断言仍为精确 PID 集合相等。
+rc.65 仍在运行；本轮把混音辅助进程与混音源用回环端口绑定：ProductAudioProgress 增加 mixer_port、audioSources 行新增 mixerPort，门禁净化命令行保留 tcp:<port> 并把归属断言改为混音端口多重集相等；同时记录 otherHelpers（录像收尾重混）与夹具发布进程状态，避免把一次性子进程或夹具断流算作混音缺失
 
 以任务中的验收条件决定完成；没有 Windows/硬件/发布证据时保持对应事项开放。

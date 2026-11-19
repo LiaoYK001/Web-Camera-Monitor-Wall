@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 259 · 2026-11-19T23:43:15+08:00（UTC+08）
+> 快照版本 260 · 2026-11-19T23:54:56+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #260 · 2026-11-19T23:54:56+08:00 · update
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：rc.65 仍在运行；本轮把混音辅助进程与混音源用回环端口绑定：ProductAudioProgress 增加 mixer_port、audioSources 行新增 mixerPort，门禁净化命令行保留 tcp:<port> 并把归属断言改为混音端口多重集相等；同时记录 otherHelpers（录像收尾重混）与夹具发布进程状态，避免把一次性子进程或夹具断流算作混音缺失
+- 证据：codex/v51-r3-output c6ffb7f；build contract 52/52；Fedora 容器 -fsyntax-only 通过 product_scene.cpp/product_window.cpp；栈已重放到 #67 c6ffb7f：#70 b3c16b5、#71 b1df906、#74 4b9d9cc、#75 90aff05、#76 5237e79（均已 --force-with-lease 推送）
+- 源码：`b45dd8690cf1b56faaeff848ef6ce661e46a7454`
 ## #259 · 2026-11-19T23:43:15+08:00 · update
 
 - Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`

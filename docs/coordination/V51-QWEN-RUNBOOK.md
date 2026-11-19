@@ -93,6 +93,17 @@ rc.61（run 44524750280）与 rc.62（run 44534272424）连续两轮停在 `prog
 4. `firstDecodableFrameMs` 明显大于窗口长度的一半以上：把它和 `windowTimedOut` 一起读，区分“等到下一个 IDR”与“根本没等到”。
 
 
+### rc.64 起：Program 输出后混音辅助进程的归属 / mixer helper ownership since rc.64
+
+rc.64（run 44548882087）通过 49 项后停在 `program-publish-disconnect`：`stopping Program output changed the Scene audio mixers ([5092, 6176] -> [6176])`，同轮 OBS 日志里混音媒体源 `Disconnected. Reconnecting` 9 次、`MP: Failed to open media: tcp://127.0.0.1:<port>` 8 次。rc.65（run 44557855349，源码 `8603c025`）带的是身份观察：每个 FFmpeg 子进程的净化命令行、宿主 `audioSources` 声明、以及阶段开始/停止前/停止后三次采样。读它时按这个顺序：
+
+1. 先看丢失 PID 的身份：含 `amix` 与回环监听地址的是混音辅助进程；含 `-i <private>/*.mkv` 且没有回环端口的是 `product_output.cpp` 在录像收尾时启动的一次性重混子进程。后者正常退出不是产品缺陷，而是原 PID 集合断言多计了一个非混音子进程。
+2. 再看它是在停止之前还是之后消失：`gone before the stop` 非空说明问题发生在推流/中继阶段，而不是停止 Program 输出时。
+3. 再看宿主声明：`available` 仍为 true 而该进程已经不存在，是产品没有察觉辅助进程退出（监督缺口）；`available` 为 false 且带 `processExitCode`，是产品在如实报告失败。
+4. 同轮 `fixturePublishers` 与 `currentBootObsMarkers` 用来排除夹具侧断流；不能把夹具断流当成产品混音缺陷。
+
+从 `c6ffb7f` 起，宿主在 `audioSources` 行里给出该混音监听的回环端口 `mixerPort`，门禁把命令行里的回环端口保留为 `tcp:<port>`（远程端点仍整体脱敏），断言改为“混音端口多重集相等”：每个声明端口恰好一个存活辅助进程，禁止同端口重复与未声明端口，`otherHelpers`（无端口的一次性子进程）单独记录。下一步从栈顶 `5237e79`（`codex/v51-r4-legacy-import`）以 `5.1.0-rc.66`、`soak_minutes=0` 复跑；只有 TAKE、发布视频、逐轨增益与完整 NSIS 在同一轮齐全，才推进合并与冻结候选。若 rc.66 显示某声明端口无存活辅助进程，才在产品侧补混音监督（在同一端口重新拉起并保持源设置），并让该断言继续覆盖重复与游离辅助进程。
+
 ## 4. 全栈通过后走到成品
 
 | 次序 | 要完成的动作 | 可接受的证据 |
