@@ -52,10 +52,11 @@ python3 "$project/scripts/v51-ci-gate.py" 44385767337 \
 
 ## 3. 逐轨增益与其后续失败面（历史起点 rc.59）
 
-**当前轮次 / current round**：rc.70 run [44599567300](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44599567300)，
-源码 `ed25609c58933b10c52f4f86fd98369ad6d0d489`（栈顶 `codex/v51-r4-legacy-import`），`product_mode=true complete=true soak_minutes=0`。
-上一轮 rc.69 的安装态门禁已把逐轨增益测到比值 1.01/1.005、降低后 0.201，增益本身不再阻塞；
-本轮要读的是发布开关的窗口判定与后续从未执行过的 restore-pair、legacy-import、LAN、updater、upgraded-ui。
+**当前轮次 / current round**：rc.71 run [44609775780](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44609775780)，
+源码 `cdfe8182a4928a75d4eff31b7afe0b110f3bde92`（栈顶 `codex/v51-r4-legacy-import`），`product_mode=true complete=true soak_minutes=0`。
+已确认：逐轨增益比值 1.01/1.005、降低后 0.201，TAKE 像素、录像/发布双音、总线隔离、逐轨静音/偏移全部通过；
+阻塞点是中继断线后恢复推流时 UI Automation 拒绝被拥有窗口，本轮要读的是拒绝的具体原因
+（`window-handle-gone` 还是 `window-pid-mismatch`，以及宿主上报句柄的现场存活判定）。
 
 2026-11-19 的直接证据为 [rc.59](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44385767337) 的 `native-product-entry-ui.json`。46 项通过后，`program-track-controls` 失败。Portable 五路 HEVC、Program MP4、回环 RTMP 后通过 RTSP 解码双音、总线隔离、逐轨静音、ONVIF 模拟设备操作与拒绝结果已记录。安装步骤跳过，因此成对恢复、旧数据导入和 LAN 没有本轮安装证据。若 GitHub 有更新的失败，以更新回执的第一项为准。
 
@@ -180,6 +181,29 @@ rc.69（run 44587525224，栈顶 `e955d9e`）第一次跑到 NSIS 安装态门�
 `native-host/tests/test_build_contract.py`：三种结局（短暂不可寻址后成功、真实拒绝不重试、
 始终不可用仍失败）与空消息补全，把 `product_windows.py` 换回修复前版本会在“仍残留裸 assert”
 上失败并列出 2686/2703 两行。
+
+### rc.70 起：UIA 拒绝要分开发回“句柄没了”和“换了进程” / a refusal must separate a gone handle from another process (since rc.70)
+
+rc.70（run 44599567300，源码 `ed25609`）在同一处再次失败，但新加的判定已经缩小范围：
+
+- `failureDetail` = `the product publish control could not resume Program publishing after the relay loss`，
+  即失败的是断线后的第二次推流开关，不是第一次开播。
+- `productControlWaits[0] = {recoveredAfterAttempts: 0, unusableAttempts: [], lastUnavailable: null}`，
+  即首次调用就被拒绝，**不是**本次状态文件不可用（`lastStateObservation` 只在别处写）。
+- `lastUiFailure` 仍只有 `initialize/product-window`，因为 `product-ui.ps1` 对
+  `AutomationElement::FromHandle` 返回空与 `Current.ProcessId -ne FrontendPid` 抛同一个 code，
+  而该 code 在 `$stage` 赋值之前设置，所以看起来和启动阶段 `wait_for(ui("inspect"))` 的正常等待一样。
+
+从 `460789d` 起两者分开发回：`window-handle-gone`（宿主上报的句柄已不是窗口）与
+`window-pid-mismatch`（该句柄属于别的进程），并在触碰任何控件之前最多再问三次
+（400 ms 间隔，点击尚未发生，不会重复推流）。Python 侧把 `window_owner()` 的现场判定
+（`gone` / `other-process(N)` / `frontend`）一并写进 `lastUiFailure.reportedHandles`。
+
+读法：`window-handle-gone` 且 `reportedHandles` 为 `gone` → 宿主窗口在产品进程存活期间被销毁或重建，
+属产品侧，需要继续查 Program 输出恢复路径里谁重建了顶层窗口；`window-pid-mismatch` → 句柄被别的进程
+占用，属装置侧读到过期句柄；若下一次变成 `recoveredAfterAttempts > 0`，说明只是短暂不可寻址，
+门禁已能自愈。`native-host/tests/test_build_contract.py` 的静态契约要求两条拒绝路径都带
+`reportedHandles`，并检查 ps1 在 `Invoke-Control` 之前区分这两种 code。
 
 ### 公开仓库审计：测试夹具里的 RTSP  userinfo 必须登记 / test fixtures must declare their RTSP userinfo
 

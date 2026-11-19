@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 271 · 2026-11-20T03:34:48+08:00（UTC+08）
+> 快照版本 272 · 2026-11-20T04:33:37+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #272 · 2026-11-20T04:33:37+08:00 · update
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：rc.70（run 44599567300，源码 ed25609c…）再次停在 program-publish-disconnect，但新判定把范围缩小了：failureDetail 明确是断线后恢复推流的第二次开关；productControlWaits 显示首次调用即被 UI Automation 拒绝（unusableAttempts 空、lastUnavailable=null），不是本次 product-state.json 不可用；lastUiFailure 仍只有共享的 initialize/product-window，因为 product-ui.ps1 对 FromHandle 返回空与 Current.ProcessId≠FrontendPid 抛同一个 code，且该 code 在  赋值前设置，与启动阶段 wait_for(ui('inspect')) 的正常等待无法区分。修复 460789d：拒绝分开发回 window-handle-gone / window-pid-mismatch，并在触碰任何控件之前最多再问三次（400 ms，点击尚未发生）；Python 把 window_owner() 的现场判定写进 lastUiFailure.reportedHandles（gone/other-process(N)/frontend）。发布验收与阈值不变。栈再次重放：#70 3e485f9、#71 6c86adb、#74 bab66ab、#75 3bb51fa、#76 cdfe818（顶层完整 SHA cdfe8182a4928a75d4eff31b7afe0b110f3bde92，相对 ed25609 只差 3 个文件 37+/5-）。
+- 证据：rc.70 回执 /tmp/rc70.aZVt/：installed-ui passed=false failurePhase=program-publish-disconnect failureDetail='the product publish control could not resume Program publishing after the relay loss' lastCheckpoint=program-publish-disconnect-reported publishDisconnectError=publish-relay-exited publishRelayPid=7824 productControlWaits=[{label:'publish again after a relay loss',recoveredAfterAttempts:0,unusableAttempts:[],lastUnavailable:null,lastUiFailure:{stage:'initialize',code:'product-window'}}] lastStateObservation={code:'state-from-other-boot',pidMatched:false,bootIdMatched:false}（该条来自结束时的观察，不属开关调用）；entry-ui passed=true、restore 通过、size-split 含 installedTree；restore-pair、legacy-import、lan、updater、upgraded-ui 仍未执行。本机 test_build_contract 55 OK（新契约在修复前的 product_windows.py 上失败于 reportedHandles 计数 1≠2；在修复前的 product-ui.ps1 上缺少两个区分 code），git diff --check 干净，无新增 rtsp userinfo。rc.71 run 44609775780 已派发，监视 /tmp/watch71.log。
+- 源码：`37caa067b4f74f82a2d4409d905dfeadd21caa4d`
 ## #271 · 2026-11-20T03:34:48+08:00 · update
 
 - Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
