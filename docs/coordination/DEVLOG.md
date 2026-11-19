@@ -1,12 +1,24 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 265 · 2026-11-20T01:27:37+08:00（UTC+08）
+> 快照版本 267 · 2026-11-20T01:35:30+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #267 · 2026-11-20T01:35:30+08:00 · update
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：进行中轮：rc.68 run 44577184643（源码 2c0e99dc04a81fd8d92f878a5e2f6da682507420，soak_minutes=0）仍在编译 OBS，沿用该 run ID。本轮补上修复前失败、修复后通过的本地回归 c64a76b，并在 Fedora 用同一份 rc.67 脱敏回执复跑得出台账期望结论：三个采样 unserved 均为空、停止后 live==claimed，即 rc.67 的停止本不应判为丢 feeder。
+- 证据：rc.67 run 44568325933 首个失败点 phase=program-publish-disconnect、detail=TypeError: list indices must be integers or slices, not str（门禁把混音观察返回的 PID 列表当成回执行），已由 0874fd4 修复；该轮 49 项通过并保留 TAKE、双总线隔离、逐轨静音、逐轨增益 0.2007、录像失败路径、设备操作入口、发布与恢复解码帧等有效证据。本机 test_build_contract.py 53/53 通过；把 product_windows.py 换回修复前版本（deaec20）后新回归失败于 AssertionError: [12, 13] is not an instance of <class dict>，换回修复版即通过。Fedora 容器 v51qt（fedora:44，Python 3.14.10）内 -k mix 3 项通过，脱敏回执回放：publish-disconnect-start live=[51078,51389] claimed=[51389] unserved=[] orphan=[51078]；before/after stop live=[51389] claimed=[51389] unserved=[] orphan=[]；converged=True；MIX-PORT VERDICT: PASS。链式同步后 #67 c64a76b、#70 0f3f078、#71 3a282f8、#74 b7f0f01、#75 f964680、#76 a71d561（栈顶自身提交数仍 24，相对 2c0e99d 只多 1 个测试文件 80 行）。
+- 源码：`1dbe364a10867dab7cee08f1692d46431de608d4`
+## #266 · 2026-11-20T01:35:22+08:00 · update
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：进行中轮：rc.68 run 44577184643（源码 2c0e99dc04a81fd8d92f878a5e2f6da682507420，soak_minutes=0，17:26Z 起仍在编译 OBS），沿用该 run ID。本轮补上可在修复前失败、修复后通过的本地回归 c64a76b：用 rc.67 脱敏回执行在本地回放取状态-记录-比较链路；并在 Fedora 容器 v51qt 用同一份脱敏回执复跑得出台账期望结论（三个采样 unserved 均为空、停止后 live==claimed，即 rc.67 的停止本不应判为丢 feeder）。
+- 证据：rc.67 run 44568325933 首个失败点 phase=program-publish-disconnect、detail=TypeError: list indices must be integers or slices, not str（门禁把混音观察返回的 PID 列表当成回执行），已由 0874fd4 修复；该轮 49 项通过并保留 TAKE、双总线隔离、逐轨静音、逐轨增益 0.2007、录像失败路径、设备操作入口、发布/恢复解码帧等有效证据。本机 test_build_contract.py 53/53 通过；把 product_windows.py 换回修复前版本（deaec20）后新回归失败于 ，换回修复版即通过。Fedora 容器 v51qt（fedora:44，Python 3.14.10）内  3 项通过，脱敏回执回放输出：publish-disconnect-start live=[51078,51389] claimed=[51389] unserved=[] orphan=[51078]、before/after stop live=[51389] claimed=[51389] unserved=[] orphan=[]、converged=True、MIX-PORT VERDICT: PASS。链式同步后 #67 c64a76b、#70 0f3f078、#71 3a282f8、#74 b7f0f01、#75 f964680、#76 a71d561（栈顶自身提交数仍 24，相对 2c0e99d 只多 1 个测试文件 80 行）。
+- 源码：`1dbe364a10867dab7cee08f1692d46431de608d4`
 ## #265 · 2026-11-20T01:27:37+08:00 · update
 
 - Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`

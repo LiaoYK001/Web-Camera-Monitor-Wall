@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 265,
-  "updated_at": "2026-11-20T01:27:37+08:00",
+  "revision": 267,
+  "updated_at": "2026-11-20T01:35:30+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1325,12 +1325,14 @@
         "codex/v51-r3-output 89fe334；rc.64 回执 observedState.audioSources 1 条声明（available true / processExitCode -1 / mixers 2）与 1 个存活辅助进程；本机 /tmp/mixprobe2.sh 记录 Broken pipe 退出与同端口重新监听；栈已重放推送：#70 6fb81b2、#71 c39afab、#74 c6ae922、#75 56b6d33、#76 496be55（顶层完整 SHA 496be556b6b642eb36a7b13170e629d893df08f7）；test_build_contract.py 52/52",
         "run 44563580338 head 496be556b6b642eb36a7b13170e629d893df08f7 与栈顶一致；rc.65 无产物（取消于恢复步骤）；门禁 watch66 日志 /tmp/watch66.log",
         "本地 native-host/tests/test_build_contract.py 52/52、native-host/tests/test_*.py 全套通过（两个需显式 --probe 的真机探针除外）、git diff --check 干净；真实形状 485 字符命令行本机验证端口 58964 在截断后仍可读、URL 与私有根不外泄。rc.67 run 44568325933 派发源码 c29227a8a5bd0e4bce697aad083506d6528dd554（栈顶，含 329178b），soak_minutes=0。#67 头 deaec20、#70 e1c62b0、#71 080bd45、#74 80a0d2d、#75 078fd32、#76 a469db1 已链式同步。NSIS 安装态、两小时长稳与目标机 OBS 对照仍未执行。",
-        "rc.67 回执 /tmp/rc67.0oFX/native-product-integration-receipts-5.1.0-rc.67/native-product-entry-ui.json：programTrackGain gainOne 2165.6/2159.0、gainPointTwo 2160.3/433.6（比值 0.2007）、programTrackMute 880Hz=0.1、programBusIsolation busTwo 440Hz=2889.5/1200Hz=0.5 与 busThree 1200Hz=2542.5/440Hz=0.7、recordingFailureReceipt recording-directory-failed、deviceOperations 有 ONVIF probe/GetProfiles；发布流探针 firstDecodableFrameMs 3452（首次）/1844（恢复）、windowTimedOut true、returnCode 1，伴随 h264 中途加入解码告警。本机 test_build_contract.py 52/52、native-host/tests/test_*.py 全套通过（两个需显式 --probe 的真机探针除外）、git diff --check 干净。链式同步后 #67 0874fd4、#70 559a0f9、#71 dd92696、#74 33ce403、#75 c5ed74f、#76 2c0e99d（各分支自身提交数不变）。rc.68 run 44577184643 源码 2c0e99dc04a81fd8d92f878a5e2f6da682507420、soak_minutes=0。NSIS 安装态、两小时长稳与目标机 OBS 对照仍未执行；本机无 PowerShell，NSIS 脚本只静态核对了 Python 参数与文件存在性。"
+        "rc.67 回执 /tmp/rc67.0oFX/native-product-integration-receipts-5.1.0-rc.67/native-product-entry-ui.json：programTrackGain gainOne 2165.6/2159.0、gainPointTwo 2160.3/433.6（比值 0.2007）、programTrackMute 880Hz=0.1、programBusIsolation busTwo 440Hz=2889.5/1200Hz=0.5 与 busThree 1200Hz=2542.5/440Hz=0.7、recordingFailureReceipt recording-directory-failed、deviceOperations 有 ONVIF probe/GetProfiles；发布流探针 firstDecodableFrameMs 3452（首次）/1844（恢复）、windowTimedOut true、returnCode 1，伴随 h264 中途加入解码告警。本机 test_build_contract.py 52/52、native-host/tests/test_*.py 全套通过（两个需显式 --probe 的真机探针除外）、git diff --check 干净。链式同步后 #67 0874fd4、#70 559a0f9、#71 dd92696、#74 33ce403、#75 c5ed74f、#76 2c0e99d（各分支自身提交数不变）。rc.68 run 44577184643 源码 2c0e99dc04a81fd8d92f878a5e2f6da682507420、soak_minutes=0。NSIS 安装态、两小时长稳与目标机 OBS 对照仍未执行；本机无 PowerShell，NSIS 脚本只静态核对了 Python 参数与文件存在性。",
+        "rc.67 run 44568325933 首个失败点 phase=program-publish-disconnect、detail=TypeError: list indices must be integers or slices, not str（门禁把混音观察返回的 PID 列表当成回执行），已由 0874fd4 修复；该轮 49 项通过并保留 TAKE、双总线隔离、逐轨静音、逐轨增益 0.2007、录像失败路径、设备操作入口、发布/恢复解码帧等有效证据。本机 test_build_contract.py 53/53 通过；把 product_windows.py 换回修复前版本（deaec20）后新回归失败于 ，换回修复版即通过。Fedora 容器 v51qt（fedora:44，Python 3.14.10）内  3 项通过，脱敏回执回放输出：publish-disconnect-start live=[51078,51389] claimed=[51389] unserved=[] orphan=[51078]、before/after stop live=[51389] claimed=[51389] unserved=[] orphan=[]、converged=True、MIX-PORT VERDICT: PASS。链式同步后 #67 c64a76b、#70 0f3f078、#71 3a282f8、#74 b7f0f01、#75 f964680、#76 a71d561（栈顶自身提交数仍 24，相对 2c0e99d 只多 1 个测试文件 80 行）。",
+        "rc.67 run 44568325933 首个失败点 phase=program-publish-disconnect、detail=TypeError: list indices must be integers or slices, not str（门禁把混音观察返回的 PID 列表当成回执行），已由 0874fd4 修复；该轮 49 项通过并保留 TAKE、双总线隔离、逐轨静音、逐轨增益 0.2007、录像失败路径、设备操作入口、发布与恢复解码帧等有效证据。本机 test_build_contract.py 53/53 通过；把 product_windows.py 换回修复前版本（deaec20）后新回归失败于 AssertionError: [12, 13] is not an instance of <class dict>，换回修复版即通过。Fedora 容器 v51qt（fedora:44，Python 3.14.10）内 -k mix 3 项通过，脱敏回执回放：publish-disconnect-start live=[51078,51389] claimed=[51389] unserved=[] orphan=[51078]；before/after stop live=[51389] claimed=[51389] unserved=[] orphan=[]；converged=True；MIX-PORT VERDICT: PASS。链式同步后 #67 c64a76b、#70 0f3f078、#71 3a282f8、#74 b7f0f01、#75 f964680、#76 a71d561（栈顶自身提交数仍 24，相对 2c0e99d 只多 1 个测试文件 80 行）。"
       ],
       "blocker": "",
-      "next_step": "读 rc.68 run 44577184643：要求同一轮内 TAKE、发布视频、逐轨增益、混音端口收敛与完整 NSIS 安装态（installed-ui/nsis/restore-pair/legacy-import/lan/updater/upgraded-ui）齐全，齐全后按 #67→#70→#71→#74→#75→#76 合入 dev 并以 soak_minutes=120 冻结候选；否则一轮只处理一个已验证失败点。",
-      "updated_at": "2026-11-20T01:27:37+08:00",
-      "last_note": "rc.67（run 44568325933、源码 c29227a）49 项通过但仍失败于门禁：混音观察返回 PID 列表而端口比较按回执行读取 row[\"hostClaims\"]，抛 TypeError；观察现返回记录行并断言行形状（修复 0874fd4）。该轮端口读法已生效：start 端口 51078/51389、停止前后 51389、宿主声明混音 mixerPort=51389，TAKE/双总线隔离/逐轨静音/逐轨增益 0.2007/录像失败路径/设备操作入口均已落进回执。rc.68 run 44577184643 已派发。"
+      "next_step": "rc.68 完成后执行：python3 scripts/v51-ci-gate.py 44577184643 --sha 2c0e99dc04a81fd8d92f878a5e2f6da682507420 --version 5.1.0-rc.68 ；通过则核对同 SHA 的 nsis/installed-ui/restore-pair/legacy-import/lan/updater/upgraded-ui 回执并按 #67→#70→#71→#74→#75→#76 合入 dev，再从集成源码派发 soak_minutes=120 冻结候选；若仍因纯脚本问题失败，则先加编译前的脚本自检（py_compile + test_build_contract）或复用已生成 runtime 的 Windows 快速复测入口，避免每次重编 OBS。",
+      "updated_at": "2026-11-20T01:35:30+08:00",
+      "last_note": "进行中轮：rc.68 run 44577184643（源码 2c0e99dc04a81fd8d92f878a5e2f6da682507420，soak_minutes=0）仍在编译 OBS，沿用该 run ID。本轮补上修复前失败、修复后通过的本地回归 c64a76b，并在 Fedora 用同一份 rc.67 脱敏回执复跑得出台账期望结论：三个采样 unserved 均为空、停止后 live==claimed，即 rc.67 的停止本不应判为丢 feeder。"
     },
     {
       "id": "COORD-008",
@@ -4598,6 +4600,30 @@
         "rc.67 回执 /tmp/rc67.0oFX/native-product-integration-receipts-5.1.0-rc.67/native-product-entry-ui.json：programTrackGain gainOne 2165.6/2159.0、gainPointTwo 2160.3/433.6（比值 0.2007）、programTrackMute 880Hz=0.1、programBusIsolation busTwo 440Hz=2889.5/1200Hz=0.5 与 busThree 1200Hz=2542.5/440Hz=0.7、recordingFailureReceipt recording-directory-failed、deviceOperations 有 ONVIF probe/GetProfiles；发布流探针 firstDecodableFrameMs 3452（首次）/1844（恢复）、windowTimedOut true、returnCode 1，伴随 h264 中途加入解码告警。本机 test_build_contract.py 52/52、native-host/tests/test_*.py 全套通过（两个需显式 --probe 的真机探针除外）、git diff --check 干净。链式同步后 #67 0874fd4、#70 559a0f9、#71 dd92696、#74 33ce403、#75 c5ed74f、#76 2c0e99d（各分支自身提交数不变）。rc.68 run 44577184643 源码 2c0e99dc04a81fd8d92f878a5e2f6da682507420、soak_minutes=0。NSIS 安装态、两小时长稳与目标机 OBS 对照仍未执行；本机无 PowerShell，NSIS 脚本只静态核对了 Python 参数与文件存在性。"
       ],
       "git_revision": "da197f9108b68914632b573d31c2a17ddf067fbd"
+    },
+    {
+      "sequence": 266,
+      "at": "2026-11-20T01:35:22+08:00",
+      "agent": "qwen38-next-v51-20261119-01",
+      "task": "V51-008",
+      "action": "update",
+      "note": "进行中轮：rc.68 run 44577184643（源码 2c0e99dc04a81fd8d92f878a5e2f6da682507420，soak_minutes=0，17:26Z 起仍在编译 OBS），沿用该 run ID。本轮补上可在修复前失败、修复后通过的本地回归 c64a76b：用 rc.67 脱敏回执行在本地回放取状态-记录-比较链路；并在 Fedora 容器 v51qt 用同一份脱敏回执复跑得出台账期望结论（三个采样 unserved 均为空、停止后 live==claimed，即 rc.67 的停止本不应判为丢 feeder）。",
+      "evidence": [
+        "rc.67 run 44568325933 首个失败点 phase=program-publish-disconnect、detail=TypeError: list indices must be integers or slices, not str（门禁把混音观察返回的 PID 列表当成回执行），已由 0874fd4 修复；该轮 49 项通过并保留 TAKE、双总线隔离、逐轨静音、逐轨增益 0.2007、录像失败路径、设备操作入口、发布/恢复解码帧等有效证据。本机 test_build_contract.py 53/53 通过；把 product_windows.py 换回修复前版本（deaec20）后新回归失败于 ，换回修复版即通过。Fedora 容器 v51qt（fedora:44，Python 3.14.10）内  3 项通过，脱敏回执回放输出：publish-disconnect-start live=[51078,51389] claimed=[51389] unserved=[] orphan=[51078]、before/after stop live=[51389] claimed=[51389] unserved=[] orphan=[]、converged=True、MIX-PORT VERDICT: PASS。链式同步后 #67 c64a76b、#70 0f3f078、#71 3a282f8、#74 b7f0f01、#75 f964680、#76 a71d561（栈顶自身提交数仍 24，相对 2c0e99d 只多 1 个测试文件 80 行）。"
+      ],
+      "git_revision": "1dbe364a10867dab7cee08f1692d46431de608d4"
+    },
+    {
+      "sequence": 267,
+      "at": "2026-11-20T01:35:30+08:00",
+      "agent": "qwen38-next-v51-20261119-01",
+      "task": "V51-008",
+      "action": "update",
+      "note": "进行中轮：rc.68 run 44577184643（源码 2c0e99dc04a81fd8d92f878a5e2f6da682507420，soak_minutes=0）仍在编译 OBS，沿用该 run ID。本轮补上修复前失败、修复后通过的本地回归 c64a76b，并在 Fedora 用同一份 rc.67 脱敏回执复跑得出台账期望结论：三个采样 unserved 均为空、停止后 live==claimed，即 rc.67 的停止本不应判为丢 feeder。",
+      "evidence": [
+        "rc.67 run 44568325933 首个失败点 phase=program-publish-disconnect、detail=TypeError: list indices must be integers or slices, not str（门禁把混音观察返回的 PID 列表当成回执行），已由 0874fd4 修复；该轮 49 项通过并保留 TAKE、双总线隔离、逐轨静音、逐轨增益 0.2007、录像失败路径、设备操作入口、发布与恢复解码帧等有效证据。本机 test_build_contract.py 53/53 通过；把 product_windows.py 换回修复前版本（deaec20）后新回归失败于 AssertionError: [12, 13] is not an instance of <class dict>，换回修复版即通过。Fedora 容器 v51qt（fedora:44，Python 3.14.10）内 -k mix 3 项通过，脱敏回执回放：publish-disconnect-start live=[51078,51389] claimed=[51389] unserved=[] orphan=[51078]；before/after stop live=[51389] claimed=[51389] unserved=[] orphan=[]；converged=True；MIX-PORT VERDICT: PASS。链式同步后 #67 c64a76b、#70 0f3f078、#71 3a282f8、#74 b7f0f01、#75 f964680、#76 a71d561（栈顶自身提交数仍 24，相对 2c0e99d 只多 1 个测试文件 80 行）。"
+      ],
+      "git_revision": "1dbe364a10867dab7cee08f1692d46431de608d4"
     }
   ]
 }

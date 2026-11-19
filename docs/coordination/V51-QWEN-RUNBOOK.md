@@ -108,6 +108,18 @@ rc.64（run 44548882087）通过 49 项后停在 `program-publish-disconnect`：
 
 从 `0874fd4` 起，混音观察返回它写入 `audioMixHelperWatch` 的回执行，不再是辅助进程 PID 列表；`watched_ports()`/`claimed_ports()` 会先断言收到的是行。读法：若某轮在 `program-publish-disconnect` 抛 `TypeError: list indices must be integers or slices, not str`，那是门禁把 PID 列表当成了回执行，不代表混音失败；先看 `audioMixHelperWatch` 各行是否已经记下 `processes[].port` 与 `hostClaims[].mixerPort`。rc.67（run 44568325933，源码 `c29227a8`）正是这种读法：49 项通过、端口已读到（start `51078`/`51389`，停止前后 `51389`）、宿主唯一声明的混音 `mixerPort=51389`，按收敛规则本应判为通过。
 
+在 Fedora 里用脱敏回执复跑混音端口结论（不需要 Windows）：容器 `v51qt`（fedora:44）把根 checkout 挂在 `/src`，但 `.worktrees` 在容器内不可读，因此要先把测试目录复制进 `/wt`。
+
+```bash
+podman exec v51qt bash -lc 'rm -rf /wt/native-host/tests /wt/native-host/scripts && mkdir -p /wt/native-host'
+podman cp .worktrees/v51/native-host/tests v51qt:/wt/native-host/tests
+podman cp .worktrees/v51/native-host/scripts v51qt:/wt/native-host/scripts
+podman cp <receipt>/native-product-entry-ui.json v51qt:/wt/rc67-entry-ui.json
+podman exec v51qt bash -lc 'cd /wt && python3 -B native-host/tests/test_build_contract.py -k mix'
+```
+
+再用回执里的 `audioMixHelperWatch` 各行直接调用 `watched_ports()`/`claimed_ports()`：每个采样都要求声明端口无人服务集合为空，停止 Program 输出后要求存活端口等于声明端口。rc.67 的脱敏回执在这一步给出 `live=[51078,51389] claimed=[51389]`（首采样，游离辅助进程属于正在释放的 Scene 图）与停止前后 `live=[51389] claimed=[51389]`，结论为收敛通过，说明该轮失败只来自门禁把观察返回的 PID 列表当成回执行。
+
 当前轮：`5.1.0-rc.68`（run [44577184643](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44577184643)，派发栈顶 `2c0e99dc04a81fd8d92f878a5e2f6da682507420`，`soak_minutes=0`）。这是 v5.1 里第一次可能真正运行 NSIS 安装态脚本（`installed-ui`、`nsis`、`restore-pair`、`legacy-import`、`lan`、`updater`、`upgraded-ui`）：门禁步骤失败时该步骤不会运行，本机也没有 PowerShell 可预解析，只能静态核对被调用的 Python 文件与其参数。NSIS 安装步骤只在门禁步骤成功时运行，所以本轮也是第一次可能取得安装态回执（`installed-ui`、`nsis`、`restore-pair`、`legacy-import`、`lan`）。只有 TAKE、发布视频、逐轨增益与完整 NSIS 在同一轮齐全，才推进合并与冻结候选；若某声明端口仍无存活辅助进程，才在产品侧补混音监督（在同一端口重新拉起并保持源设置），并让断言继续覆盖重复与游离辅助进程。
 
 ## 4. 全栈通过后走到成品
