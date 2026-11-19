@@ -283,11 +283,12 @@ class BuildContractTests(unittest.TestCase):
 
 
     def test_mixer_identities_name_owned_helpers_without_leaking_the_run(self):
-        """A disappeared helper has to be named, and never by its private paths.
+        """A disappeared helper has to be named by its mix port, not by private paths.
 
         Run 44548882087 reported only a PID diff for a lost FFmpeg audio mixer. The
         command line is the identity available here, so camera URLs and this run's
-        private roots must be replaced before anything reaches a receipt.
+        private roots must be replaced before anything reaches a receipt, while each
+        helper's loopback mix port survives so the receipt can name the mix it starved.
         """
         if os.name == "nt":
             self.skipTest("fake PowerShell needs a POSIX executable")
@@ -298,24 +299,66 @@ class BuildContractTests(unittest.TestCase):
         gate = (ROOT / "native-host/tests/product_windows.py").read_text(encoding="utf-8")
         for wiring in ("audio_mix_helper_watch", "mixer_identities(powershell, rows",
                        "before-program-output-stop", "after-program-output-stop",
-                       "host claims"):
+                       '"mixerPort": entry.get("mixerPort")', "watched_ports(row)",
+                       "claimed_ports(row)", "live_ports != claimed",
+                       "host still reports a live mix", "fixture publishers",
+                       "other helpers"):
             self.assertIn(wiring, gate)
         with tempfile.TemporaryDirectory() as temporary:
             fake = Path(temporary) / "pwsh"
             fake.write_text("#!/usr/bin/env python3\n"
-                "print('12|C:/run/bin/ffmpeg.exe -i rtsp://127.0.0.1:55/secret filter=x')\n"
-                "print('34|C:/run/bin/ffmpeg.exe -i tcp://127.0.0.1:56/secret ' + 'y'*400)\n"
+                "print('12|C:/run/bin/ffmpeg.exe -i rtsp://user:pass@10.0.0.9:554/secret "
+                "-f mpegts tcp://127.0.0.1:56?listen=1')\n"
+                "print('34|C:/run/bin/ffmpeg.exe -i tcp://10.0.0.9:1234/secret ' + 'y'*400)\n"
                 "print('not-a-pid|ignored')\n", encoding="utf-8")
             fake.chmod(0o755)
             identities = module.mixer_identities(fake, [12, 34, 99], ("C:/run/bin",))
             self.assertEqual(sorted(identities), [12, 34])
             self.assertIn("<url>", identities[12])
             self.assertNotIn("rtsp://", identities[12])
+            self.assertNotIn("user:pass", identities[12])
             self.assertNotIn("C:/run/bin", identities[12])
+            # The loopback mix port is the key that ties this helper to its mix source.
+            self.assertIn("tcp:56", identities[12])
+            self.assertEqual(module.helper_port(identities[12]), 56)
+            # A remote tcp endpoint stays masked, and only its port survives nowhere.
+            self.assertIn("<url>", identities[34])
+            self.assertNotIn("10.0.0.9", identities[34])
+            self.assertIsNone(module.helper_port(identities[34]))
             self.assertEqual(len(identities[34]), 160)
             self.assertEqual(module.mixer_identities(fake, []), {})
             broken = module.mixer_identities(Path(temporary) / "absent", [7])
             self.assertEqual(broken, {7: "command-line-unavailable"})
+
+    def test_mix_port_ownership_sees_an_unserved_mix_and_a_duplicate_helper(self):
+        """Ports, not PIDs, decide whether every owned mix still has its helper.
+
+        The host reports the loopback port each mix source reads, so a helper that
+        exits unnoticed leaves a claimed port unserved and a respawn that leaves the
+        old one behind puts two helpers on one port. A short-lived AV remux child has
+        no mix port and must not be counted as a mixer.
+        """
+        if os.name == "nt":
+            self.skipTest("fake PowerShell needs a POSIX executable")
+        spec = importlib.util.spec_from_file_location("product_windows",
+            ROOT / "native-host/tests/product_windows.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        row = {"processes": [{"pid": 12, "port": 56, "identity": "ffmpeg ... tcp:56?listen=1"},
+                             {"pid": 13, "port": 56, "identity": "ffmpeg ... tcp:56?listen=1"},
+                             {"pid": 14, "port": None, "identity": "ffmpeg -i <private>/a.mkv"}],
+            "hostClaims": [{"sourceId": "scene-a.mix", "mixerPort": 56, "available": True},
+                           {"sourceId": "scene-b.mix", "mixerPort": 57, "available": True}],
+            "otherHelpers": [{"pid": 14, "identity": "ffmpeg -i <private>/a.mkv"}]}
+        self.assertEqual(module.watched_ports(row), [56, 56])
+        self.assertEqual(module.claimed_ports(row), [56, 57])
+        self.assertNotEqual(module.watched_ports(row), module.claimed_ports(row))
+        served = {"processes": [{"pid": 12, "port": 56, "identity": "tcp:56"},
+                                {"pid": 15, "port": 57, "identity": "tcp:57"}],
+            "hostClaims": row["hostClaims"], "otherHelpers": []}
+        self.assertEqual(module.watched_ports(served), module.claimed_ports(served))
+        self.assertEqual(module.claimed_ports({"hostClaims": [{"sourceId": "x", "mixerPort": None},
+                                                              {"sourceId": "y"}]}), [])
 
     def test_published_packet_window_formats_the_interval_and_reports_its_own_failure(self):
         """The keyframe diagnostic must not break the measurement it accompanies.

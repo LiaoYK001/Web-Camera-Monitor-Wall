@@ -901,6 +901,7 @@ class ProductWindow final : public QWidget {
 					{"muted", audio.muted}, {"mixers", double(audio.mixers)},
 					{"syncOffset", double(audio.sync_offset)},
 					{"audioInputs", audio_inputs},
+					{"mixerPort", audio.mixer_port},
 					{"mixerLog", QString::fromStdString(audio.mixer_log)}});
 			}
 		};
