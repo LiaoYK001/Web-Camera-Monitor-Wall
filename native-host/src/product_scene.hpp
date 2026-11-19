@@ -45,6 +45,10 @@ struct ProductAudioProgress {
 	std::int64_t sync_offset = 0;
 	std::vector<ProductAudioInputProgress> inputs;
 	std::string mixer_log;
+	// The loopback port this owned FFmpeg mixer listens on. A receipt can only prove
+	// which helper disappeared if the process and the mix source can be tied together:
+	// run 44548882087 lost one of two mixers while the host still claimed the mix.
+	int mixer_port = 0;
 };
 
 // Main-thread only. Entries are owned by graphs, never by a global OBS name.

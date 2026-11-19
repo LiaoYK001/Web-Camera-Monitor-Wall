@@ -107,6 +107,7 @@ struct ProductSceneSource {
 	std::vector<FilterState> filters;
 #ifdef WEBOBS_NATIVE_PRODUCT_MODE
 	std::unique_ptr<QProcess> audio_mix_process;
+	int audio_mix_port = 0;
 	obs_source_t *audio_source = nullptr;
 	std::string audio_settings;
 	obs_volmeter_t *audio_volmeter = nullptr;
@@ -237,6 +238,7 @@ struct ProductSceneSource {
 			return false;
 		}
 		audio_mix_process = std::move(process);
+		audio_mix_port = port;
 		Data settings(obs_data_create(), &obs_data_release);
 		obs_data_set_bool(settings.get(), "is_local_file", false);
 		obs_data_set_string(settings.get(), "input",
@@ -260,6 +262,7 @@ struct ProductSceneSource {
 		audio_source = obs_source_create("ffmpeg_source", name.c_str(), settings.get(), nullptr);
 		if (!audio_source) {
 			audio_mix_process.reset();
+			audio_mix_port = 0;
 			error = "scene-audio-mixer-source-failed";
 			return false;
 		}
@@ -280,6 +283,7 @@ struct ProductSceneSource {
 			obs_source_release(audio_source);
 			audio_source = nullptr;
 			audio_mix_process.reset();
+			audio_mix_port = 0;
 			error = "scene-audio-meter-unavailable";
 			return false;
 		}
@@ -444,7 +448,7 @@ std::vector<ProductAudioProgress> ProductSceneGraph::audio_progress()
 						(std::max)(0, normalization + input.sync_offset_ms)});
 				return inputs;
 			}(),
-			std::move(log)});
+			std::move(log), entry->audio_mix_port});
 	}
 #endif
 	return result;

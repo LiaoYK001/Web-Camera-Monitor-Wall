@@ -277,6 +277,38 @@ def child_processes(powershell, pid):
     return children
 
 
+LOOPBACK_MIX_PORT = re.compile(r"tcp://(?:127\.0\.0\.1|localhost):(\d+)[^\s]*")
+
+
+def sanitize_helper_command(command):
+    """Mask a helper command line so a receipt can name it without exposing the run.
+
+    Camera URLs and any remote endpoint become `<url>`. The loopback mix port stays as
+    `tcp:<port>`: it is ephemeral, carries no credential, and is the only key that ties
+    an owned FFmpeg mixer process to the mix source it serves. Run 44548882087 lost one
+    of two helpers and a bare PID diff could not say which mix lost its feeder.
+    """
+    clean = LOOPBACK_MIX_PORT.sub(lambda match: "tcp:" + match.group(1), command)
+    return re.sub(r"(?:rtsp|rtsps|udp|tcp|http|https)://\S+", "<url>", clean)
+
+
+def helper_port(identity):
+    """The loopback mix port carried by a sanitized helper command line, or None."""
+    match = re.search(r"tcp:(\d+)", identity or "")
+    return int(match.group(1)) if match else None
+
+
+def watched_ports(row):
+    """Every loopback mix port a live helper owns, duplicates kept."""
+    return sorted(item["port"] for item in row["processes"] if item["port"])
+
+
+def claimed_ports(row):
+    """The mix port each owned mix source says it is reading."""
+    return sorted({int(entry["mixerPort"]) for entry in row["hostClaims"]
+        if isinstance(entry.get("mixerPort"), (int, float)) and int(entry["mixerPort"]) > 0})
+
+
 def mixer_identities(powershell, pids, private_values=()):
     """Name each owned FFmpeg helper by its own command line, sanitized.
 
@@ -284,7 +316,8 @@ def mixer_identities(powershell, pids, private_values=()):
     one of two FFmpeg mixers while the host still reported the mix as available with
     two mixers and no recorded exit code. The command line is the only side-neutral
     identity available here, so camera URLs and this run's private roots are replaced
-    before anything is recorded, and the row is capped.
+    before anything is recorded, while each helper's own loopback mix port is kept so
+    the row can be tied back to the mix source that owns it. The row is capped.
     """
     if not pids:
         return {}
@@ -305,7 +338,7 @@ def mixer_identities(powershell, pids, private_values=()):
         pid_text, _, command = line.partition("|")
         if not pid_text.strip().isdigit():
             continue
-        clean = re.sub(r"(?:rtsp|rtsps|udp|http|https|tcp)://\S+", "<url>", command)
+        clean = sanitize_helper_command(command)
         for private_value in private_values:
             clean = clean.replace(str(private_value), "<private>")
         identities[int(pid_text.strip())] = clean.strip()[:160]
@@ -2572,26 +2605,43 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 # audio mixers are separate owned helpers, so record them first and
                 # require the same set afterwards instead of demanding no FFmpeg at all.
                 def audio_mix_helper_watch(sample):
-                    """Every owned FFmpeg helper with its own identity and the host's claim.
+                    """Every owned FFmpeg helper, its loopback mix port and the host's claim.
 
-                    The host publishes `audioSources[].mixers` and its own recorded exit
-                    code, so a disappeared process is either the product releasing a helper
-                    it still needs or the product not noticing one died; the two readings
-                    side by side say which.
+                    A PID diff alone cannot say which mix lost its feeder, and a product
+                    that legitimately respawns a helper would also look like a leak by PID.
+                    The mix port is the stable identity: each owned mix source listens on
+                    one loopback port, so the claimed ports and the live helper ports have
+                    to agree. The host's own `available` and exit code then say whether the
+                    product released a helper it still needs or never noticed one died.
                     """
                     rows = sorted(pid for pid, name in child_processes(powershell, int(state()["pid"]))
                         if name == "ffmpeg.exe")
                     identities = mixer_identities(powershell, rows, (private, runtime, profile))
                     claim = [{"sourceId": str(entry.get("sourceId") or "")[:64],
                         "mixers": entry.get("mixers"), "processExitCode": entry.get("processExitCode"),
-                        "available": entry.get("available"), "active": entry.get("active")}
+                        "available": entry.get("available"), "active": entry.get("active"),
+                        "mixerPort": entry.get("mixerPort")}
                         for entry in state().get("audioSources", []) if isinstance(entry, dict)]
-                    row = {"sample": sample, "processes": [{"pid": pid, "identity": identities.get(pid, "")}
-                        for pid in rows], "hostClaims": claim}
+                    # The loopback fixture publishers are harness state. Recording them
+                    # beside the helpers lets a receipt correlate a mix feeder that died
+                    # with the fixture path that fed it, instead of blaming the product.
+                    fixtures = [{"index": index,
+                        "state": "alive" if publisher is not None and publisher.poll() is None
+                        else ("stopped" if publisher is None else "exited")}
+                        for index, publisher in enumerate(rtsp.publishers)]
+                    row = {"sample": sample, "processes": [{"pid": pid,
+                        "port": helper_port(identities.get(pid, "")),
+                        "identity": identities.get(pid, "")}
+                        for pid in rows], "hostClaims": claim, "fixturePublishers": fixtures,
+                        # A short-lived AV remux is also an owned ffmpeg child. Keep it out
+                        # of the mix comparison but record it so a helper count is never
+                        # silently explained away.
+                        "otherHelpers": [{"pid": pid, "identity": identities.get(pid, "")[:120]}
+                            for pid in rows if helper_port(identities.get(pid, "")) is None]}
                     evidence.setdefault("audioMixHelperWatch", []).append(row)
                     return rows
 
-                scene_mixers = audio_mix_helper_watch("publish-disconnect-start")
+                scene_start_watch = audio_mix_helper_watch("publish-disconnect-start")
                 relay_children = [pid for pid, name in child_processes(powershell, int(state()["pid"]))
                     if name == "mediamtx.exe"]
                 assert relay_children == [], "MediaMTX survived the normal publisher stop"
@@ -2660,26 +2710,51 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     + "monotonic frames spanning one keyframe interval"
                 evidence["checks"].append("publish-recovery-delivers-frames-to-a-real-consumer")
                 mixers_before_stop = audio_mix_helper_watch("before-program-output-stop")
+                assert mixers_before_stop, "no owned FFmpeg audio mixer helper was running"
                 assert ui("stream-program")
                 wait_for(lambda: state().get("programOutput", {}).get("streaming") is False and
                     state().get("programOutput", {}).get("mediaMtxRunning") is False,
                     "recovered publisher did not release MediaMTX after stopping", timeout=30)
                 after_stop = child_processes(powershell, int(state()["pid"]))
                 leaked_relay = sorted(pid for pid, name in after_stop if name == "mediamtx.exe")
-                mixers_after = audio_mix_helper_watch("after-program-output-stop")
+                audio_mix_helper_watch("after-program-output-stop")
                 assert leaked_relay == [], \
                     f"Program output kept the private MediaMTX relay after stopping: {leaked_relay}"
-                if mixers_after != scene_mixers:
-                    identities = {row["pid"]: row["identity"]
-                        for row in evidence["audioMixHelperWatch"][-1]["processes"]}
-                    lost = sorted(set(scene_mixers) - set(mixers_after))
-                    added = sorted(set(mixers_after) - set(scene_mixers))
-                    lost_earlier = sorted(set(scene_mixers) - set(mixers_before_stop))
-                    raise AssertionError("Program output changed the Scene audio mixers "
-                        + "(lost " + ", ".join(f"{pid}:{identities.get(pid, '')[:120]}" for pid in lost)
-                        + f"; added {added}; gone before the stop {lost_earlier}; host claims "
-                        + json.dumps(evidence["audioMixHelperWatch"][-1]["hostClaims"])[:400] + ")")
-                evidence["sceneAudioMixers"] = mixers_after
+                after_watch = evidence["audioMixHelperWatch"][-1]
+                before_watch = evidence["audioMixHelperWatch"][-2]
+                started_ports = claimed_ports(scene_start_watch)
+                live_ports = watched_ports(after_watch)
+                claimed = claimed_ports(after_watch)
+                # Each owned mix source reads exactly one loopback port and each mix
+                # helper owns exactly one, so the live ports have to equal the claimed
+                # ports as a multiset. A helper that dies unnoticed leaves a claimed port
+                # unserved; a second helper on one port or an unclaimed helper is a leak.
+                # This is no weaker than the previous PID-set equality and stays correct
+                # if the product later respawns a helper on its existing port.
+                assert len(started_ports) == len(scene_start_watch["hostClaims"]) > 0, \
+                    "an owned mix source did not report its loopback mix port: " \
+                    + json.dumps(scene_start_watch["hostClaims"])[:300]
+                assert claimed == started_ports, \
+                    f"Program output changed which mix ports the host reads " \
+                    + f"(started {started_ports}, now claims {claimed}; " \
+                    + f"before the stop {claimed_ports(before_watch)})"
+                if live_ports != claimed:
+                    owner_by_port = {int(entry["mixerPort"]): str(entry.get("sourceId") or "")[:64]
+                        for entry in after_watch["hostClaims"]
+                        if isinstance(entry.get("mixerPort"), (int, float)) and int(entry["mixerPort"]) > 0}
+                    unserved = sorted(set(claimed) - set(live_ports))
+                    orphaned = sorted(set(live_ports) - set(claimed))
+                    gone_earlier = sorted(set(started_ports) - set(watched_ports(before_watch)))
+                    starved = [entry for entry in after_watch["hostClaims"]
+                        if int(entry.get("mixerPort") or 0) in unserved]
+                    raise AssertionError("Program output left an owned mix port unserved "
+                        + f"(live {live_ports}, claimed {claimed}; unserved {unserved} feed mix "
+                        + f"{[owner_by_port[port] for port in unserved]}; orphan helpers {orphaned}; "
+                        + f"unserved before the stop {gone_earlier}; host still reports a live mix for "
+                        + f"{json.dumps(starved)[:240]}; fixture publishers "
+                        + json.dumps(after_watch["fixturePublishers"])[:200]
+                        + f"; other helpers {json.dumps(after_watch['otherHelpers'])[:200]})")
+                evidence["sceneAudioMixers"] = live_ports
                 evidence["checks"].extend(["publish-relay-loss-is-reported-and-recoverable",
                     "program-output-helpers-are-released-after-stop"])
                 checkpoint("program-output-resources-released")
