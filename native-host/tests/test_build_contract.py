@@ -316,19 +316,22 @@ class BuildContractTests(unittest.TestCase):
             # A real mix helper line is ~509 characters with the loopback target at the
             # end, so the fake one is padded past the recorded cap on purpose: the port
             # has to survive the cap and the tail has to still name the mix target.
+            # Placeholder credentials on the TEST-NET documentation range, the form the public
+            # repository audit approves for test fixtures: the helper line must still carry a
+            # userinfo for the sanitizer assertion to mean anything.
             filler = "-filter_complex amix=inputs=2:duration=longest " + "x" * 240
             fake.write_text("#!/usr/bin/env python3\n"
                 "print('12|C:/run/bin/ffmpeg.exe -rtsp_transport tcp -i "
-                "rtsp://user:pass@10.0.0.9:554/secret " + filler + " "
+                "rtsp://fixture-user:fixture-password@192.0.2.9:554/tone " + filler + " "
                 "-map [amixed] -c:a aac -f mpegts tcp://127.0.0.1:56?listen=1')\n"
-                "print('34|C:/run/bin/ffmpeg.exe -i tcp://10.0.0.9:1234/secret ' + 'y'*400)\n"
+                "print('34|C:/run/bin/ffmpeg.exe -i tcp://192.0.2.9:1234/tone ' + 'y'*400)\n"
                 "print('not-a-pid|ignored')\n", encoding="utf-8")
             fake.chmod(0o755)
             identities = module.mixer_identities(fake, [12, 34, 99], ("C:/run/bin",))
             self.assertEqual(sorted(identities), [12, 34])
             self.assertIn("<url>", identities[12]["identity"])
             self.assertNotIn("rtsp://", identities[12]["identity"])
-            self.assertNotIn("user:pass", identities[12]["identity"])
+            self.assertNotIn("fixture-password", identities[12]["identity"])
             self.assertNotIn("C:/run/bin", identities[12]["identity"])
             # The loopback mix port is the key that ties this helper to its mix source,
             # and it is read before the cap, so a long command line still reports it.
@@ -336,13 +339,13 @@ class BuildContractTests(unittest.TestCase):
             self.assertEqual(len(identities[12]["identity"]), 160)
             self.assertEqual(identities[12]["port"], 56)
             self.assertIn("tcp:56", identities[12]["tail"])
-            self.assertNotIn("10.0.0.9", identities[12]["tail"])
+            self.assertNotIn("192.0.2.9", identities[12]["tail"])
             self.assertIn("tcp:56", identities[12]["identity"] + identities[12]["tail"])
             # A remote tcp endpoint stays masked and owns no mix; its tail is recorded so
             # a port-less helper is still explainable, and the cap never leaks the host.
             self.assertIn("<url>", identities[34]["identity"])
-            self.assertNotIn("10.0.0.9", identities[34]["identity"])
-            self.assertNotIn("10.0.0.9", identities[34]["tail"])
+            self.assertNotIn("192.0.2.9", identities[34]["identity"])
+            self.assertNotIn("192.0.2.9", identities[34]["tail"])
             self.assertIsNone(identities[34]["port"])
             self.assertEqual(len(identities[34]["identity"]), 160)
             self.assertEqual(module.helper_port("tcp:56?listen=1"), 56)
