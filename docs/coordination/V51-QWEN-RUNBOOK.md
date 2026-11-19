@@ -84,7 +84,8 @@ rc.61（run 44524750280）与 rc.62（run 44534272424）连续两轮停在 `prog
 本机已用固定 MediaMTX v1.18.2 与 `product_output.cpp` 同形状的私有中继配置复现过：推流约 6 秒后以晚加入者身份读取，旧的 20 包读取返回码 0、`frames` 0；同一连接读 6 秒得到 148 帧、时间戳单调、跨度 4.9 s、`firstDecodableFrameMs` 1977 ms（正是一个关键帧周期）、实测 30.2 fps；副连接包探针给出 181 包、关键帧包 3、`firstPacketIsKey` false、首个关键帧 pts 1.0676、关键帧间隔 `[2.0, 2.0]`。也就是说中继确实会把编码器每 2 秒的 IDR 交给晚加入者，只是第一个包不是关键帧；缺陷在读取窗口，不在产品侧推流。复现命令：下载 `mediamtx_v1.18.2_linux_amd64`，用上面的 YAML 起中继，`ffmpeg -re -f lavfi -i testsrc2=size=320x180:rate=30 -c:v libopenh264 -g 60 -pix_fmt yuv420p -an -f flv rtmp://127.0.0.1:<port>/program`（本机 ffmpeg 无 libx264），再分别跑两种探针。stderr 的 `[libopenh264] DecodeFrame failed` 与 CI 里的 `co located POCs unavailable` 同源，都是从 GOP 中间起解的提示。
 
 
-读 rc.63（run 44544305133，源码 `dab2e0f`）时按这个顺序判断：
+读 rc.64（run 44548882087，源码 `0a7726a983694bd62621e46617d90b3c0f3ccb2b`，内部 `5.1.0-rc.64`，`soak_minutes=0`）时按这个顺序判断。rc.63（run 44544305133）本身没有产生产品结论：它的 `ValueError: unsupported format character ':'` 来自门禁用 %-格式化生成含 `%` 的 MediaMTX 读取区间，并且因为 `programStreamVideoProbe` 在两个探针都完成后才写入，已跑完的 6 秒帧窗口结果也被丢掉。从 `c28ddea` 起读取区间改为拼接，诊断整体在 `try/except` 内并记为 `diagnosticFailed`（同时保留 `readInterval`），主断言不再受诊断影响：
+
 
 1. `packetProbe.keyframes >= 2` 且 `frames >= 10`、跨度 ≥2 s：发布路径已通，继续看 `program-track-controls`、`program-track-offset`、`program-publish-disconnect` 与 NSIS 安装回执是否齐全。
 2. `packetProbe.keyframes` 为 0：编码器送出的 IDR 没有到达新客户端，对照编码器侧送出与 MediaMTX 交给新连接的首包，检查 IDR 与 SPS/PPS 在哪一段缺失（例如是否需要 `repeat_headers`），再决定改产品还是改探针。
