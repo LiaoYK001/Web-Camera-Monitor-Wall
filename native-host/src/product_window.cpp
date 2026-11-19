@@ -10,6 +10,7 @@
 
 #include <obs-frontend-api.h>
 #include <obs-module.h>
+#include <util/platform.h>
 #include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
@@ -52,9 +53,11 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <map>
+#include <mutex>
 #include <set>
 #include <tuple>
 #include <vector>
@@ -87,6 +90,34 @@ class ProductWindow final : public QWidget {
 	QElapsedTimer health_clock_;
 	struct InputHealth { std::int64_t serial = 0; qint64 changed_ms = 0; bool sampled = false, advanced = false; };
 	std::map<std::string, InputHealth> input_health_;
+	// Test-only (WEBOBS_PRODUCT_RENDER_PROBE=1): the product draws the preview Scene and
+	// the Program channel into its own textures and reports per-cell content digests.
+	// A frozen tile then has a cause: the Scene render stayed identical, or it changed
+	// while the captured window pixels stayed identical. Nothing here changes the Scene
+	// graph, and the probe stays off unless the environment explicitly asks for it.
+	struct RenderProbeSlot {
+		gs_texrender_t *target = nullptr;
+		gs_stagesurf_t *stage = nullptr;
+		uint32_t width = 0, height = 0;
+		bool staged = false;
+		qint64 staged_frames = -1;
+		qint64 staged_ms = 0;
+		qint64 next_draw_ms = 0;
+		QString scene;
+	};
+	struct RenderProbeSample {
+		qint64 ms = 0;
+		qint64 render_frames = -1;
+		QString scene;
+		QJsonArray cells;
+	};
+	bool render_probe_enabled_ = qEnvironmentVariable("WEBOBS_PRODUCT_RENDER_PROBE") == "1";
+	bool render_probe_attached_ = false;
+	int render_probe_ticks_ = 0;
+	RenderProbeSlot render_probe_slots_[2];
+	std::vector<RenderProbeSample> render_preview_samples_;
+	std::vector<RenderProbeSample> render_program_samples_;
+	std::mutex render_probe_mutex_;
 	QPushButton *login_, *create_account_, *watch_, *save_, *logout_, *refresh_, *scene_watch_;
 	QComboBox *scenes_ = nullptr;
 	QSpinBox *slot_count_ = nullptr;
@@ -476,6 +507,187 @@ class ProductWindow final : public QWidget {
 		obs_source_release(selected);
 		return matched;
 	}
+	// fnv1a over sampled BGRA bytes of one canvas cell; the same 3x2 grid the pixel
+	// analysis applies to the captured window, so the two timelines can be compared.
+	static uint32_t render_probe_digest(const uint8_t *pixels, uint32_t linesize, uint32_t height, uint32_t x,
+		uint32_t y, uint32_t cell_width, uint32_t cell_height)
+	{
+		uint32_t hash = 2166136261u;
+		const uint32_t step_x = (std::max)(1u, cell_width / 20u), step_y = (std::max)(1u, cell_height / 15u);
+		for (uint32_t row = 0; row < cell_height; ++row) {
+			if (row % step_y)
+				continue;
+			if (y + row >= height)
+				break;
+			const uint8_t *line = pixels + size_t(y + row) * size_t(linesize);
+			for (uint32_t column = 0; column < cell_width; ++column) {
+				if (column % step_x)
+					continue;
+				const size_t at = size_t(x + column) * 4u;
+				if (at + 2u >= size_t(linesize))
+					break;
+				hash = (hash ^ line[at]) * 16777619u;
+				hash = (hash ^ line[at + 1u]) * 16777619u;
+				hash = (hash ^ line[at + 2u]) * 16777619u;
+			}
+		}
+		return hash;
+	}
+	static void render_probe_tick(void *param, float)
+	{
+		auto *self = static_cast<ProductWindow *>(param);
+		if (!self->render_probe_attached_ || self->tearing_down_)
+			return;
+		obs_enter_graphics();
+		const int index = self->render_probe_ticks_ % 2;
+		if (self->render_probe_slots_[index].staged)
+			self->render_probe_collect(index);
+		else
+			self->render_probe_draw(index);
+		++self->render_probe_ticks_;
+		obs_leave_graphics();
+	}
+	// Runs inside obs_enter_graphics on the graphics thread (the same pattern OBS's own
+	// screenshot helper uses): draw the Scene copy, then stage it for the next tick.
+	void render_probe_draw(int index)
+	{
+		auto &slot = render_probe_slots_[index];
+		// Bounded readback: at most ~6 draws per second per slot and never larger than
+		// 960x540, so the probe cannot distort a CPU/GPU measurement window.
+		const qint64 now = QDateTime::currentMSecsSinceEpoch();
+		if (slot.next_draw_ms > now)
+			return;
+		slot.next_draw_ms = now + 160;
+		obs_source_t *scene = index == 0 ? obs_frontend_get_current_preview_scene() : obs_get_output_source(0);
+		if (!scene)
+			return;
+		obs_video_info info{};
+		uint32_t width = 0, height = 0;
+		if (obs_get_video_info(&info)) {
+			width = info.base_width;
+			height = info.base_height;
+		}
+		if (width > 960u) {
+			height = uint32_t((uint64_t(height) * 960u) / uint64_t(width));
+			width = 960u;
+		}
+		if (!width || !height) {
+			obs_source_release(scene);
+			return;
+		}
+		if (!slot.target || !slot.stage || slot.width != width || slot.height != height) {
+			if (slot.target)
+				gs_texrender_destroy(slot.target);
+			if (slot.stage)
+				gs_stagesurface_destroy(slot.stage);
+			slot.target = gs_texrender_create(GS_BGRA_UNORM, GS_ZS_NONE);
+			slot.stage = gs_stagesurface_create(width, height, GS_BGRA_UNORM);
+			slot.width = width;
+			slot.height = height;
+		}
+		if (!slot.target || !slot.stage) {
+			obs_source_release(scene);
+			return;
+		}
+		if (gs_texrender_begin(slot.target, slot.width, slot.height)) {
+			vec4 zero;
+			vec4_zero(&zero);
+			gs_clear(GS_CLEAR_COLOR, &zero, 0.0f, 0);
+			gs_ortho(0.0f, float(slot.width), 0.0f, float(slot.height), -100.0f, 100.0f);
+			gs_blend_state_push();
+			gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
+			obs_source_inc_showing(scene);
+			obs_source_video_render(scene);
+			obs_source_dec_showing(scene);
+			gs_blend_state_pop();
+			gs_texrender_end(slot.target);
+		}
+		gs_stage_texture(slot.stage, gs_texrender_get_texture(slot.target));
+		slot.staged = true;
+		slot.staged_frames = qint64(obs_get_total_frames());
+		slot.staged_ms = QDateTime::currentMSecsSinceEpoch();
+		slot.scene = QString::fromUtf8(obs_source_get_name(scene));
+		obs_source_release(scene);
+	}
+	// Map the frame staged on the previous tick, exactly as OBS's screenshot helper does.
+	void render_probe_collect(int index)
+	{
+		auto &slot = render_probe_slots_[index];
+		if (!slot.staged || !slot.stage)
+			return;
+		slot.staged = false;
+		uint8_t *pixels = nullptr;
+		uint32_t linesize = 0;
+		if (!gs_stagesurface_map(slot.stage, &pixels, &linesize) || !pixels) {
+			if (pixels)
+				gs_stagesurface_unmap(slot.stage);
+			return;
+		}
+		const uint32_t width = gs_stagesurface_get_width(slot.stage);
+		const uint32_t height = gs_stagesurface_get_height(slot.stage);
+		const uint32_t cell_width = width / 3u, cell_height = height / 2u;
+		QJsonArray cells;
+		for (uint32_t row = 0; row < 2u; ++row)
+			for (uint32_t column = 0; column < 3u; ++column)
+				cells.append(int(render_probe_digest(pixels, linesize, height, column * cell_width,
+					row * cell_height, cell_width, cell_height)));
+		gs_stagesurface_unmap(slot.stage);
+		RenderProbeSample sample;
+		sample.ms = slot.staged_ms;
+		sample.render_frames = slot.staged_frames;
+		sample.scene = slot.scene;
+		sample.cells = cells;
+		std::lock_guard<std::mutex> guard(render_probe_mutex_);
+		auto &target = index == 0 ? render_preview_samples_ : render_program_samples_;
+		target.push_back(std::move(sample));
+		if (target.size() > 32)
+			target.erase(target.begin(), target.begin() + (target.size() - 32));
+	}
+	void render_probe_attach()
+	{
+		if (!render_probe_enabled_ || render_probe_attached_ || !obs_initialized())
+			return;
+		obs_add_tick_callback(render_probe_tick, this);
+		render_probe_attached_ = true;
+	}
+	void render_probe_detach()
+	{
+		if (!render_probe_attached_)
+			return;
+		render_probe_attached_ = false;
+		obs_remove_tick_callback(render_probe_tick, this);
+		if (obs_initialized()) {
+			obs_enter_graphics();
+			for (auto &slot : render_probe_slots_) {
+				if (slot.target)
+					gs_texrender_destroy(slot.target);
+				if (slot.stage)
+					gs_stagesurface_destroy(slot.stage);
+				slot.target = nullptr;
+				slot.stage = nullptr;
+				slot.width = slot.height = 0;
+				slot.staged = false;
+			}
+			obs_leave_graphics();
+		}
+	}
+	QJsonArray render_probe_samples_json(const std::vector<RenderProbeSample> &samples)
+	{
+		QJsonArray out;
+		for (const auto &sample : samples)
+			out.append(QJsonObject{{"atMs", sample.ms}, {"renderFrames", sample.render_frames},
+				{"scene", sample.scene}, {"cells", sample.cells}});
+		return out;
+	}
+	void publish_render_probe(QJsonObject &state)
+	{
+		if (!render_probe_enabled_)
+			return;
+		std::lock_guard<std::mutex> guard(render_probe_mutex_);
+		state.insert("renderProbe", QJsonObject{{"enabled", true},
+			{"preview", render_probe_samples_json(render_preview_samples_)},
+			{"program", render_probe_samples_json(render_program_samples_)}});
+	}
 	void observe_state(const char *phase)
 	{
 		remember_open_projector_placements();
@@ -518,6 +730,10 @@ class ProductWindow final : public QWidget {
 		// showing. Together these separate the three causes of a frozen tile.
 		state.insert("renderFrames", qint64(obs_get_total_frames()));
 		state.insert("laggedFrames", qint64(obs_get_lagged_frames()));
+		// When this observation was written. A reader must know that its own polling
+		// rate cannot exceed this publish rate, otherwise a 2 s observation gap looks
+		// like an input that stopped delivering frames.
+		state.insert("publishedAtMs", QDateTime::currentMSecsSinceEpoch());
 		struct MediaHealth {
 			bool showing;
 			bool active;
@@ -585,9 +801,21 @@ class ProductWindow final : public QWidget {
 				// delivers a frame is only decidable once the receipt says which source
 				// it is. Product-generated names only (never a camera URL).
 				{"name", found != media_showing.end() ? found->second.name : QString()},
-				{"removed", found != media_showing.end() ? found->second.removed : false}});
+				{"removed", found != media_showing.end() ? found->second.removed : false},
+				// Identity of the frame the media callback last handed to this source:
+				// its own timestamp, a content digest and how long ago it arrived.
+				// Advancing digests prove changing content reached the input even when
+				// the counter alone could also be a repeated frame. -1 means the
+				// running OBS exposes no such telemetry, never "no frame".
+				{"frameTs", counter != raw_counter.end() ? qint64(counter->second.frame_timestamp) : qint64(-1)},
+				{"frameHash", counter != raw_counter.end() ? qint64(counter->second.frame_hash) : qint64(-1)},
+				// Both sides use libobs's monotonic clock, so this age is a real
+				// elapsed value rather than a comparison of two different time bases.
+				{"frameAgeMs", counter != raw_counter.end() && counter->second.frame_ms >= 0
+					   ? qint64(qint64(os_gettime_ns() / 1000000ULL) - counter->second.frame_ms) : qint64(-1)}});
 		}
 		state.insert("videoInputs", video_inputs);
+		publish_render_probe(state);
 		const auto count_items = [](obs_scene_t *scene) {
 			int items = 0;
 			if (scene)
@@ -2338,10 +2566,12 @@ public:
 				}
 			}, 6000);
 		});
+		render_probe_attach();
 	}
 	~ProductWindow() override
 	{
 		tearing_down_ = true;
+		render_probe_detach();
 		heartbeat_.stop();
 		program_sync_.stop();
 		settlement_.stop();

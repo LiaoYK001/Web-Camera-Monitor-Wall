@@ -13,6 +13,13 @@ struct ProductVideoProgress {
 	std::string uuid;
 	bool available = false;
 	std::int64_t serial = 0; // Opaque delivered-video callback serial, never a rendering/hardware claim.
+	// Delivered-frame identity from the same media callback (schema 2). -1 means the
+	// source exposes no frame telemetry, never "no frame arrived"; it lets a frozen tile
+	// separate "the feed repeats this frame" from "frames arrive but nothing repaints".
+	// frame_ms is libobs's monotonic clock in milliseconds, not wall-clock time.
+	std::int64_t frame_timestamp = -1;
+	std::int64_t frame_ms = -1;
+	std::int64_t frame_hash = -1;
 };
 struct ProductAudioInputProgress {
 	int track = 0;

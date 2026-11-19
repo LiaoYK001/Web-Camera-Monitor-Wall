@@ -10,6 +10,7 @@ import argparse
 import configparser
 import contextlib
 import ctypes
+import hashlib
 import json
 import os
 import re
@@ -205,6 +206,11 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             environment["WEBOBS_PRODUCT_TEST_ROOT"] = str(profile)
         if with_media:
             environment["WEBOBS_PRODUCT_ALLOW_TEST_ENDPOINTS"] = "true"
+            # Test-only render probe: the host draws the preview Scene and the Program
+            # channel into bounded offscreen textures and publishes per-cell content
+            # digests. A frozen tile then has a named cause - the feed repeated a frame,
+            # the Scene render stopped changing, or only the captured window went stale.
+            environment["WEBOBS_PRODUCT_RENDER_PROBE"] = "1"
         account = {"username": "native-owner", "password": secrets.token_urlsafe(24)}
         entry = runtime / "bin/webobs-wall.exe"
         process = None
@@ -467,6 +473,13 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
 
             def __init__(self):
                 self.samples = []
+                # Every distinct publishedAtMs this poll actually observed: the product
+                # publishes on its own heartbeat, and a reader must not mistake a publish
+                # gap for an input that stopped delivering frames.
+                self.publishes = []
+                # Render-probe samples keyed by host wall-clock millisecond, deduplicated
+                # across the repeated publishes of the same ring.
+                self.render_probe = {"preview": {}, "program": {}}
                 self.stop = threading.Event()
                 self.started = time.monotonic()
                 self.thread = threading.Thread(target=self.poll, daemon=True)
@@ -485,6 +498,15 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                             snapshot.get("renderFrames"),
                             [entry for entry in entries if isinstance(entry, dict)
                              and type(entry.get("serial")) is int and int(entry["serial"]) > 0]))
+                        published = snapshot.get("publishedAtMs")
+                        if type(published) is int and (not self.publishes or published != self.publishes[-1]):
+                            self.publishes.append(published)
+                        probe = snapshot.get("renderProbe")
+                        if isinstance(probe, dict) and probe.get("enabled") is True:
+                            for channel in ("preview", "program"):
+                                for item in probe.get(channel) or []:
+                                    if isinstance(item, dict) and type(item.get("atMs")) is int:
+                                        self.render_probe[channel][int(item["atMs"])] = item
                     self.stop.wait(0.2)
 
             def report(self):
@@ -518,6 +540,10 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                             entry["stallFromMs"] = elapsed_ms
                         entry["after"] = serial
                 window_ms = self.samples[-1][0] if self.samples else 0
+                # Publish cadence inside the window. A plateau shorter than the publish
+                # interval cannot be distinguished here, so the receipt states the
+                # interval instead of implying a per-source stall.
+                publish_gaps = [b - a for a, b in zip(self.publishes, self.publishes[1:])]
                 inputs = []
                 for uuid in sorted(tracked)[:16]:
                     entry = tracked[uuid]
@@ -526,15 +552,37 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                         if stalled > entry["maxStallMs"]:
                             entry["maxStallMs"] = stalled
                             entry["stallToMs"] = window_ms
+                    # Distinct delivered-frame identities for this input inside the window.
+                    # A counter can advance while the content is the same frame; only the
+                    # digest separates "the feed repeats" from "the feed changes".
+                    feed_hashes, feed_timestamps, frame_ages = set(), set(), []
+                    for _, _, _, live in self.samples:
+                        for live_entry in live:
+                            if str(live_entry.get("uuid") or "")[:8] != uuid:
+                                continue
+                            if type(live_entry.get("frameHash")) is int and live_entry["frameHash"] >= 0:
+                                feed_hashes.add(live_entry["frameHash"])
+                            if type(live_entry.get("frameTs")) is int and live_entry["frameTs"] >= 0:
+                                feed_timestamps.add(live_entry["frameTs"])
+                            if type(live_entry.get("frameAgeMs")) is int and live_entry["frameAgeMs"] >= 0:
+                                frame_ages.append(live_entry["frameAgeMs"])
                     inputs.append({"uuid": uuid, "before": entry["before"], "after": entry["after"],
                         "advanced": type(entry["before"]) is int and type(entry["after"]) is int
                                     and entry["after"] > entry["before"],
                         "maxStallMs": entry["maxStallMs"],
-                        "stallMs": [entry["stallFromMs"], entry["stallToMs"]]
-                                   if entry["maxStallMs"] >= 900 else []})
+                        # The plateau's window, in milliseconds from window start; the
+                        # two numbers are positions, not a duration.
+                        "stallWindowMs": [entry["stallFromMs"], entry["stallToMs"]]
+                                         if entry["maxStallMs"] >= 900 else [],
+                        "distinctFeedHashes": len(feed_hashes),
+                        "distinctFeedTimestamps": len(feed_timestamps),
+                        "feedIdentityObserved": bool(feed_hashes or feed_timestamps),
+                        "maxFrameAgeMs": max(frame_ages) if frame_ages else -1})
                 rendered = 0 if render_before is None or render_after is None else max(
                     0, render_after - render_before)
-                return {"samples": len(self.samples), "windowMs": window_ms,
+                report = {"samples": len(self.samples), "windowMs": window_ms,
+                    "publishes": len(self.publishes),
+                    "publishIntervalMs": (max(publish_gaps) if publish_gaps else 0),
                     "renderFramesBefore": render_before, "renderFramesAfter": render_after,
                     "renderFramesPerSecond": (round(rendered * 1000 / window_ms, 1) if window_ms else 0),
                     "renderFramesMaxStallMs": render_stall_ms,
@@ -542,6 +590,24 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     # OBS's PLAYING state: a reopen/reconnect shows up here directly.
                     "inputNotPlayingSamples": unhealthy,
                     "inputs": inputs}
+                # The render probe runs on the host wall clock. Align it to this window by
+                # the last publish we saw, so the scene-render timeline covers exactly the
+                # frames the capture process read.
+                if self.render_probe["preview"] or self.render_probe["program"]:
+                    end = self.publishes[-1] if self.publishes else 0
+                    start = end - window_ms
+                    def probe_report(channel):
+                        series = sorted((ms, item) for ms, item in self.render_probe[channel].items()
+                            if start <= ms <= end)
+                        tiles = [len({item["cells"][index] for _, item in series
+                                     if index < len(item.get("cells") or [])}) for index in range(6)]
+                        return {"samples": len(series), "distinctCellsPerTile": tiles,
+                            "scenes": sorted({str(item.get("scene") or "")[:32] for _, item in series})[:4],
+                            "timeline": [{"atMs": ms - end, "renderFrames": item.get("renderFrames"),
+                                "cells": item.get("cells")} for _, item in series[-24:]]}
+                    report["renderProbe"] = {"preview": probe_report("preview"),
+                        "program": probe_report("program")}
+                return report
 
         def check_pixels(label, *, blank=False, repeat_first=False, reverse=False, expected_media=None,
                 projector_orders=None, quick_order=None, program_scene=None, program_media=None,
@@ -913,6 +979,90 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     evidence["pixelFailureDiagnostics"]["stalledMsAfterCapture"] = [
                         {"uuid": str(entry.get("uuid") or ""), "stalledMs": entry.get("stalledMs")}
                         for entry in later.get("videoInputs", []) if isinstance(entry, dict)]
+                    # Which layer froze each tile. Advancing input counters only prove a
+                    # frame reached the source, so three bounded measurements of the same
+                    # window are compared: the feed's own delivered-frame digest, the
+                    # host's Scene/Program render digests, and the captured window pixels.
+                    probe = serials_during_capture.get("renderProbe") or {}
+                    preview_probe = probe.get("preview") or {}
+                    program_probe = probe.get("program") or {}
+                    preview_tiles = preview_probe.get("distinctCellsPerTile") or []
+                    program_tiles = program_probe.get("distinctCellsPerTile") or []
+                    # Outside Studio mode the frontend exposes no separate preview scene,
+                    # and the Program channel is what actually renders; prefer whichever
+                    # channel has samples and say which one the verdict came from.
+                    scene_channel = "preview" if int(preview_probe.get("samples") or 0) > 0 else "program"
+                    scene_tiles = preview_tiles if scene_channel == "preview" else program_tiles
+                    feed = {str(entry.get("uuid") or ""): entry
+                            for entry in serials_during_capture.get("inputs", []) if isinstance(entry, dict)}
+                    stale_tiles = [index for index in (result.get("staleTiles") or []) if type(index) is int]
+                    slots = evidence["pixelFailureDiagnostics"]["slots"]
+                    # staleTiles and the render-probe cells are both row-major grid
+                    # positions, so they compare directly. Which camera sits in that
+                    # position depends on this capture's order, and only that camera's
+                    # feed can explain the tile.
+                    if order.startswith("quick-"):
+                        channels = [int(value) for value in order[len("quick-"):].split(",") if value.isdigit()]
+                    else:
+                        channels = {"repeat-first": [0, 0, 0, 0, 0], "reverse": [4, 3, 2, 1, 0]}.get(
+                            order, [0, 1, 2, 3, 4])
+                    stale_camera = {tile: channels[tile] if tile < len(channels) else tile for tile in stale_tiles}
+                    def feed_content_probe(indices):
+                        # Decode the fixture path itself for a bounded window. pathProgress
+                        # only proves bytes flow; hashing downscaled decoded frames proves
+                        # the loopback publisher emits *changing* content, which separates a
+                        # repeating feed from a product-side stall.
+                        out = []
+                        for index in indices[:6]:
+                            if index >= len(rtsp.urls):
+                                continue  # fixture path index is the camera index
+                            try:
+                                decoded = subprocess.run([str(ffmpeg), "-rtsp_transport", "tcp", "-i",
+                                    rtsp.urls[index], "-t", "4", "-an", "-vf", "scale=64:36",
+                                    "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=18)
+                            except (OSError, subprocess.TimeoutExpired):
+                                out.append({"index": index, "probeFailed": True})
+                                continue
+                            chunk = 64 * 36 * 3
+                            digests = {hashlib.sha256(decoded.stdout[at:at + chunk]).hexdigest()[:12]
+                                for at in range(0, len(decoded.stdout) - chunk + 1, chunk)}
+                            out.append({"index": index, "returnCode": int(decoded.returncode),
+                                "decodedFrames": len(decoded.stdout) // chunk, "distinctFrames": len(digests)})
+                        return out
+                    attribution = []
+                    for tile in stale_tiles:
+                        camera = stale_camera[tile]
+                        slot = slots[camera] if camera < len(slots) else {}
+                        uuid = str(slot.get("uuid") or "")
+                        feed_entry = feed.get(uuid) or {}
+                        scene = scene_tiles[tile] if tile < len(scene_tiles) else None
+                        program = program_tiles[tile] if tile < len(program_tiles) else None
+                        distinct_feed = int(feed_entry.get("distinctFeedHashes") or 0)
+                        if not feed_entry.get("feedIdentityObserved"):
+                            verdict = "feed-identity-unavailable"
+                        elif distinct_feed <= 1:
+                            verdict = "feed-repeats-one-frame"
+                        elif scene is not None and scene <= 1:
+                            verdict = "scene-render-frozen-while-feed-changed"
+                        elif scene is not None and scene > 1:
+                            verdict = "window-capture-stale-while-scene-render-changed"
+                        else:
+                            verdict = "undetermined-without-render-probe-samples"
+                        attribution.append({"tile": tile, "camera": camera, "order": order[:20],
+                            "uuid": uuid[:8], "role": role,
+                            "feedDistinctFramesInWindow": distinct_feed,
+                            "feedSerialAdvanced": bool(feed_entry.get("advanced")),
+                            "feedMaxFrameAgeMs": int(feed_entry.get("maxFrameAgeMs") if feed_entry else -1),
+                            "sceneRenderChannel": scene_channel,
+                            "sceneRenderDistinctTiles": scene, "programRenderDistinctTiles": program,
+                            "verdict": verdict})
+                    evidence["pixelFailureDiagnostics"]["layerAttribution"] = attribution
+                    evidence["pixelFailureDiagnostics"]["feedDecodeProbe"] = feed_content_probe(
+                        sorted(set(stale_camera.values())))
+                    evidence["pixelFailureDiagnostics"]["renderProbeWindow"] = {
+                        channel: {key: value for key, value in (probe.get(channel) or {}).items() if key != "timeline"}
+                        for channel in ("preview", "program")}
                     stalled = [entry["index"] for entry in harness["pathProgress"] if entry["flowing"] is False]
                     if (dead or unreadable or stalled) and fixture_retry:
                         # The synthetic fixture itself dropped out: restart every dead publisher,
@@ -2489,7 +2639,11 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 # "opened but silent" from "never opened".
                 "MP: Failed to open video decoder", "MP: Failed to find video codec",
                 "MP: Could not initialize audio or video", "MP: av_read_frame failed",
-                "MP: Failed to seek")
+                "MP: Failed to seek",
+                # The owned video path's two bounded OBS-log markers: an async queue that
+                # OBS dropped whole, and a media timestamp jump it had to re-base. Both
+                # explain a tile whose counters advance but whose pixels stay stale.
+                "WebOBS async video backlog", "WebOBS async timestamp jump")
             obs_logs = [path for path in (profile / "native-profile/obs-studio/logs").glob("*.txt")
                 if not path.is_symlink() and path.is_file() and path.stat().st_mtime >= boot_started_at - 2]
             evidence["currentBootObsLogPresent"] = bool(obs_logs)
@@ -2516,7 +2670,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     if any(marker in line for marker in audio_markers):
                         diagnostic_lines.append(clean)
                     if any(marker in line for marker in ("Disconnected. Reconnecting", "Reconnected.",
-                            "MP: Failed to open media", "Error opening input")):
+                            "MP: Failed to open media", "Error opening input",
+                            "WebOBS async video backlog", "WebOBS async timestamp jump")):
                         media_lines.append(clean)
                 evidence["obsDiagnosticLines"] = diagnostic_lines[-12:]
                 # Scene add/remove lines used to crowd the window above, so transport

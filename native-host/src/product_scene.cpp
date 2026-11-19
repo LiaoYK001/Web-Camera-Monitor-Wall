@@ -389,10 +389,18 @@ std::vector<ProductVideoProgress> ProductSceneGraph::video_progress() const
 		calldata_init(&data);
 		const bool called = proc_handler_call(obs_source_get_proc_handler(entry->source),
 			"webobs_get_video_progress", &data);
-		long long schema = 0, serial = -1;
-		const bool available = called && calldata_get_int(&data, "schema", &schema) && schema == 1 &&
+		long long schema = 0, serial = -1, frame_ts = -1, frame_ms = -1, frame_hash = -1;
+		// Schema 1 carries only the serial; schema 2 adds the delivered-frame timestamp,
+		// arrival millisecond and content digest. Anything else is treated as no telemetry.
+		const bool available = called && calldata_get_int(&data, "schema", &schema) && schema >= 1 && schema <= 2 &&
 			calldata_get_int(&data, "serial", &serial) && serial >= 0;
-		result.push_back({uuid, available, available ? serial : 0});
+		if (available && schema == 2) {
+			calldata_get_int(&data, "frameTs", &frame_ts);
+			calldata_get_int(&data, "frameMs", &frame_ms);
+			calldata_get_int(&data, "frameHash", &frame_hash);
+		}
+		result.push_back({uuid, available, available ? serial : 0, available ? frame_ts : -1,
+			available ? frame_ms : -1, available ? frame_hash : -1});
 		calldata_free(&data);
 	}
 	return result;
