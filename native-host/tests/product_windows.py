@@ -126,6 +126,121 @@ def process_creation_time(pid):
         kernel.CloseHandle(handle)
 
 
+# product_output.cpp sets keyint_sec 2 on both Program outputs, so a consumer that
+# joins after publishing starts lands inside the encoder's current GOP and cannot
+# decode until the next IDR arrives.
+PROGRAM_ENCODER_KEYINT_SECONDS = 2
+PROGRAM_VIDEO_WINDOW_SECONDS = PROGRAM_ENCODER_KEYINT_SECONDS * 3
+
+
+def published_video_window(ffprobe, url, window_seconds):
+    """Read decodable video from one RTSP connection across a wall-clock window.
+
+    Reading a fixed packet count is not evidence about the published picture: a
+    late consumer's first packets are P-slices with no reference picture, so a
+    20-packet read decoded zero frames twice (runs 44524750280 and 44534272424)
+    with return code 0 and "co located POCs unavailable"/"mmco: unref short
+    failure" while OBS advanced its own render counter and the relay reported a
+    connected stream. The window is therefore measured in seconds across at least
+    two keyframe intervals, and ffprobe's string pts_time is parsed rather than
+    dropped (the numeric-only check used to record a span of 0 for any stream).
+    """
+    stamps, unparsed, first_frame_ms = [], [], [-1]
+    reader_finished = threading.Event()
+    stderr_tail = [""]
+    started = time.monotonic()
+    probe = subprocess.Popen([str(ffprobe), "-v", "error", "-rtsp_transport", "tcp",
+        "-select_streams", "v:0", "-show_entries", "frame=pts_time", "-of", "csv=p=0", url],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        encoding="utf-8", errors="replace")
+
+    def read_frames():
+        try:
+            for line in iter(probe.stdout.readline, ""):
+                value = line.strip()
+                if not value:
+                    continue
+                try:
+                    stamp = float(value)
+                except ValueError:
+                    unparsed.append(value[:24])
+                    continue
+                if first_frame_ms[0] < 0:
+                    first_frame_ms[0] = int((time.monotonic() - started) * 1000)
+                stamps.append(stamp)
+        finally:
+            reader_finished.set()
+
+    def drain_stderr():
+        # Decoder warnings repeat per frame, so a full stderr pipe would block the
+        # child and turn a healthy stream into a timed-out window.
+        try:
+            stderr_tail[0] = (probe.stderr.read() or "")[-260:]
+        except (OSError, ValueError):
+            pass
+
+    readers = [threading.Thread(target=read_frames, daemon=True),
+        threading.Thread(target=drain_stderr, daemon=True)]
+    for reader in readers:
+        reader.start()
+    while time.monotonic() < started + window_seconds and not reader_finished.is_set():
+        time.sleep(0.1)
+    window_timed_out = not reader_finished.is_set()
+    if window_timed_out:
+        probe.kill()
+    try:
+        probe.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        probe.kill()
+    readers[1].join(timeout=5)
+    for pipe in (probe.stdout, probe.stderr):
+        if pipe is not None:
+            pipe.close()
+    span = (max(stamps) - min(stamps)) if len(stamps) > 1 else 0.0
+    return {"windowSeconds": window_seconds,
+        "firstDecodableFrameMs": first_frame_ms[0],
+        "windowTimedOut": window_timed_out,
+        "elapsedMs": int((time.monotonic() - started) * 1000),
+        "returnCode": int(probe.returncode or 0),
+        "stderrTail": stderr_tail[0],
+        "unparsableStamps": unparsed[:4],
+        "frames": len(stamps),
+        "stamps": stamps,
+        "ptsSpanSeconds": round(float(span), 3),
+        "measuredFramesPerSecond": round(len(stamps) / span, 2) if span > 0 else 0,
+        "monotonicTimestamps": all(later > earlier for earlier, later in zip(stamps, stamps[1:]))}
+
+
+def published_packet_window(ffprobe, url, window_seconds):
+    """Ask the relay, on a second connection, whether a late client gets an IDR.
+
+    Zero key packets across the window points at the published stream; key packets
+    that still decode nothing points at the parameter sets reaching the decoder.
+    """
+    probe = subprocess.run([str(ffprobe), "-v", "error", "-rtsp_transport", "tcp",
+        "-select_streams", "v:0", "-read_intervals", "%+00:00:%d" % window_seconds,
+        "-show_entries", "packet=pts_time,flags", "-of", "json", url],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=window_seconds + 25)
+    entries = []
+    if probe.returncode == 0:
+        entries = json.loads(probe.stdout or "{}").get("packets", []) or []
+    key_stamps = []
+    for entry in entries:
+        if "K" not in str(entry.get("flags") or ""):
+            continue
+        try:
+            key_stamps.append(float(entry.get("pts_time")))
+        except (TypeError, ValueError):
+            pass
+    return {"returnCode": int(probe.returncode), "packets": len(entries),
+        "keyframes": len(key_stamps),
+        "firstPacketIsKey": bool(entries and "K" in str(entries[0].get("flags") or "")),
+        "firstKeyPacketPts": key_stamps[0] if key_stamps else -1,
+        "keyPacketGapsSeconds": [round(b - a, 3) for a, b in zip(key_stamps, key_stamps[1:])][:6],
+        "stderrTail": (probe.stderr or "")[-200:]}
+
+
 def child_processes(powershell, pid):
     """Direct children of the native host, for on-demand process ownership claims.
 
@@ -2087,37 +2202,47 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 assert published_low > 150 and published_high > 150, \
                     "published Program audio lost one of the two fixture pitches"
                 evidence["checks"].append("program-publish-decodes-both-fixture-pitches")
-                # The frame count alone could not say whether the encoder paced too slowly,
-                # the relay refused the read, or the host's own graphics thread stalled, so
-                # this read now carries its return code, the parsed frames, the measured
-                # pace from their timestamps and the host's render counters for the same
-                # window. The required count is unchanged.
+                # A late RTSP consumer joins inside the encoder's current GOP, so the first
+                # packets can be P-slices with no reference picture: reading 20 packets
+                # decoded zero frames twice (runs 44524750280 and 44534272424) with return
+                # code 0, "co located POCs unavailable" / "mmco: unref short failure", while
+                # OBS advanced its render counter by 60 frames, laggedFrames stayed at 8 and
+                # the relay reported a connected stream. One connection is therefore read
+                # across at least two publish keyframe intervals, and the receipt names when
+                # the first decodable frame arrived and whether the window really timed out.
+                encoder_keyint_seconds = PROGRAM_ENCODER_KEYINT_SECONDS
+                video_window_seconds = PROGRAM_VIDEO_WINDOW_SECONDS
                 render_before = state().get("renderFrames")
                 lagged_before = state().get("laggedFrames")
-                stream_frames = subprocess.run([str(runtime / "bin/ffprobe.exe"), "-v", "error",
-                    "-rtsp_transport", "tcp", "-select_streams", "v:0", "-read_intervals", "%+#20",
-                    "-show_entries", "frame=pts_time", "-of", "json", playback_url],
-                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
-                frames = []
-                if stream_frames.returncode == 0:
-                    frames = json.loads(stream_frames.stdout or "{}").get("frames", []) or []
-                stamps = [entry.get("pts_time") for entry in frames if isinstance(entry, dict)
-                          and type(entry.get("pts_time")) in (int, float)]
-                span = (max(stamps) - min(stamps)) if len(stamps) > 1 else 0.0
+                video_window = published_video_window(runtime / "bin/ffprobe.exe",
+                    playback_url, video_window_seconds)
+                packet_summary = published_packet_window(runtime / "bin/ffprobe.exe",
+                    playback_url, video_window_seconds)
+                stamps = video_window["stamps"]
+                span = video_window["ptsSpanSeconds"]
+                monotonic = video_window["monotonicTimestamps"]
                 after = state()
                 evidence["programStreamVideoProbe"] = {
-                    "returnCode": int(stream_frames.returncode),
-                    "timedOut": stream_frames.returncode == 124,
-                    "stderrTail": (stream_frames.stderr or "")[-260:],
-                    "frames": len(frames),
-                    "ptsSpanSeconds": round(float(span), 3),
-                    "measuredFramesPerSecond": round(len(frames) / span, 2) if span > 0 else 0,
+                    "windowSeconds": video_window["windowSeconds"],
+                    "encoderKeyintSeconds": encoder_keyint_seconds,
+                    "firstDecodableFrameMs": video_window["firstDecodableFrameMs"],
+                    "windowTimedOut": video_window["windowTimedOut"],
+                    "elapsedMs": video_window["elapsedMs"],
+                    "returnCode": video_window["returnCode"],
+                    "stderrTail": video_window["stderrTail"],
+                    "unparsableStamps": video_window["unparsableStamps"],
+                    "frames": video_window["frames"],
+                    "ptsSpanSeconds": video_window["ptsSpanSeconds"],
+                    "measuredFramesPerSecond": video_window["measuredFramesPerSecond"],
+                    "monotonicTimestamps": monotonic,
+                    "packetProbe": packet_summary,
                     "hostRenderFramesBefore": render_before, "hostRenderFramesAfter": after.get("renderFrames"),
                     "hostLaggedFramesBefore": lagged_before, "hostLaggedFramesAfter": after.get("laggedFrames"),
                     "streamError": str((after.get("programOutput") or {}).get("streamError") or "")[:200],
                     "streamConnected": (after.get("programOutput") or {}).get("streamConnected")}
-                assert stream_frames.returncode == 0 and len(frames) >= 10, \
-                    "published Program did not deliver enough video frames"
+                assert len(stamps) >= 10 and monotonic and span >= float(encoder_keyint_seconds), \
+                    "published Program did not deliver enough decodable video frames across " \
+                    + str(video_window_seconds) + " seconds (two keyframe intervals)"
                 # The relay also republishes the same path for browsers. This gate
                 # does not perform a WebRTC handshake; it requires the WHEP endpoint
                 # to answer at all, and records that plainly rather than claiming a
@@ -2438,15 +2563,32 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 # Recovered publishing must still deliver frames, not only a stream
                 # header, so the same bounded frame window as the first publisher runs
                 # against the recovered playback URL.
-                replay_frames = subprocess.run([str(runtime / "bin/ffprobe.exe"), "-v", "error",
-                    "-rtsp_transport", "tcp", "-select_streams", "v:0", "-read_intervals", "%+#20",
-                    "-show_entries", "frame=pts_time", "-of", "json", replay_url],
-                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
-                replay_count = len(json.loads(replay_frames.stdout).get("frames", [])) \
-                    if replay_frames.returncode == 0 else 0
-                evidence["publishReplayFrameCount"] = replay_count
-                assert replay_count >= 10, \
-                    f"recovered publisher delivered {replay_count} video frames, expected at least 10"
+                # The recovered publisher is a brand-new encoder session, so this
+                # consumer joins mid-GOP exactly as the first one did: the same
+                # keyframe-spanning window and the same decodable-frame bar apply.
+                replay_window = published_video_window(runtime / "bin/ffprobe.exe",
+                    replay_url, video_window_seconds)
+                evidence["publishReplayFrameCount"] = replay_window["frames"]
+                evidence["publishReplayVideoProbe"] = {
+                    "windowSeconds": replay_window["windowSeconds"],
+                    "firstDecodableFrameMs": replay_window["firstDecodableFrameMs"],
+                    "windowTimedOut": replay_window["windowTimedOut"],
+                    "elapsedMs": replay_window["elapsedMs"],
+                    "returnCode": replay_window["returnCode"],
+                    "stderrTail": replay_window["stderrTail"],
+                    "unparsableStamps": replay_window["unparsableStamps"],
+                    "frames": replay_window["frames"],
+                    "ptsSpanSeconds": replay_window["ptsSpanSeconds"],
+                    "measuredFramesPerSecond": replay_window["measuredFramesPerSecond"],
+                    "monotonicTimestamps": replay_window["monotonicTimestamps"],
+                    "packetProbe": published_packet_window(runtime / "bin/ffprobe.exe",
+                        replay_url, video_window_seconds)}
+                assert replay_window["frames"] >= 10 \
+                    and replay_window["monotonicTimestamps"] \
+                    and replay_window["ptsSpanSeconds"] >= float(encoder_keyint_seconds), \
+                    f"recovered publisher delivered {replay_window['frames']} decodable video " \
+                    + f"frames across {video_window_seconds} seconds, expected at least 10 " \
+                    + "monotonic frames spanning one keyframe interval"
                 evidence["checks"].append("publish-recovery-delivers-frames-to-a-real-consumer")
                 assert ui("stream-program")
                 wait_for(lambda: state().get("programOutput", {}).get("streaming") is False and
