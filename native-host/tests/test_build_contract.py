@@ -282,6 +282,41 @@ class BuildContractTests(unittest.TestCase):
             self.assertIn(assertion, gate)
 
 
+    def test_mixer_identities_name_owned_helpers_without_leaking_the_run(self):
+        """A disappeared helper has to be named, and never by its private paths.
+
+        Run 44548882087 reported only a PID diff for a lost FFmpeg audio mixer. The
+        command line is the identity available here, so camera URLs and this run's
+        private roots must be replaced before anything reaches a receipt.
+        """
+        if os.name == "nt":
+            self.skipTest("fake PowerShell needs a POSIX executable")
+        spec = importlib.util.spec_from_file_location("product_windows",
+            ROOT / "native-host/tests/product_windows.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        gate = (ROOT / "native-host/tests/product_windows.py").read_text(encoding="utf-8")
+        for wiring in ("audio_mix_helper_watch", "mixer_identities(powershell, rows",
+                       "before-program-output-stop", "after-program-output-stop",
+                       "host claims"):
+            self.assertIn(wiring, gate)
+        with tempfile.TemporaryDirectory() as temporary:
+            fake = Path(temporary) / "pwsh"
+            fake.write_text("#!/usr/bin/env python3\n"
+                "print('12|C:/run/bin/ffmpeg.exe -i rtsp://127.0.0.1:55/secret filter=x')\n"
+                "print('34|C:/run/bin/ffmpeg.exe -i tcp://127.0.0.1:56/secret ' + 'y'*400)\n"
+                "print('not-a-pid|ignored')\n", encoding="utf-8")
+            fake.chmod(0o755)
+            identities = module.mixer_identities(fake, [12, 34, 99], ("C:/run/bin",))
+            self.assertEqual(sorted(identities), [12, 34])
+            self.assertIn("<url>", identities[12])
+            self.assertNotIn("rtsp://", identities[12])
+            self.assertNotIn("C:/run/bin", identities[12])
+            self.assertEqual(len(identities[34]), 160)
+            self.assertEqual(module.mixer_identities(fake, []), {})
+            broken = module.mixer_identities(Path(temporary) / "absent", [7])
+            self.assertEqual(broken, {7: "command-line-unavailable"})
+
     def test_published_packet_window_formats_the_interval_and_reports_its_own_failure(self):
         """The keyframe diagnostic must not break the measurement it accompanies.
 
