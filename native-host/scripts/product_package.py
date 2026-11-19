@@ -18,7 +18,8 @@ from release_policy import delivery, copy_delivery
 OBS_COMMIT = "fb4d98bf88fae5fc85cb11fc57f7c5e309282194"
 REQUIRED = {"bin/webobs-wall.exe", "bin/webobsd.exe", "bin/64bit/obs64.exe",
             "obs-plugins/64bit/webobs-native-host.dll", "python/python.exe",
-            "services/product/supervisor.py", "services/product/release_policy.py", "web/index.html"}
+            "services/product/supervisor.py", "services/product/product_lan.py",
+            "services/product/release_policy.py", "web/index.html"}
 PREVIEW_REQUIRED = {"START-HERE.md", "licenses/native-preview/SOURCE-MANIFEST.json",
                     "licenses/native-preview/qtbase/LICENSES/LGPL-3.0-only.txt",
                     "licenses/native-preview/qtbase/LICENSES/GPL-3.0-only.txt"}
