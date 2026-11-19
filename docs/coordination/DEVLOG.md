@@ -1,12 +1,24 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 251 · 2026-11-19T14:45:03+08:00（UTC+08）
+> 快照版本 253 · 2026-11-19T20:32:44+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #253 · 2026-11-19T20:32:44+08:00 · log
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：rc.60（run 44474401536 @ 3c9d6f6）38 项通过后失败于 native-program-take 的 pixels-program-after-take-captured（Frozen final pixels on slot 1），NSIS 安装被跳过，逐轨增益修复未到达 Windows 断言。先核清旧证据不能归因的原因：SerialWatch 读的 product-state.json 只按 2000 ms 心跳发布，inputs[].maxStallMs（2250）与 renderFramesMaxStallMs 实为发布间隔，8 个采样 serial 完全相同（35/18/10/37/38）只说明读到同一快照，而 serial 只证明帧被交给 source、不证明 OBS 画出它。本轮在同一短窗口对齐三层且不放宽像素/帧断言（提交 a1af1b9）：OBS 补丁在 get_frame() 记录帧时间戳、内容摘要与 os_gettime_ns 到达毫秒，webobs_get_video_progress 升 schema 2；product_scene 接受 schema 1/2、拒绝 3；快照新增 frameTs/frameHash/frameAgeMs（-1=无遥测）；WEBOBS_PRODUCT_RENDER_PROBE=1 时宿主按 OBS 截图 helper 模式把预览 Scene 与 Program 通道画进 ≤960x540、每 slot ≤160 ms 的离屏纹理并按同一 3x2 网格发布逐格摘要环；SerialWatch 记录 publishedAtMs/发布次数/最大发布间隔，stallMs 改名 stallWindowMs，逐输入给出窗口内 distinct frameHash/frameTs；失败时按本次 order 反查相机输出 layerAttribution，并用 ffmpeg 解码该相机回环 4 秒逐帧摘要；OBS 日志新增有界标记 WebOBS async video backlog（async 队列 ≥30 整队丢弃且清掉 cur_async_frame）与 WebOBS async timestamp jump。修掉两处会在 MSVC 失败的写法：source->name→source->context.name、不存在的 os_time_msec()→os_gettime_ns()/1000000。本机 git apply --check 与 patch -p1 通过，容器内 -fsyntax-only 全绿，native-host Python 测试全绿。已按新基线 rebase 并推送 #70 d772808、#71 cd3dd2f、#74 42bc704、#75 705fa08、#76 937129b，并派发 rc.61（run 44524750280，soak_minutes=0）。按用户指示：不合并、不跑两小时长稳；TAKE、逐轨增益与完整 NSIS 须在同一轮通过才推进合并与冻结候选。探针开启的同机 CPU/GPU 窗口需在正式对比回执中披露，不当作 OBS 等价证据。
+- 证据：gh run 44524750280 = 5.1.0-rc.61 @ 937129b7c759132b7f7f6af632ac72e8bc7dccb2；commit a1af1b9（codex/v51-r3-output）；rebased heads d772808/cd3dd2f/42bc704/705fa08/937129b；pinned OBS fb4d98bf git apply --check 与 patch -p1 通过；Fedora 44 容器（gcc/gcc-c++、Qt6、jansson、simde、uthash）-fsyntax-only exit=0；test_build_contract.py 47/47、test_pixels.py 28（2 skip）；rc.60 回执 /tmp/rc60rec.QsaP
+- 源码：`2d4e249652889bce85d6d652ef8d2671fcc6d327`
+## #252 · 2026-11-19T20:32:35+08:00 · update
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：rc.60 归因与三层同窗测量已提交 a1af1b9；rc.61 已派发，不合并、不长稳 / rc.60 attribution and three-layer same-window measurement committed at a1af1b9; rc.61 dispatched, no merge and no soak
+- 证据：commit a1af1b9; gh run 44524750280 @ 937129b = 5.1.0-rc.61 (soak_minutes=0); 容器内应用补丁后的 libobs/obs-source.c 与 product_window/product_scene/product_scene_libobs_test -fsyntax-only 全部 exit=0；test_build_contract 47/47、test_pixels 28（2 skip）
+- 源码：`2d4e249652889bce85d6d652ef8d2671fcc6d327`
 ## #251 · 2026-11-19T14:45:03+08:00 · log
 
 - Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
