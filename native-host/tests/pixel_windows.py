@@ -367,11 +367,20 @@ def picture_counts(frames, require_b_frames: bool) -> tuple[int, int]:
 
 
 def _decode_pcm(ffmpeg: Path, source: str, stream_index: int, sample_rate: int,
-                duration: float, filters: tuple[str, ...] = ()) -> array.array | None:
-    """Decode one audio stream into mono signed 16-bit samples with the locked FFmpeg."""
+                duration: float, filters: tuple[str, ...] = (),
+                start: float = 0.0) -> array.array | None:
+    """Decode one audio stream into mono signed 16-bit samples with the locked FFmpeg.
+
+    ``start`` selects an analysis window inside a finished file. A live RTSP source
+    has nothing to seek, so a positive start there is a caller error rather than an
+    option FFmpeg would silently ignore.
+    """
+    if start < 0 or (start > 0 and source.startswith(("rtsp://", "rtsps://"))):
+        raise ValueError("the audio analysis window is invalid for this source")
     transport = ["-rtsp_transport", "tcp"] if source.startswith("rtsp://") else []
+    seek = [] if start <= 0 else ["-ss", f"{start:.3f}"]
     command = [str(ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin", *transport,
-        "-i", source, "-map", f"0:a:{stream_index}"]
+        *seek, "-i", source, "-map", f"0:a:{stream_index}"]
     if filters:
         command += ["-af", ",".join(filters)]
     command += ["-c:a", "pcm_s16le", "-ac", "1", "-ar", str(sample_rate), "-t", f"{duration:.1f}",
@@ -404,19 +413,8 @@ def band_rms(ffmpeg: Path, source: str, stream_index: int, *, lowpass: float = 0
     return round(math.sqrt(sum(value * value for value in samples) / len(samples)), 1)
 
 
-def tone_amplitude(ffmpeg: Path, source: str, stream_index: int, frequency: float, *,
-                   sample_rate: int = 8000, duration: float = 3.0) -> float:
-    """Lock-in amplitude of one exact pitch inside a decoded stream.
-
-    band_rms proves that a band carries energy, but FFmpeg's lowpass/highpass are
-    two-pole filters: a 440 Hz tone still leaks measurably above a 660 Hz
-    highpass, so band energy cannot prove the OTHER pitch is absent. Correlating
-    the samples with sin/cos at the target frequency answers the presence and
-    absence questions directly and needs no third-party dependency.
-    """
-    samples = _decode_pcm(ffmpeg, source, stream_index, sample_rate, duration)
-    if samples is None:
-        raise AssertionError("decoded audio window is shorter than one second")
+def _correlate(samples: array.array, frequency: float, sample_rate: int) -> float:
+    """Lock-in amplitude of one pitch: 2 x the mean projection onto sin/cos."""
     step = 2  # 4 kHz analysis rate still covers the fixture pitches.
     values = samples[::step]
     rate = sample_rate / step
@@ -428,6 +426,65 @@ def tone_amplitude(ffmpeg: Path, source: str, stream_index: int, frequency: floa
         sine += value * math.sin(angle)
         cosine += value * math.cos(angle)
     return round(2.0 * math.hypot(sine, cosine) / len(values), 1)
+
+
+def tone_amplitude(ffmpeg: Path, source: str, stream_index: int, frequency: float, *,
+                   sample_rate: int = 8000, duration: float = 3.0,
+                   start: float = 0.0) -> float:
+    """Lock-in amplitude of one exact pitch inside a decoded stream.
+
+    band_rms proves that a band carries energy, but FFmpeg's lowpass/highpass are
+    two-pole filters: a 440 Hz tone still leaks measurably above a 660 Hz
+    highpass, so band energy cannot prove the OTHER pitch is absent. Correlating
+    the samples with sin/cos at the target frequency answers the presence and
+    absence questions directly and needs no third-party dependency.
+    """
+    samples = _decode_pcm(ffmpeg, source, stream_index, sample_rate, duration, start=start)
+    if samples is None:
+        raise AssertionError("decoded audio window is shorter than one second")
+    return _correlate(samples, frequency, sample_rate)
+
+
+def steady_tone_window(ffmpeg: Path, source: str, stream_index: int, *, steady,
+                       measure=(), minimum: float = 2.0, step: float = 0.5,
+                       sample_rate: int = 8000, continuity: float = 0.75,
+                       audible: float = 200.0) -> dict:
+    """Measure pitches inside a window where the steady pitches do not drift.
+
+    A Program recording can start while the owned audio mixer is still feeding
+    lead-in silence for a track whose RTSP audio arrived late. Averaging a tone
+    over a window that contains that silence understates every pitch by the
+    silence fraction, which is what made rc.59's gain reference look as if the
+    untouched track had risen. This scans the finished file for a window in which
+    each ``steady`` pitch holds the same amplitude across both halves, measures
+    every requested pitch there, and names the scanned amplitudes when no such
+    window exists instead of averaging the drift away.
+    """
+    scanned = []
+    position = 0.0
+    while len(scanned) < 8:
+        window = _decode_pcm(ffmpeg, source, stream_index, sample_rate, minimum, start=position)
+        first = _decode_pcm(ffmpeg, source, stream_index, sample_rate, minimum / 2, start=position)
+        second = _decode_pcm(ffmpeg, source, stream_index, sample_rate, minimum / 2,
+            start=position + minimum / 2)
+        if window is None or first is None or second is None or \
+                len(window) < int(sample_rate * minimum * 0.9):
+            break
+        halves = {str(int(frequency)): [_correlate(first, frequency, sample_rate),
+            _correlate(second, frequency, sample_rate)] for frequency in steady}
+        settled = all(low >= audible and high >= audible and
+            low * continuity <= high and high * continuity <= low
+            for low, high in halves.values())
+        scanned.append({"start": round(position, 2), "halves": halves})
+        if settled:
+            amplitudes = {str(int(frequency)): _correlate(window, frequency, sample_rate)
+                for frequency in (*steady, *measure)}
+            return {"start": round(position, 2), "seconds": minimum,
+                "amplitudes": amplitudes, "continuity": halves, "scanned": scanned[:8]}
+        position = round(position + step, 2)
+    raise AssertionError("no continuous " + f"{minimum}s window for "
+        + ",".join(str(int(frequency)) for frequency in steady)
+        + " in the decoded file: " + json.dumps(scanned, sort_keys=True)[:600])
 
 
 def tone_probe(ffmpeg: Path, source: str, stream_index: int, *, sample_rate: int = 8000,
