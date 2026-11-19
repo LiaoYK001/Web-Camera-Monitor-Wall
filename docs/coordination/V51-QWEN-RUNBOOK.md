@@ -120,7 +120,44 @@ podman exec v51qt bash -lc 'cd /wt && python3 -B native-host/tests/test_build_co
 
 再用回执里的 `audioMixHelperWatch` 各行直接调用 `watched_ports()`/`claimed_ports()`：每个采样都要求声明端口无人服务集合为空，停止 Program 输出后要求存活端口等于声明端口。rc.67 的脱敏回执在这一步给出 `live=[51078,51389] claimed=[51389]`（首采样，游离辅助进程属于正在释放的 Scene 图）与停止前后 `live=[51389] claimed=[51389]`，结论为收敛通过，说明该轮失败只来自门禁把观察返回的 PID 列表当成回执行。
 
-当前轮：`5.1.0-rc.68`（run [44577184643](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44577184643)，派发栈顶 `2c0e99dc04a81fd8d92f878a5e2f6da682507420`，`soak_minutes=0`）。这是 v5.1 里第一次可能真正运行 NSIS 安装态脚本（`installed-ui`、`nsis`、`restore-pair`、`legacy-import`、`lan`、`updater`、`upgraded-ui`）：门禁步骤失败时该步骤不会运行，本机也没有 PowerShell 可预解析，只能静态核对被调用的 Python 文件与其参数。NSIS 安装步骤只在门禁步骤成功时运行，所以本轮也是第一次可能取得安装态回执（`installed-ui`、`nsis`、`restore-pair`、`legacy-import`、`lan`）。只有 TAKE、发布视频、逐轨增益与完整 NSIS 在同一轮齐全，才推进合并与冻结候选；若某声明端口仍无存活辅助进程，才在产品侧补混音监督（在同一端口重新拉起并保持源设置），并让断言继续覆盖重复与游离辅助进程。
+### rc.68 起：音调幅度按短段带宽测量 / tone amplitude is measured per short band segment (since rc.68)
+
+rc.68（run 44577184643，栈顶 `2c0e99d`）49 项通过，首个失败点是 `program-track-controls`：
+`the unchanged gain configuration measured differently twice: {'440': 0.58, '880': 0.359}`。
+同一份未改动的增益配置两次录制却测出不同幅度，说明失败在测量而不是产品。本机用真实
+FFmpeg（ffmpeg 8.1.3）把录制形状回放出来：混音重采样带漂移校正，流抖动时还会交接一个被
+丢弃的音频块，因此文件里的音调不是同一段连续相位。对整窗做一次性投影，读到的是各段投影
+之和：在 1.2 s 处丢掉 40 ms，440 Hz 的读数从 2890.0 掉到 991.3（比值 0.343）、880 Hz 掉到
+0.814；偏离标称 0.4 Hz 时比值 0.286。两个音调在同一处时间断裂下的比值比（0.359/0.58 ≈
+cos(2·比值差)）也正好符合丢弃约 30 个采样造成的相位旋转，而不是 400 ppm 以上的时钟漂移。
+
+从 `768fa07` 起，`pixel_windows.pitch_projection()` 给出幅度和诊断：把窗口切成 0.5 s 短段，
+每段在 ±1 Hz 带宽内取最强投影，再取各段的**平均**。三点理由：平均（不是中位数）保证窗口
+内的静音仍按静音比例低估，rc.59 的 lead-in 保护仍然有效；真正更安静的窗口仍测得更低；
+每个测量音高的 `peakHz` 与 `segmentAmplitudes`、`weakestSegment` 都落进回执，所以真实的
+丢包仍然看得见，只是不再让读数塌陷。验收阈值一字未改（可闻 >200、缺失 <60、
+增益比值 0.05–0.55、未改音轨比值 0.6–1.5、对照比值 0.8–1.25）。增益对照的测量证据现在写在
+断言之前，rc.68 那次失败只在断言文本里留下两个比值，回执里没有可复核的幅度、窗口与分段。
+
+读法：`programTrackGain.toneReadings.reference|repeat|reducedToneReadings`。若两个参考窗口的
+`peakHz` 都停在标称值而比值仍偏离，才是真实的电平漂移；若 `weakestSegment` 明显低于
+`amplitude`，说明该窗口里有一次音频交接断裂，属测量可见的正常抖动，不应当成产品缺陷。
+本地回归在 `native-host/tests/test_pixels.py` 的 `AudioWindowContractTests`（真实 FFmpeg，
+Fedora 可跑）：丢弃块对照、偏离标称的音调、相邻音高仍判为缺失、回执形状；把
+`pixel_windows.py` 换回修复前版本会分别得到 0.343、0.286 与 `toneReadings` KeyError。
+
+### 公开仓库审计：测试夹具里的 RTSP  userinfo 必须登记 / test fixtures must declare their RTSP userinfo
+
+`public-audit` 的 `Audit and build the public PWA` 步骤用 `git grep --cached` 扫
+`rtsps?://[^space/@]+(:[^space/@]*)?@`，命中项必须在 `tests/run-public-audit.sh` 与
+`tests/run-public-audit.ps1` 的允许列表里按 `path|userinfo`（sh）或 `path -> userinfo 列表`（ps1）
+登记。混音辅助进程夹具需要携带 userinfo 才能证明净化器真的剥离凭据，因此从 `e5a87b0` 起
+用仓库既有约定 `fixture-user:fixture-password` 加 TEST-NET 文档网段 `192.0.2.9`，并登记该
+引用；未登记会让 #67/#70/#71/#74/#75/#76 的 PR 检查全红并阻塞合并。本机复跑该规则：
+在目标 worktree 里按同一 pattern 与允许列表比对，输出应为 `RTSP AUDIT OK`（注意 `git grep
+--cached` 读索引，改动要先 `git add` 才能复跑）。
+
+当前轮：`5.1.0-rc.69`（run [44587525224](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44587525224)，派发栈顶 `e955d9ea5d7947917a4a85292b923c5e91afc6f6`，`soak_minutes=0`；监视日志 `/tmp/watch69.log`）。上一轮 `5.1.0-rc.68`（run [44577184643](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44577184643)，派发栈顶 `2c0e99dc04a81fd8d92f878a5e2f6da682507420`，`soak_minutes=0`）。rc.69 是 v5.1 里第一次可能真正运行 NSIS 安装态脚本（`installed-ui`、`nsis`、`restore-pair`、`legacy-import`、`lan`、`updater`、`upgraded-ui`）：门禁步骤失败时该步骤不会运行，本机也没有 PowerShell 可预解析，只能静态核对被调用的 Python 文件与其参数。NSIS 安装步骤只在门禁步骤成功时运行，所以本轮也是第一次可能取得安装态回执（`installed-ui`、`nsis`、`restore-pair`、`legacy-import`、`lan`）。只有 TAKE、发布视频、逐轨增益与完整 NSIS 在同一轮齐全，才推进合并与冻结候选；若某声明端口仍无存活辅助进程，才在产品侧补混音监督（在同一端口重新拉起并保持源设置），并让断言继续覆盖重复与游离辅助进程。
 
 ## 4. 全栈通过后走到成品
 
