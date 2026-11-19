@@ -388,6 +388,86 @@ class BuildContractTests(unittest.TestCase):
                 reader([12, 34])
             self.assertIn("watch row", str(wrong_shape.exception))
 
+    def test_mix_watch_returns_the_recorded_row_so_the_port_chain_can_be_compared(self):
+        """Collect, record and compare mix state on one shape, replayed from rc.67's values.
+
+        Run 44568325933 already proved the ports are readable and that the host claimed
+        exactly one mix with `mixerPort=51389`, yet the round died on a TypeError because
+        the watch handed back the helper PID list and the port comparison then read
+        `row["hostClaims"]` off that list. This replays the whole chain - enumerate helpers,
+        name them, record the row, compare ports - against the receipt's own shapes, so the
+        chain that only ever ran on a Windows runner is checked on Linux too. With the
+        pre-fix watch it fails on the returned shape instead of reporting a mix verdict.
+        """
+        spec = importlib.util.spec_from_file_location("product_windows",
+            ROOT / "native-host/tests/product_windows.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        source = (ROOT / "native-host/tests/product_windows.py").read_text(encoding="utf-8")
+        node = next(item for item in ast.walk(ast.parse(source))
+            if isinstance(item, ast.FunctionDef) and item.name == "audio_mix_helper_watch")
+        code = ast.get_source_segment(source, node)
+        self.assertIn("def audio_mix_helper_watch", code)
+        exec(compile(code, str(ROOT / "native-host/tests/product_windows.py"), "exec"),
+            module.__dict__)
+
+        class AlivePublisher:
+            def poll(self):
+                return None
+
+        helpers = {}
+
+        def identity(port):
+            return {"identity": f"C:/<private>/bin/ffmpeg.exe -f mpegts tcp:{port}",
+                "tail": f"-c:a aac -f mpegts tcp:{port}", "port": port}
+
+        def fake_child_processes(powershell, pid):
+            return [(pid, "ffmpeg.exe") for pid in sorted(helpers)]
+
+        def fake_mixer_identities(powershell, pids, private_values=()):
+            return {pid: helpers[pid] for pid in pids}
+
+        claim = [{"sourceId": "fixture-alt-offset.fixture-alt-source", "mixers": 2,
+            "processExitCode": -1, "available": True, "active": True, "mixerPort": 51389}]
+        module.child_processes = fake_child_processes
+        module.mixer_identities = fake_mixer_identities
+        module.state = lambda: {"pid": 4321, "audioSources": claim}
+        module.rtsp = type("FixtureState", (), {"publishers": [AlivePublisher(), AlivePublisher()]})()
+        module.evidence = {}
+        module.powershell = "powershell"
+        module.private = module.runtime = module.profile = "C:/run/private"
+        # rc.67's first sample: one retiring graph still holds port 51078 while the only
+        # mix the host claims reads 51389, so nothing the host claims may be starved.
+        helpers.update({12: identity(51078), 13: identity(51389)})
+        start = module.audio_mix_helper_watch("publish-disconnect-start")
+        self.assertIsInstance(start, dict,
+            "the watch has to hand back the recorded row, not the helper PID list")
+        self.assertIs(module.evidence["audioMixHelperWatch"][-1], start)
+        self.assertEqual(module.watched_ports(start), [51078, 51389])
+        self.assertEqual(module.claimed_ports(start), [51389])
+        self.assertEqual(sorted(set(module.claimed_ports(start)) - set(module.watched_ports(start))),
+            [], "a mix the host claims must have a live helper at the first sample")
+        self.assertEqual([item["state"] for item in start["fixturePublishers"]], ["alive", "alive"])
+        self.assertEqual(start["otherHelpers"], [])
+        self.assertTrue(all(item["tail"].endswith("tcp:51078") or item["tail"].endswith("tcp:51389")
+            for item in start["processes"]), "the tail has to keep naming the mix target")
+        # rc.67's sample after Program output stopped: the retiring graph's helper is gone
+        # and the claimed port is still served, which the convergence bar accepts.
+        helpers.clear()
+        helpers.update({13: identity(51389)})
+        after = module.audio_mix_helper_watch("after-program-output-stop")
+        self.assertIsInstance(after, dict)
+        self.assertEqual(module.watched_ports(after), module.claimed_ports(after))
+        self.assertEqual(module.claimed_ports(after), [51389])
+        self.assertEqual(module.watched_ports(after), [51389])
+        # A claimed port that loses its helper must still read as an unserved mix, so the
+        # convergence verdict is not just the happy path of this replay.
+        helpers.clear()
+        helpers.update({13: identity(51078)})
+        starved = module.audio_mix_helper_watch("mix-ports-still-unresolved")
+        self.assertEqual(sorted(set(module.claimed_ports(starved)) - set(module.watched_ports(starved))),
+            [51389], "a claimed port without a live helper has to be reported as unserved")
+
     def test_published_packet_window_formats_the_interval_and_reports_its_own_failure(self):
         """The keyframe diagnostic must not break the measurement it accompanies.
 
