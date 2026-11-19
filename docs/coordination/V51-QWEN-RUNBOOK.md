@@ -67,6 +67,15 @@ python3 "$project/scripts/v51-ci-gate.py" 44385767337 \
 4. 先在 Fedora 用合成媒体和实际解码工具复现相关行为。在实际源码 worktree 运行 `python3 -B native-host/tests/test_build_contract.py` 和 `git diff --check`。然后在修复后的全栈顶层派发 Windows `product_mode=true complete=true soak_minutes=0` 的新候选，核对新版本是否已用并登记完整 SHA。再次失败时从新回执首个失败点继续，保留此前同版本路径的证据。
 5. 增益通过后核对 `program-track-offset` 和 `program-publish-disconnect`。偏移当前检查混音参数，声学偏移需要实际输出证据。断开私有中继后验证明确报错、成功恢复和真实消费者收到推进的视频帧。当前传输为 OBS 回环 RTMP → MediaMTX → RTSP/WHEP。HTTP 端点应答只证明 WHEP 端点可达，浏览器握手及出画面需要单独验证。
 
+### rc.60 起改到的两个失败面：TAKE 后的冻结层级与 Program 发布帧数 / the two failure faces since rc.60
+
+增益的 Fedora 对照已完成，Windows 侧现在先停在别处：rc.60（run 44474401536）停在 `native-program-take` 像素，rc.61（run 44524750280）通过 TAKE 后停在 `program-streaming` 的 `published Program did not deliver enough video frames`。两处都按“一轮只验证一个已定位失败点”处理。
+
+- 发布帧数：读回执里的 `programStreamVideoProbe`（ffprobe 返回码、stderr 片段、实际帧数、`pts_time` 跨度、实测帧率、读取前后的宿主 `renderFrames`/`laggedFrames`、`streamError`）。返回码非 0 指向中继或读取路径，帧数与实测帧率过低指向编码器 pacing，`renderFrames` 在窗口内停滞指向宿主图形线程。断言阈值未放宽，不要用重试掩盖。
+- 渲染探针现在是按窗口开的：宿主只在 `product-state.json` 同目录的 `product-render-probe.control`（`{"schema":1,"untilMs":<unix ms>}`）打开的窗口内绘制，缺文件、窗口过期或 `untilMs: 0` 都不绘制。像素断言所在窗口内探针关闭，所以像素与发布帧证据不含探针开销；只有像素断言即将失败时才额外采一次探针开启的短窗口，写进 `pixelFailureDiagnostics.probeOnWindow`。若该窗口画面重新流动而断言窗口是冻结的，说明冻结依赖探针会改变的状态（源 show/activate 或只在绘制时推进的图形线程），不是馈送；若同样冻结，看探针自身的逐格摘要判断 Scene 渲染是否在底层变化。
+
+Probe draws are window-scoped: the host only draws while `product-render-probe.control` (next to `product-state.json`, `{"schema":1,"untilMs":<unix ms>}`) has an open window, so an absent file, an expired window or `untilMs: 0` draws nothing. Asserted pixel windows run with the probe closed, and only a pixel failure adds one probe-open capture in `pixelFailureDiagnostics.probeOnWindow`. Read `programStreamVideoProbe` for the published-frame failure instead of retrying the same SHA.
+
 ## 4. 全栈通过后走到成品
 
 | 次序 | 要完成的动作 | 可接受的证据 |

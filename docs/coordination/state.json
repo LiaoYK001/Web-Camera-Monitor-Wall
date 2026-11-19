@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 253,
-  "updated_at": "2026-11-19T20:32:44+08:00",
+  "revision": 254,
+  "updated_at": "2026-11-19T21:31:51+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1303,12 +1303,14 @@
         "python3 scripts/v51-ci-gate.py 44385767337 --sha a5337f8... --version 5.1.0-rc.59 → result inspect-first-failure; gainOne 440=1261.6 880=828.1; gainPointTwo 440=2164.5 880=432.2",
         "run 44385767337 receipt programTrackGain {1261.6,828.1}/{2164.5,432.2}; local Fedora reproduction with the product graph; native-host/tests/test_pixels.py AudioWindowContractTests 4/4; run 44474401536 queued at 3c9d6f6",
         "commit a1af1b9; gh run 44524750280 @ 937129b = 5.1.0-rc.61 (soak_minutes=0); 容器内应用补丁后的 libobs/obs-source.c 与 product_window/product_scene/product_scene_libobs_test -fsyntax-only 全部 exit=0；test_build_contract 47/47、test_pixels 28（2 skip）",
-        "gh run 44524750280 = 5.1.0-rc.61 @ 937129b7c759132b7f7f6af632ac72e8bc7dccb2；commit a1af1b9（codex/v51-r3-output）；rebased heads d772808/cd3dd2f/42bc704/705fa08/937129b；pinned OBS fb4d98bf git apply --check 与 patch -p1 通过；Fedora 44 容器（gcc/gcc-c++、Qt6、jansson、simde、uthash）-fsyntax-only exit=0；test_build_contract.py 47/47、test_pixels.py 28（2 skip）；rc.60 回执 /tmp/rc60rec.QsaP"
+        "gh run 44524750280 = 5.1.0-rc.61 @ 937129b7c759132b7f7f6af632ac72e8bc7dccb2；commit a1af1b9（codex/v51-r3-output）；rebased heads d772808/cd3dd2f/42bc704/705fa08/937129b；pinned OBS fb4d98bf git apply --check 与 patch -p1 通过；Fedora 44 容器（gcc/gcc-c++、Qt6、jansson、simde、uthash）-fsyntax-only exit=0；test_build_contract.py 47/47、test_pixels.py 28（2 skip）；rc.60 回执 /tmp/rc60rec.QsaP",
+        "rc.61 回执 /tmp/rc61rec.xbza/native-product-integration-receipts-5.1.0-rc.61/native-product-entry-ui.json：checks 42、failurePhase=program-streaming、programStreamBandRms {below600Hz:1379.3,above660Hz:911.2}、WebOBS async backlog/timestamp jump 均为 0；TAKE、逐轨总线录像与发布双音调都已通过",
+        "本机验证：Fedora 44 容器内 product_window.cpp/product_scene.cpp -fsyntax-only -Wall -Wextra exit=0；应用补丁后的 libobs/obs-source.c -fsyntax-only -Wall exit=0（patch -p1 通过）；native-host/tests/test_*.py 全套通过（两个需 --probe 的真机探针除外）；git diff --check 干净"
       ],
       "blocker": "",
-      "next_step": "读 rc.61（run 44524750280 @ 937129b）回执：先看 native-program-take 的 layerAttribution/feedDecodeProbe/renderProbe 判定冻结在哪一层，再确认 program-track-controls 与 NSIS 安装态在同一个 run 全绿；三者同轮通过才按 #67→#70→#71→#74→#75→#76 双语合入 dev，并冻结候选（soak 120 + scripts/v51-ci-gate.py --freeze + publish_candidate.py --verify-only→--confirm）。/ Read the rc.61 receipt: name the frozen layer from layerAttribution/feedDecodeProbe/renderProbe at native-program-take, then require per-track gain and the NSIS install to pass in the same run before merging the stack and freezing the candidate.",
-      "updated_at": "2026-11-19T20:32:44+08:00",
-      "last_note": "rc.60（run 44474401536 @ 3c9d6f6）38 项通过后失败于 native-program-take 的 pixels-program-after-take-captured（Frozen final pixels on slot 1），NSIS 安装被跳过，逐轨增益修复未到达 Windows 断言。先核清旧证据不能归因的原因：SerialWatch 读的 product-state.json 只按 2000 ms 心跳发布，inputs[].maxStallMs（2250）与 renderFramesMaxStallMs 实为发布间隔，8 个采样 serial 完全相同（35/18/10/37/38）只说明读到同一快照，而 serial 只证明帧被交给 source、不证明 OBS 画出它。本轮在同一短窗口对齐三层且不放宽像素/帧断言（提交 a1af1b9）：OBS 补丁在 get_frame() 记录帧时间戳、内容摘要与 os_gettime_ns 到达毫秒，webobs_get_video_progress 升 schema 2；product_scene 接受 schema 1/2、拒绝 3；快照新增 frameTs/frameHash/frameAgeMs（-1=无遥测）；WEBOBS_PRODUCT_RENDER_PROBE=1 时宿主按 OBS 截图 helper 模式把预览 Scene 与 Program 通道画进 ≤960x540、每 slot ≤160 ms 的离屏纹理并按同一 3x2 网格发布逐格摘要环；SerialWatch 记录 publishedAtMs/发布次数/最大发布间隔，stallMs 改名 stallWindowMs，逐输入给出窗口内 distinct frameHash/frameTs；失败时按本次 order 反查相机输出 layerAttribution，并用 ffmpeg 解码该相机回环 4 秒逐帧摘要；OBS 日志新增有界标记 WebOBS async video backlog（async 队列 ≥30 整队丢弃且清掉 cur_async_frame）与 WebOBS async timestamp jump。修掉两处会在 MSVC 失败的写法：source->name→source->context.name、不存在的 os_time_msec()→os_gettime_ns()/1000000。本机 git apply --check 与 patch -p1 通过，容器内 -fsyntax-only 全绿，native-host Python 测试全绿。已按新基线 rebase 并推送 #70 d772808、#71 cd3dd2f、#74 42bc704、#75 705fa08、#76 937129b，并派发 rc.61（run 44524750280，soak_minutes=0）。按用户指示：不合并、不跑两小时长稳；TAKE、逐轨增益与完整 NSIS 须在同一轮通过才推进合并与冻结候选。探针开启的同机 CPU/GPU 窗口需在正式对比回执中披露，不当作 OBS 等价证据。"
+      "next_step": "读 rc.62（run 44534272424 @ f88b525）回执：确认 TAKE、逐轨增益与完整 NSIS 在同一轮通过后再合并 #67→#70→#71→#74→#75→#76 并冻结候选；若仍停在发布视频帧，用 programStreamVideoProbe 的返回码/实测帧率与宿主 renderFrames/laggedFrames 判定是编码器 pacing 还是中继读取；本轮不合并不跑两小时长稳。",
+      "updated_at": "2026-11-19T21:31:51+08:00",
+      "last_note": "rc.61（run 44524750280 @ 937129b）42 项通过后首次不再停在 TAKE，改停在 program-streaming：published Program did not deliver enough video frames。该断言原先没有 ffprobe 返回码/stderr/帧数/pts 跨度与宿主渲染计数，无法区分编码器 pacing、中继拒读与宿主图形线程停滞；已补 programStreamVideoProbe 且阈值不变。同时把 render probe 改为只在 harness 通过 product-render-probe.control 打开的窗口内绘制（tick ≤250 ms 读一次，缺文件/过期/untilMs:0 都不绘制），像素断言窗口内关闭，只在像素断言即将失败时加一次探针开启的采集（pixelFailureDiagnostics.probeOnWindow），避免探针拖慢发布 pacing 或用 inc_showing 复活播放掩盖冻结。已在 f88b525（rebased heads 2a635b3/8f5e5b4/fade489/148fa38）派发 5.1.0-rc.62（run 44534272424，soak_minutes=0）。"
     },
     {
       "id": "COORD-008",
@@ -4426,6 +4428,19 @@
         "gh run 44524750280 = 5.1.0-rc.61 @ 937129b7c759132b7f7f6af632ac72e8bc7dccb2；commit a1af1b9（codex/v51-r3-output）；rebased heads d772808/cd3dd2f/42bc704/705fa08/937129b；pinned OBS fb4d98bf git apply --check 与 patch -p1 通过；Fedora 44 容器（gcc/gcc-c++、Qt6、jansson、simde、uthash）-fsyntax-only exit=0；test_build_contract.py 47/47、test_pixels.py 28（2 skip）；rc.60 回执 /tmp/rc60rec.QsaP"
       ],
       "git_revision": "2d4e249652889bce85d6d652ef8d2671fcc6d327"
+    },
+    {
+      "sequence": 254,
+      "at": "2026-11-19T21:31:51+08:00",
+      "agent": "qwen38-next-v51-20261119-01",
+      "task": "V51-008",
+      "action": "update",
+      "note": "rc.61（run 44524750280 @ 937129b）42 项通过后首次不再停在 TAKE，改停在 program-streaming：published Program did not deliver enough video frames。该断言原先没有 ffprobe 返回码/stderr/帧数/pts 跨度与宿主渲染计数，无法区分编码器 pacing、中继拒读与宿主图形线程停滞；已补 programStreamVideoProbe 且阈值不变。同时把 render probe 改为只在 harness 通过 product-render-probe.control 打开的窗口内绘制（tick ≤250 ms 读一次，缺文件/过期/untilMs:0 都不绘制），像素断言窗口内关闭，只在像素断言即将失败时加一次探针开启的采集（pixelFailureDiagnostics.probeOnWindow），避免探针拖慢发布 pacing 或用 inc_showing 复活播放掩盖冻结。已在 f88b525（rebased heads 2a635b3/8f5e5b4/fade489/148fa38）派发 5.1.0-rc.62（run 44534272424，soak_minutes=0）。",
+      "evidence": [
+        "rc.61 回执 /tmp/rc61rec.xbza/native-product-integration-receipts-5.1.0-rc.61/native-product-entry-ui.json：checks 42、failurePhase=program-streaming、programStreamBandRms {below600Hz:1379.3,above660Hz:911.2}、WebOBS async backlog/timestamp jump 均为 0；TAKE、逐轨总线录像与发布双音调都已通过",
+        "本机验证：Fedora 44 容器内 product_window.cpp/product_scene.cpp -fsyntax-only -Wall -Wextra exit=0；应用补丁后的 libobs/obs-source.c -fsyntax-only -Wall exit=0（patch -p1 通过）；native-host/tests/test_*.py 全套通过（两个需 --probe 的真机探针除外）；git diff --check 干净"
+      ],
+      "git_revision": "8c9c74bcd2f654805280bb127f5daece35f4e599"
     }
   ]
 }

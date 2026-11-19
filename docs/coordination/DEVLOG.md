@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 253 · 2026-11-19T20:32:44+08:00（UTC+08）
+> 快照版本 254 · 2026-11-19T21:31:51+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #254 · 2026-11-19T21:31:51+08:00 · update
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：rc.61（run 44524750280 @ 937129b）42 项通过后首次不再停在 TAKE，改停在 program-streaming：published Program did not deliver enough video frames。该断言原先没有 ffprobe 返回码/stderr/帧数/pts 跨度与宿主渲染计数，无法区分编码器 pacing、中继拒读与宿主图形线程停滞；已补 programStreamVideoProbe 且阈值不变。同时把 render probe 改为只在 harness 通过 product-render-probe.control 打开的窗口内绘制（tick ≤250 ms 读一次，缺文件/过期/untilMs:0 都不绘制），像素断言窗口内关闭，只在像素断言即将失败时加一次探针开启的采集（pixelFailureDiagnostics.probeOnWindow），避免探针拖慢发布 pacing 或用 inc_showing 复活播放掩盖冻结。已在 f88b525（rebased heads 2a635b3/8f5e5b4/fade489/148fa38）派发 5.1.0-rc.62（run 44534272424，soak_minutes=0）。
+- 证据：rc.61 回执 /tmp/rc61rec.xbza/native-product-integration-receipts-5.1.0-rc.61/native-product-entry-ui.json：checks 42、failurePhase=program-streaming、programStreamBandRms {below600Hz:1379.3,above660Hz:911.2}、WebOBS async backlog/timestamp jump 均为 0；TAKE、逐轨总线录像与发布双音调都已通过；本机验证：Fedora 44 容器内 product_window.cpp/product_scene.cpp -fsyntax-only -Wall -Wextra exit=0；应用补丁后的 libobs/obs-source.c -fsyntax-only -Wall exit=0（patch -p1 通过）；native-host/tests/test_*.py 全套通过（两个需 --probe 的真机探针除外）；git diff --check 干净
+- 源码：`8c9c74bcd2f654805280bb127f5daece35f4e599`
 ## #253 · 2026-11-19T20:32:44+08:00 · log
 
 - Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
