@@ -1,12 +1,24 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 288 · 2026-11-20T18:42:24+08:00（UTC+08）
+> 快照版本 290 · 2026-11-20T19:30:11+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #290 · 2026-11-20T19:30:11+08:00 · update
+
+- Agent：`qwen38-next-v51-20261120-02`；任务：`V51-008`
+- 记录：等 rc.74 run 44728029615 结果（轮询 bpcl89xz2）。V51-007 的跨任务知会经 agent-sync log 被拒（该任务仍由 deepseek-v51-20261118-01 认领，log 需属主），知会内容已在本任务 revision 289 记录，交接释放时一并写入 HANDOFF，供协调人转达；不代改 V51-007 状态。
+- 证据：无新增验收证据
+- 源码：`24c3be6e6e4f3b5080b547b599d96a302650d063`
+## #289 · 2026-11-20T19:30:02+08:00 · log
+
+- Agent：`qwen38-next-v51-20261120-02`；任务：`V51-008`
+- 记录：rc.73 run 44718717601 完成=failure：program 增益首次通过（controlRatios 440=1.004/880=0.998，880 降增益比值 0.191，逐段 peakHz 全部标称）；首个真实失败点回到成对恢复第二次启动，backup_restore_windows.py:319「the installed entry left the native-swap journal behind」。归因为装置侧竞态：第一次启动实例被终止后 native-status.json 遗留 phase=running+合法 bootId（supervisor 终止不删文件），wait_for 首个 100ms tick 接受旧启动状态，断言先于第二次启动的 recover_interrupted_restore() 收敛；第三次启动相位已有同形守卫（bootId != previous_boot），证明该模式正确。产品收敛代码覆盖被杀窗口（activated.exists()→回置两半→删 journal），非产品缺陷。test-only 修复 0bd1a29 已推送 #76 栈顶：启动前记录 previous_boot、谓词拒绝同 bootId、四类判定落证据，原断言逐字保留，新增静态契约。Linux 语义复现：旧谓词 tick1 接受旧 bootId，新谓词拒绝至本次启动发布且 journal 已收敛。套件 60 项通过（唯一错误为子模块缺口）。已派发 rc.74 run 44728029615 @ 0bd1a29（product_mode/complete/soak_minutes=0），轮询任务 bpcl89xz2。rc.72 的 os.replace/journal fsync 间隙声明继续保留，rc.73/74 通过不代表其安全。
+- 证据：receipt /tmp/tmp.TXOGABfLyV/native-product-nsis.json failurePhase=interrupted-restore-pair-recovery；job 136228630230 日志 6928-6937 行 AssertionError；本机复现脚本输出确认旧谓词 tick1 接受、新谓词拒绝；gh workflow run 44728029615 @ 0bd1a2943dd2234e35194819aa80eadaa7ee7f0f
+- 源码：`24c3be6e6e4f3b5080b547b599d96a302650d063`
 ## #288 · 2026-11-20T18:42:24+08:00 · update
 
 - Agent：`qwen38-next-v51-20261120-02`；任务：`V51-008`

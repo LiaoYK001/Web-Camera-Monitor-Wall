@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 288,
-  "updated_at": "2026-11-20T18:42:24+08:00",
+  "revision": 290,
+  "updated_at": "2026-11-20T19:30:11+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1341,12 +1341,13 @@
         "run 44711476489 回执 native-product-nsis.json failurePhase=interrupted-restore-pair-recovery exceptionType=PS RuntimeException；job 136203981742 日志 6926-6940 行给出 AssertionError: journal does not record both previous halves 与 WinError 32；28c3388 后 BuildContractTests 两个契约测试 OK；runbook 提交见本轮。",
         "Linux 语义回归 PASS（libsodium.so.26，脚本 /tmp/tmp.FhezGk2Fou/native_swap_window_sim.py，临时目录内 profile/backups 隔离）；gh pr list 确认栈基链与 head 28c3388。",
         "run 44718717601 in_progress；账本 revision 285 记录 rc.72 归因、28c3388 修复与 Linux 回归；本释放不提交不推送。",
-        "检查点：V51-008 | worktree .worktrees/v51-legacy | SHA 28c338840d5e5687ef4231885a70c3386f2cfdc8 | rc.73/run 44718717601 | 本轮只验证成对恢复及后续安装态回执是否齐全"
+        "检查点：V51-008 | worktree .worktrees/v51-legacy | SHA 28c338840d5e5687ef4231885a70c3386f2cfdc8 | rc.73/run 44718717601 | 本轮只验证成对恢复及后续安装态回执是否齐全",
+        "receipt /tmp/tmp.TXOGABfLyV/native-product-nsis.json failurePhase=interrupted-restore-pair-recovery；job 136228630230 日志 6928-6937 行 AssertionError；本机复现脚本输出确认旧谓词 tick1 接受、新谓词拒绝；gh workflow run 44728029615 @ 0bd1a2943dd2234e35194819aa80eadaa7ee7f0f"
       ],
       "blocker": "",
-      "next_step": "run 结束后用 v51-ci-gate.py 读 entry-ui/restore/installed-ui/nsis/restore-pair/legacy-import/lan/updater/upgraded-ui/size-split；齐了把材料交主线程审阅，缺项按第一个失败点做本地可复现的低风险修复与回归。",
-      "updated_at": "2026-11-20T18:42:24+08:00",
-      "last_note": "rc.73 run 44718717601 @ 28c3388 进行中（当前步骤为整合启动器门禁），无更新 run、未重复派发。本机在 .worktrees/v51-legacy 复跑：build_contract 58/59（1 项子模块缺口）、pixels 31OK/2skip、lan 24OK、complete_supervisor PASS、native_updater PASS、camera_registry 58OK、py_compile/diff-check OK。六层 PR 检查全绿、层级 diff 各自独立。合并材料（换基顺序、#69/#73 处理、rc.72 journal 间隙保留声明）写入 docs/qualification/v51-rc73-merge-materials.md，待回执齐全后交 Codex 主线程。"
+      "next_step": "rc.74 结束后读 entry-ui/restore/installed-ui/nsis/restore-pair/legacy-import/lan/updater/upgraded-ui/size-split 全部回执；齐了把合并材料交 Codex 主线程审阅换基与合并顺序。rc.72 journal 间隙声明保留，需主线程产品侧结论。",
+      "updated_at": "2026-11-20T19:30:11+08:00",
+      "last_note": "等 rc.74 run 44728029615 结果（轮询 bpcl89xz2）。V51-007 的跨任务知会经 agent-sync log 被拒（该任务仍由 deepseek-v51-20261118-01 认领，log 需属主），知会内容已在本任务 revision 289 记录，交接释放时一并写入 HANDOFF，供协调人转达；不代改 V51-007 状态。"
     },
     {
       "id": "COORD-008",
@@ -4920,6 +4921,28 @@
       "note": "rc.73 run 44718717601 @ 28c3388 进行中（当前步骤为整合启动器门禁），无更新 run、未重复派发。本机在 .worktrees/v51-legacy 复跑：build_contract 58/59（1 项子模块缺口）、pixels 31OK/2skip、lan 24OK、complete_supervisor PASS、native_updater PASS、camera_registry 58OK、py_compile/diff-check OK。六层 PR 检查全绿、层级 diff 各自独立。合并材料（换基顺序、#69/#73 处理、rc.72 journal 间隙保留声明）写入 docs/qualification/v51-rc73-merge-materials.md，待回执齐全后交 Codex 主线程。",
       "evidence": [],
       "git_revision": "3a99fa420d1446b456aa3ed56db8743064e588e1"
+    },
+    {
+      "sequence": 289,
+      "at": "2026-11-20T19:30:02+08:00",
+      "agent": "qwen38-next-v51-20261120-02",
+      "task": "V51-008",
+      "action": "log",
+      "note": "rc.73 run 44718717601 完成=failure：program 增益首次通过（controlRatios 440=1.004/880=0.998，880 降增益比值 0.191，逐段 peakHz 全部标称）；首个真实失败点回到成对恢复第二次启动，backup_restore_windows.py:319「the installed entry left the native-swap journal behind」。归因为装置侧竞态：第一次启动实例被终止后 native-status.json 遗留 phase=running+合法 bootId（supervisor 终止不删文件），wait_for 首个 100ms tick 接受旧启动状态，断言先于第二次启动的 recover_interrupted_restore() 收敛；第三次启动相位已有同形守卫（bootId != previous_boot），证明该模式正确。产品收敛代码覆盖被杀窗口（activated.exists()→回置两半→删 journal），非产品缺陷。test-only 修复 0bd1a29 已推送 #76 栈顶：启动前记录 previous_boot、谓词拒绝同 bootId、四类判定落证据，原断言逐字保留，新增静态契约。Linux 语义复现：旧谓词 tick1 接受旧 bootId，新谓词拒绝至本次启动发布且 journal 已收敛。套件 60 项通过（唯一错误为子模块缺口）。已派发 rc.74 run 44728029615 @ 0bd1a29（product_mode/complete/soak_minutes=0），轮询任务 bpcl89xz2。rc.72 的 os.replace/journal fsync 间隙声明继续保留，rc.73/74 通过不代表其安全。",
+      "evidence": [
+        "receipt /tmp/tmp.TXOGABfLyV/native-product-nsis.json failurePhase=interrupted-restore-pair-recovery；job 136228630230 日志 6928-6937 行 AssertionError；本机复现脚本输出确认旧谓词 tick1 接受、新谓词拒绝；gh workflow run 44728029615 @ 0bd1a2943dd2234e35194819aa80eadaa7ee7f0f"
+      ],
+      "git_revision": "24c3be6e6e4f3b5080b547b599d96a302650d063"
+    },
+    {
+      "sequence": 290,
+      "at": "2026-11-20T19:30:11+08:00",
+      "agent": "qwen38-next-v51-20261120-02",
+      "task": "V51-008",
+      "action": "update",
+      "note": "等 rc.74 run 44728029615 结果（轮询 bpcl89xz2）。V51-007 的跨任务知会经 agent-sync log 被拒（该任务仍由 deepseek-v51-20261118-01 认领，log 需属主），知会内容已在本任务 revision 289 记录，交接释放时一并写入 HANDOFF，供协调人转达；不代改 V51-007 状态。",
+      "evidence": [],
+      "git_revision": "24c3be6e6e4f3b5080b547b599d96a302650d063"
     }
   ]
 }
