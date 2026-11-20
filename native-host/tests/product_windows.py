@@ -1136,7 +1136,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
 
         def check_pixels(label, *, blank=False, repeat_first=False, reverse=False, expected_media=None,
                 projector_orders=None, quick_order=None, program_scene=None, program_media=None,
-                fixture_retry=True):
+                fixture_retry=True, swap_transient_retry=True):
             def counted(snapshot):
                 return {str(entry.get("uuid") or ""): int(entry["serial"])
                     for entry in snapshot.get("videoInputs", []) if isinstance(entry, dict)
@@ -1425,27 +1425,41 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             window_roles = {window["role"] for window in observed["windows"]}
             serial_watch = SerialWatch()
             serial_watch.start()
+
+            def run_capture(target_dir, state_file):
+                """One capture-pixels.ps1 window against the recorded window identity.
+
+                Shared by the main capture attempt and the swap-transient re-capture, so
+                a retry cannot drift away from the pid/executable/creation-time/window
+                identity checks the first window enforces.
+                """
+                # Normalize every argument and avoid PowerShell prompts/invalid
+                # console output turning a pixel capture into an opaque launch
+                # TypeError under a fully loaded product host.
+                capture_command = [str(powershell), "-NoLogo", "-NoProfile", "-NonInteractive", "-File",
+                    str(HERE / "capture-pixels.ps1"), "-ExpectedProcessId", str(frontend_pid),
+                    "-ExpectedExecutable", str(runtime / "bin/64bit/obs64.exe"),
+                    "-ExpectedCreationTime", str(created), "-StateFile", str(state_file),
+                    "-OutputDirectory", str(target_dir)]
+                process = subprocess.Popen(capture_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True, encoding="utf-8", errors="replace", close_fds=True,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                try:
+                    stdout, stderr = process.communicate(timeout=35)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    stdout, stderr = process.communicate()
+                    raise
+                result = subprocess.CompletedProcess(capture_command, process.returncode, stdout, stderr)
+                checkpoint("pixels-" + label + "-capture-returned")
+                capture = pixel_windows.capture_report(result)
+                checkpoint("pixels-" + label + "-capture-report")
+                return result, capture
+
             for attempt in range(2):
                 checkpoint("pixels-" + label + "-capture-start")
                 try:
-                    # Normalize every argument and avoid PowerShell prompts/invalid
-                    # console output turning a pixel capture into an opaque launch
-                    # TypeError under a fully loaded product host.
-                    capture_command = [str(powershell), "-NoLogo", "-NoProfile", "-NonInteractive", "-File",
-                        str(HERE / "capture-pixels.ps1"), "-ExpectedProcessId", str(frontend_pid),
-                        "-ExpectedExecutable", str(runtime / "bin/64bit/obs64.exe"),
-                        "-ExpectedCreationTime", str(created), "-StateFile", str(metadata),
-                        "-OutputDirectory", str(target)]
-                    process = subprocess.Popen(capture_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                        text=True, encoding="utf-8", errors="replace", close_fds=True,
-                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-                    try:
-                        stdout, stderr = process.communicate(timeout=35)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        stdout, stderr = process.communicate()
-                        raise
-                    result = subprocess.CompletedProcess(capture_command, process.returncode, stdout, stderr)
+                    result, capture = run_capture(target, metadata)
                 except subprocess.TimeoutExpired:
                     evidence.setdefault("captures", []).append({"phase": label,
                         "captureFailed": True, "diagnostic": {"stage": "timeout", "code": "capture-timeout"}})
@@ -1465,9 +1479,6 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     }
                     checkpoint("pixels-" + label + "-capture-error")
                     raise
-                checkpoint("pixels-" + label + "-capture-returned")
-                capture = pixel_windows.capture_report(result)
-                checkpoint("pixels-" + label + "-capture-report")
                 stale_identity = capture.get("captureFailed") is True and any(
                     isinstance(role, dict) and role.get("diagnostic", {}).get("code") == "window-identity"
                     for role in capture.get("captures", []))
@@ -1514,6 +1525,19 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 else:
                     evidence["captures"][-1].setdefault("projectorAnalysis", {})[role] = result
                 if result.get("passed") is not True:
+                    failed_samples = [entry for entry in result.get("samples", [])
+                        if isinstance(entry, dict) and entry.get("passed") is not True]
+                    # rc.77 (run 44751520752): in a Program-swap phase the wall's cut
+                    # re-render can miss exactly the first captured sample (~0.5 s) while
+                    # the remaining seven samples carry the correct channels and advancing
+                    # counters with temporalProgress true — the documented mid-swap window
+                    # (rc.47/48/50) racing the capture start, not a frozen tile. Tolerate
+                    # only that exact shape, once, and only via a full re-capture below.
+                    transient_swap = (swap_transient_retry and program_scene is not None
+                        and result.get("temporalProgress") is True
+                        and len(result.get("samples", [])) == 8
+                        and len(failed_samples) == 1
+                        and failed_samples[0].get("sample") == 0)
                     harness = fixture_publisher_health()
                     dead = [entry["index"] for entry in harness["publishers"] if entry["state"] != "alive"]
                     unreadable = [index for index, ok in enumerate(harness["readable"]) if not ok]
@@ -1660,6 +1684,38 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                             expected_media=expected_media, projector_orders=projector_orders,
                             quick_order=quick_order, program_scene=program_scene,
                             program_media=program_media, fixture_retry=False)
+                    if transient_swap:
+                        evidence["pixelSwapTransientRetry"] = {"phase": label, "role": role,
+                            "firstSampleError": str(failed_samples[0].get("error") or "")[:200],
+                            "laterSamplesPassed": len(result.get("samples", [])) - len(failed_samples)}
+                        refreshed = state()
+                        if {window.get("role") for window in refreshed.get("windows", [])} != window_roles:
+                            raise AssertionError("product windows changed during the " + label
+                                + " swap-settled re-capture")
+                        observed = refreshed
+                        metadata.write_text(json.dumps({"schema": 1, "scope": "synthetic-test-only",
+                            "pid": str(frontend_pid), "windows": observed["windows"]}), encoding="utf-8")
+                        retry_target = private / ("pixels-" + label + "-swap-retry")
+                        retry_target.mkdir()
+                        checkpoint("pixels-" + label + "-swap-retry-capture")
+                        retry_result, retry_capture = run_capture(retry_target, metadata)
+                        assert retry_result.returncode == 0 and retry_capture.get("captureFailed") is False, \
+                            "swap-settled re-capture of " + label + " failed to capture the product window"
+                        evidence.setdefault("captures", []).append({"phase": label + "-swap-retry",
+                            **retry_capture})
+                        settled = True
+                        for retry_role, retry_order in orders.items():
+                            retry_analysis = subprocess.run([shutil.which("node"), str(HERE / "pixel-pattern.cjs"),
+                                "analyze", str(retry_target / retry_role), retry_role, retry_order, "true"],
+                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20)
+                            retry_view = json.loads(retry_analysis.stdout or "{}")
+                            evidence["captures"][-1].setdefault("retryAnalysis", {})[retry_role] = retry_view
+                            if retry_analysis.returncode != 0 or retry_view.get("passed") is not True:
+                                settled = False
+                        assert settled, ("product view still failed its final-pixel state after one "
+                            "swap-settled re-capture: " + label)
+                        evidence["pixelSwapTransientRetry"]["settledAfterRetry"] = True
+                        continue
                     # Fixture healthy and pixels still frozen: one probe-open window
                     # before failing, so the next receipt names the layer instead of
                     # guessing. Diagnostic only; the assertion below is unchanged.

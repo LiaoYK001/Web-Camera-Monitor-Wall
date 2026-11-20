@@ -1862,6 +1862,65 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("\"published Program did not deliver enough decodable video frames across \"",
             source, "the window-failure assert message must stay verbatim")
 
+    def test_the_swap_transient_first_sample_needs_a_fully_settled_re_capture(self):
+        """Run 44751520752: rc.77 charged one mid-swap repaint frame as "final pixels wrong".
+
+        The rc.77 reproducibility round never reached the rc.76 crash point; it failed
+        earlier in native-program-take: main-preview sample 0 of eight showed a dark
+        stale frame ("Wrong channel 1 in tile 0: 62,30,30") while samples 1-7 carried
+        the correct channels with advancing counters, temporalProgress true, every
+        fixture publisher alive and no stalled path. That is the documented mid-swap
+        window (rc.47/48/50) racing the capture start, not a frozen tile. The retry
+        tolerates exactly one shape — first sample alone failing, all eight samples
+        present, temporal progress proven, Program-swap phase only — and only by
+        re-capturing the whole window with the same pid/executable/creation-time
+        identity, re-analyzing every role and requiring the settled window to pass
+        completely; a tile that really stays wrong still fails, and the transient
+        repaint stays disclosed in the receipt via pixelSwapTransientRetry.
+        运行 44751520752：rc.77 把一帧中途交换重绘判成 "最终像素错误"。复现轮没有走到
+        rc.76 的崩溃点，而是更早地失败于 native-program-take：main-preview 八个采样中的
+        第 0 个显示变暗的旧帧（"Wrong channel 1 in tile 0: 62,30,30"），而第 1-7 个采样
+        通道正确、计数器推进、temporalProgress 为真，所有 fixture publisher 存活且无停滞
+        路径——这是文档记录的中途交换窗口（rc.47/48/50）与捕获起点竞态，不是冻结的格子。
+        重试只容忍恰好一种形态——仅首个采样失败、八个采样齐备、时间进度已证实、且仅限
+        Program 交换阶段——且必须用相同的 pid/可执行文件/创建时间身份重捕获整个窗口、
+        重新分析每个角色并要求已收敛窗口完全通过；真正持续错误的格子仍会失败，瞬态重绘
+        经 pixelSwapTransientRetry 留在回执披露中。
+        """
+        source = (ROOT / "native-host/tests/product_windows.py").read_text(encoding="utf-8")
+        self.assertIn("fixture_retry=True, swap_transient_retry=True):", source,
+            "the swap retry must be its own one-shot budget")
+        self.assertIn("def run_capture(target_dir, state_file):", source,
+            "the retry must reuse the exact same identity-bound capture runner")
+        self.assertIn("result, capture = run_capture(target, metadata)", source)
+        self.assertIn("retry_result, retry_capture = run_capture(retry_target, metadata)", source)
+        transient = source.index("transient_swap = (swap_transient_retry and program_scene is not None")
+        for shape in ("result.get(\"temporalProgress\") is True",
+                      "len(result.get(\"samples\", [])) == 8",
+                      "len(failed_samples) == 1",
+                      "failed_samples[0].get(\"sample\") == 0"):
+            self.assertIn(shape, source[transient:transient + 700],
+                "the transient form must require exactly one first-sample failure "
+                "with proven temporal progress")
+        fixture_retry = source.index("return check_pixels(label, blank=blank")
+        self.assertLess(fixture_retry, source.index("if transient_swap:", fixture_retry),
+            "a faulty fixture must still be repaired first; the swap retry only runs "
+            "when the fixture is provably healthy")
+        self.assertLess(source.index("if transient_swap:"),
+            source.index('evidence["pixelFailureDiagnostics"]["probeOnWindow"]'),
+            "the settled re-capture must come before the diagnostic-only probe window")
+        self.assertIn('"pixelSwapTransientRetry"', source)
+        self.assertIn('retry_target = private / ("pixels-" + label + "-swap-retry")', source)
+        self.assertIn("for retry_role, retry_order in orders.items():", source,
+            "the settled window must be re-analyzed for every captured role")
+        self.assertIn("if retry_analysis.returncode != 0 or retry_view.get(\"passed\") is not True:",
+            source, "any failing role in the settled window must void the retry")
+        self.assertIn('"product view still failed its final-pixel state after one "', source,
+            "the exhausted-retry assert message must stay verbatim")
+        self.assertIn('"swap-settled re-capture: "', source)
+        self.assertIn('raise AssertionError("product windows changed during the "', source,
+            "the retry must re-verify window roles before re-capturing")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
