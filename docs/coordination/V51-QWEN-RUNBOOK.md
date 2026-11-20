@@ -52,11 +52,11 @@ python3 "$project/scripts/v51-ci-gate.py" 44385767337 \
 
 ## 3. 逐轨增益与其后续失败面（历史起点 rc.59）
 
-**当前轮次 / current round**：rc.71 run [44609775780](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44609775780)，
-源码 `cdfe8182a4928a75d4eff31b7afe0b110f3bde92`（栈顶 `codex/v51-r4-legacy-import`），`product_mode=true complete=true soak_minutes=0`。
-已确认：逐轨增益比值 1.01/1.005、降低后 0.201，TAKE 像素、录像/发布双音、总线隔离、逐轨静音/偏移全部通过；
-阻塞点是中继断线后恢复推流时 UI Automation 拒绝被拥有窗口，本轮要读的是拒绝的具体原因
-（`window-handle-gone` 还是 `window-pid-mismatch`，以及宿主上报句柄的现场存活判定）。
+**当前轮次 / current round**：rc.72 run [44711476489](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44711476489)，
+源码 `a27a76633c16b063156db54584c8a01feb81f758`（栈顶 `codex/v51-r4-legacy-import`），`product_mode=true complete=true soak_minutes=0`。
+rc.71（run 44609775780 @ `cdfe8182`）便携与安装态产品各过 77 项，首个失败点已被定位并修复在门禁侧
+（见下节 rc.71）。本轮先读成对恢复的 `native-product-nsis.json`，再核对同 SHA 的 `legacy-import`、`lan`、
+`updater` 与覆盖升级 `upgraded-ui` 回执是否齐全。
 
 2026-11-19 的直接证据为 [rc.59](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44385767337) 的 `native-product-entry-ui.json`。46 项通过后，`program-track-controls` 失败。Portable 五路 HEVC、Program MP4、回环 RTMP 后通过 RTSP 解码双音、总线隔离、逐轨静音、ONVIF 模拟设备操作与拒绝结果已记录。安装步骤跳过，因此成对恢复、旧数据导入和 LAN 没有本轮安装证据。若 GitHub 有更新的失败，以更新回执的第一项为准。
 
@@ -204,6 +204,31 @@ rc.70（run 44599567300，源码 `ed25609`）在同一处再次失败，但新�
 占用，属装置侧读到过期句柄；若下一次变成 `recoveredAfterAttempts > 0`，说明只是短暂不可寻址，
 门禁已能自愈。`native-host/tests/test_build_contract.py` 的静态契约要求两条拒绝路径都带
 `reportedHandles`，并检查 ps1 在 `Invoke-Control` 之前区分这两种 code。
+
+### rc.71 起：成对恢复首启要等本次启动的宿主观察 / the restored-pair first start waits for this boot's host observation
+
+rc.71（run 44609775780）在 `native-host/tests/backup_restore_windows.py:204` 失败，报错发生在中断成对恢复
+后的首次安装态启动。源码顺序证明两者本来就是异步的，不是产品恢复顺序缺陷：
+`native-host/scripts/product_supervisor.py` 在 `Popen` obs64 前端后立即 `status("running")` 写出
+`native-status.json`；而 `native-host/src/product_window.cpp` 的 `observe_state()` 只在 libobs 模块加载、
+会话绑定（登录回调最长 12 s，心跳 2000 ms，`QSaveFile` 替换重试循环）完成后，才向
+`obs_module_config_path("product-state.json")` 落盘带 `pid` 与 `bootId` 的状态。journal 收敛仍在
+`prepare()` 里、`status("running")` 之前完成，双目录一致性/回滚保留不受影响。
+`native-host/tests/product_windows.py` 的安装态门禁此前只等 `state` 的 `locked` 相位，所以能过；
+恢复门禁却同一 tick 硬断言恰好一份 `product-state.json`，必然竞态。
+
+修复 `a27a766`（`codex/v51-r4-legacy-import`，test-only）：在原来的 120 s 启动预算内
+（`launch_deadline` 从 `Popen` 前起算，两处等待都用 `timeout=remaining()`），有界等待恰好一份可读、
+`pid` 等于 native-status 里 frontend 子进程且 `bootId` 等于本次启动的状态文件。零份、多份、不可读、
+旧启动文件四类失败分别写入 `evidence.lastStateObservation.code`：`state-file-count`（附 `files`）、
+`state-file-unreadable`、`state-from-other-boot`（附 `pidMatched`/`bootIdMatched`），成功为 `state-published`；
+`firstInstalledStart` 另记 `hostStatePhase` 与 `hostStateMsAfterLaunch`。双目录一致性、回滚保留与进程清理
+的原断言原样保留，`native-host/tests/test_build_contract.py` 新增静态契约防回退。
+
+读 rc.72 起该门禁回执时按 `lastStateObservation.code` 归因：`state-file-count` 且 `files > 1` → 插件重复加载
+或 profile 残留旧目录；`state-file-unreadable` → `QSaveFile` 替换与读取竞速；`state-from-other-boot` →
+profile 被第二次启动复用（看 `pidMatched`/`bootIdMatched` 哪一侧不匹配）；零份直到超时 → 登录回调从未完成，
+属产品侧，交主线程查会话绑定。
 
 ### 公开仓库审计：测试夹具里的 RTSP  userinfo 必须登记 / test fixtures must declare their RTSP userinfo
 
