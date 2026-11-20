@@ -1665,6 +1665,56 @@ class BuildContractTests(unittest.TestCase):
                           "the interrupted-restore first start left its own product processes alive"):
             self.assertIn(preserved, source, "convergence, consistency, retention or cleanup lost its assert")
 
+    def test_the_native_swap_kill_follows_the_recorded_journal(self):
+        """Run 44711476489: the native-swap sentinel fired before nativeRollback was persisted.
+
+        rc.72 cleared the rc.71 host-state race and then failed "journal does not record
+        both previous halves": the interrupt-native hook paused inside ``os.replace`` after
+        the previous OBS profile had physically moved aside, but ``encrypted_backup.py``
+        records ``nativeRollback`` only once that call returns, so the kill happened in the
+        microsecond window between the swap and its fsync'ed journal write. A crash there
+        is a genuine loss of the native reference, not the prepared-state window the
+        recovery design promises; the sentinel must therefore follow the ``_write_journal``
+        call that persists both halves, while the configuration half still has not landed.
+        The same run also showed a failing assert leaving the sleeping child on its log:
+        cleanup then raised WinError 32 and hid the assertion, so both interruption phases
+        terminate their child and close the log in ``finally``. Product recovery stays
+        untouched - it rolls the pair back exactly as ``recover_interrupted`` documents.
+        运行 44711476489：原生半区哨兵在 journal 落盘前触发。rc.72 修好宿主状态竞态后停在
+        "journal does not record both previous halves"：interrupt-native 钩子在上一次 OBS
+        档案物理移开后、os.replace 尚未返回时暂停，而 encrypted_backup.py 要到调用返回才
+        fsync 记录 nativeRollback，杀进程落在交换与 journal 写入之间的微秒窗口，真正丢失
+        原生半区引用，并非产品承诺的可恢复 prepared 状态。哨兵必须跟在记录两份前像的
+        _write_journal 之后、配置半区落盘之前；两个中断阶段也都要在 finally 里终止子进程
+        并关闭日志，避免断言失败被 WinError 32 掩盖。产品恢复逻辑不改。
+        """
+        source = (ROOT / "native-host/tests/backup_restore_windows.py").read_text(encoding="utf-8")
+        self.assertIn("module._write_journal = guarded_journal", source,
+            "the native-swap window must be taken after the journal write, not inside os.replace")
+        self.assertIn('value.get("nativeRollback") is None', source,
+            "the guard must only stop the child once both previous halves are recorded")
+        self.assertNotIn('sentinel.write_text("native-swapped-out"', source,
+            "the sentinel fired while nativeRollback was still only in memory")
+        child = source.split('CHILD = """', 1)[1].split('"""', 1)[0]
+        self.assertLess(child.index("write_journal(path, value)"),
+            child.index('sentinel.write_text("native-recorded"'),
+            "the sentinel must follow the fsync'ed journal write")
+        tree = ast.parse(source)
+        guarded_children = 0
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Try) and node.finalbody and any(
+                isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                and call.func.attr == "kill" for call in ast.walk(ast.Module(body=node.finalbody, type_ignores=[]))):
+                guarded_children += 1
+        self.assertGreaterEqual(guarded_children, 2,
+            "both interruption phases must terminate their child in finally so cleanup cannot hide the assert")
+        for preserved in ("journal does not record both previous halves",
+                          "one half was still live while the journal claims both were swapped out",
+                          "the installed entry did not return both halves of the previous pair",
+                          "the installed entry left the previous OBS profile parked",
+                          "the previous OBS profile stayed parked instead of becoming live again"):
+            self.assertIn(preserved, source, "the native-swap rollback asserts must stay verbatim")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

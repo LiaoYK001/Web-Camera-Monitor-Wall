@@ -55,15 +55,21 @@ if str(mode) == "interrupt":
         return result
     os.replace = guarded
 elif str(mode) == "interrupt-native":
-    def guarded(source, destination):
-        result = original(source, destination)
-        if pathlib.Path(source) == native:
-            # The previous OBS profile has just moved aside and the configuration
-            # half has not landed yet: this is the other half of the swap window.
-            sentinel.write_text("native-swapped-out", encoding="utf-8")
-            time.sleep(30)
-        return result
-    os.replace = guarded
+    write_journal = module._write_journal
+    def guarded_journal(path, value):
+        write_journal(path, value)
+        if value.get("nativeRollback") is None:
+            return
+        # The previous OBS profile has moved aside and the journal now records
+        # both previous halves, while neither live path stands and the
+        # configuration half has not landed yet: this is the other half of the
+        # swap window. The sentinel must follow the fsync'ed journal write -
+        # pausing inside os.replace stopped the child before nativeRollback was
+        # persisted, so rc.72's kill lost the native reference instead of
+        # proving the product's prepared-state recovery.
+        sentinel.write_text("native-recorded", encoding="utf-8")
+        time.sleep(30)
+    module._write_journal = guarded_journal
 native = None if str(mode) == "config-only" else profile / "native-profile"
 try:
     module.restore(config_root, archive, key, sodium, True, native_profile=native)
@@ -150,17 +156,21 @@ def exercise(runtime, profile_parent, report):
         sentinel = private / "swap-sentinel.txt"
         restore_process, log = run_restore(runtime_python, runtime, profile, archive, key_file,
             sentinel, "interrupt", private)
-        wait_for(lambda: sentinel.is_file(), "restore did not land the configuration half", timeout=40)
-        journal = profile / backup.JOURNAL_NAME
-        assert journal.is_file(), "the restore journal did not survive the swap window"
-        payload = json.loads(journal.read_text(encoding="utf-8"))
-        assert payload.get("state") == "prepared", "journal is not the prepared swap state"
-        staged = Path(payload["nativeActivated"])
-        assert staged.is_dir(), "the pending OBS profile half was not staged"
-        assert not (native / NATIVE_MARKER).is_file(), "the OBS profile half already landed; not a mid-swap kill"
-        restore_process.kill()
-        restore_process.wait(timeout=30)
-        log.close()
+        try:
+            wait_for(lambda: sentinel.is_file(), "restore did not land the configuration half", timeout=40)
+            journal = profile / backup.JOURNAL_NAME
+            assert journal.is_file(), "the restore journal did not survive the swap window"
+            payload = json.loads(journal.read_text(encoding="utf-8"))
+            assert payload.get("state") == "prepared", "journal is not the prepared swap state"
+            staged = Path(payload["nativeActivated"])
+            assert staged.is_dir(), "the pending OBS profile half was not staged"
+            assert not (native / NATIVE_MARKER).is_file(), "the OBS profile half already landed; not a mid-swap kill"
+        finally:
+            # rc.72 proved that an assertion failing while the sleeping child still
+            # holds its log turns cleanup into WinError 32 and hides the real reason.
+            restore_process.kill()
+            restore_process.wait(timeout=30)
+            log.close()
         assert restore_process.returncode != 0, "terminated restore reported success"
         evidence["interruptedRestoreExitCode"] = restore_process.returncode
         evidence["journalState"] = payload.get("state")
@@ -274,17 +284,19 @@ def exercise(runtime, profile_parent, report):
         native_sentinel = private / "native-swap-sentinel.txt"
         native_process, native_log = run_restore(runtime_python, runtime, profile, archive, key_file,
             native_sentinel, "interrupt-native", private)
-        wait_for(lambda: native_sentinel.is_file(), "restore did not swap the OBS profile half out",
-            timeout=40)
-        assert journal.is_file(), "the restore journal did not survive the native swap window"
-        native_payload = json.loads(journal.read_text(encoding="utf-8"))
-        assert native_payload.get("configRollback") and native_payload.get("nativeRollback"), \
-            "journal does not record both previous halves"
-        assert not config.exists() and not native.exists(), \
-            "one half was still live while the journal claims both were swapped out"
-        native_process.kill()
-        native_process.wait(timeout=30)
-        native_log.close()
+        try:
+            wait_for(lambda: native_sentinel.is_file(), "restore did not swap the OBS profile half out",
+                timeout=40)
+            assert journal.is_file(), "the restore journal did not survive the native swap window"
+            native_payload = json.loads(journal.read_text(encoding="utf-8"))
+            assert native_payload.get("configRollback") and native_payload.get("nativeRollback"), \
+                "journal does not record both previous halves"
+            assert not config.exists() and not native.exists(), \
+                "one half was still live while the journal claims both were swapped out"
+        finally:
+            native_process.kill()
+            native_process.wait(timeout=30)
+            native_log.close()
         assert native_process.returncode != 0, "terminated native-swap restore reported success"
         evidence["nativeSwapExitCode"] = native_process.returncode
         evidence["checks"].append("restore-process-terminated-after-the-native-swap")
