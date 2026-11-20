@@ -1715,6 +1715,56 @@ class BuildContractTests(unittest.TestCase):
                           "the previous OBS profile stayed parked instead of becoming live again"):
             self.assertIn(preserved, source, "the native-swap rollback asserts must stay verbatim")
 
+    def test_the_second_installed_start_waits_for_its_own_boot_status(self):
+        """Run 44718717601: the second start accepted the killed first boot's status file.
+
+        rc.73 moved the native-swap sentinel after the journal write, so the paired
+        restore advanced to the second installed start. The first instance was killed
+        there and its native-status.json stayed on disk with phase=running and a valid
+        32-hex bootId: the supervisor never deletes that file when terminated, and it
+        publishes a fresh per-boot bootId only after prepare() has already run
+        recover_interrupted_restore(). wait_for polled after 100 ms, accepted the
+        previous boot's file, and the convergence assert reported that the installed
+        entry left the native-swap journal behind while this boot had not converged
+        anything yet - the journal really was still there, just not yet observed by
+        the right start. The wait must capture the boot id standing before the entry
+        launches and reject it, naming the outcome the bounded wait saw; the journal,
+        marker and staging asserts stay immediate. Product ordering is unchanged:
+        recovery still precedes directory creation and the first status publish.
+        运行 44718717601：第二次启动接受了被终止的第一次启动遗留的状态文件。rc.73 把原生
+        半区哨兵挪到 journal 落盘之后，成对恢复推进到第二次安装态启动：第一次实例在那里被
+        终止，它的 native-status.json 仍留在磁盘上（phase=running、bootId 是合法 32 位
+        十六进制），supervisor 被终止时不会删除该文件，而新 bootId 要到 prepare() 完成
+        recover_interrupted_restore() 之后才发布；wait_for 第一个 tick（100 ms）就接受了
+        旧启动的文件，收敛断言在第二次启动尚未收敛任何东西时报 "journal left behind"——
+        journal 确实还在，只是还没被正确的启动观察到。等待必须先记录启动前的 bootId 并拒绝
+        它，并记下有界等待看到的判定；journal、marker 与暂存断言保持即时。产品顺序不变：
+        恢复仍先于目录创建与状态发布。
+        """
+        source = (ROOT / "native-host/tests/backup_restore_windows.py").read_text(encoding="utf-8")
+        self.assertIn('previous_boot = status().get("bootId")', source,
+            "the second start must capture the previous boot before launching the entry")
+        self.assertIn("boot_id == previous_boot", source,
+            "the previous boot's running status must be rejected as stale")
+        for classification in ('"status-not-running"', '"status-from-previous-boot"',
+                               '"status-published"', '"previousBootId"'):
+            self.assertIn(classification, source,
+                "the receipt must name which status outcome the second-start wait saw")
+        self.assertEqual(len(source.split("subprocess.Popen([str(entry)")), 4,
+            "the gate launches the installed entry three times")
+        second_phase = source.index('phase = "second-installed-start"')
+        second_launch = source.index("subprocess.Popen([str(entry)", second_phase)
+        self.assertLess(source.index('previous_boot = status().get("bootId")', second_phase),
+            second_launch,
+            "the previous boot must be captured before the second entry launches")
+        self.assertIn("wait_for(native_rolled_back, lambda:", source,
+            "the stale-status attribution is assembled at timeout, not eagerly")
+        for preserved in ("the installed entry did not return both halves of the previous pair",
+                          "the installed entry left the native-swap journal behind",
+                          "the installed entry did not restore the previous configuration half",
+                          "the installed entry left the previous OBS profile parked"):
+            self.assertIn(preserved, source, "the native-swap rollback asserts must stay verbatim")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

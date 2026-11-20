@@ -302,6 +302,14 @@ def exercise(runtime, profile_parent, report):
         evidence["checks"].append("restore-process-terminated-after-the-native-swap")
 
         phase = "second-installed-start"
+        # The instance killed after the first start left its own native-status.json
+        # behind: the supervisor never deletes that file when it is terminated. A wait
+        # that only requires phase=running with any 32-hex bootId accepts the previous
+        # boot's file on the first polling tick, so run 44718717601 reported "the
+        # installed entry left the native-swap journal behind" roughly 100 ms before
+        # this start could run its own recover_interrupted_restore(). Capture the boot
+        # id that stands before the entry launches and accept only this boot's status.
+        previous_boot = status().get("bootId")
         environment = dict(os.environ)
         environment["WEBOBS_PRODUCT_TEST_ROOT"] = str(profile)
         launched = subprocess.Popen([str(entry)], env=environment, stdin=subprocess.DEVNULL,
@@ -310,12 +318,26 @@ def exercise(runtime, profile_parent, report):
             assert launched.poll() is None, \
                 f"the installed entry refused to start over a native-half swap ({launched.returncode})"
             value = status()
-            return value if value.get("phase") == "running" and isinstance(value.get("bootId"), str) \
-                and re.fullmatch(r"[a-f0-9]{32}", value["bootId"]) else None
+            boot_id = value.get("bootId")
+            if value.get("phase") != "running" or not isinstance(boot_id, str) \
+                    or not re.fullmatch(r"[a-f0-9]{32}", boot_id):
+                evidence["lastStatusObservation"] = {"code": "status-not-running",
+                    "phase": value.get("phase")}
+                return None
+            if boot_id == previous_boot:
+                evidence["lastStatusObservation"] = {"code": "status-from-previous-boot",
+                    "bootId": boot_id}
+                return None
+            evidence["lastStatusObservation"] = {"code": "status-published",
+                "phase": value.get("phase")}
+            return value
         owned = []
         try:
-            started = wait_for(native_rolled_back,
-                "the installed entry did not return both halves of the previous pair", timeout=120)
+            started = wait_for(native_rolled_back, lambda:
+                "the installed entry did not return both halves of the previous pair: "
+                + json.dumps(evidence.get("lastStatusObservation") or {}), timeout=120)
+            evidence["nativeSwapRollbackStart"] = {"bootId": started["bootId"],
+                "previousBootId": previous_boot}
             assert not journal.exists(), "the installed entry left the native-swap journal behind"
             assert marker_value(config / CONFIG_MARKER) == "live-before-native-swap", \
                 "the installed entry did not restore the previous configuration half"
