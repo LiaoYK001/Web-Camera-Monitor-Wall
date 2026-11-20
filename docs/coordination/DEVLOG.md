@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 296 · 2026-11-21T03:18:24+08:00（UTC+08）
+> 快照版本 297 · 2026-11-21T04:46:31+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #297 · 2026-11-21T04:46:31+08:00 · log
+
+- Agent：`qwen38-next-v51-20261120-02`；任务：`V51-008`
+- 记录：rc.79 run 44800953316 @9460829：entry-ui/installed-ui/nsis/size-split/restore 首次全部产出（rc.78 重绘停滞未复现），首个失败点为 native-product-nsis interrupted-restore-pair-recovery——backup_restore_windows.py:412 配置档案恢复退出码非 0。Linux 确定性复现根因：restore() 把归档内 backup-manifest.json 落进配置根，下一次 create() 将其当用户文件打包，新清单按陈旧大小自指后被自身覆盖，verify_tree 永久失败——恢复后再打的备份不可再恢复。产品修复 54df2e3（stage_tree 排除根级清单、verify_tree 跳过历史自指条目使既有污染档案恢复可用），回归 14/14、supervisor/updater 脚本 PASS、复现序列 legacy restore exit=0。派发 rc.80 run 44814303103 @54df2e3。
+- 证据：docs/qualification/v51-rc73-merge-materials.md; /tmp/tmp.qSBZMfpXSd/repro_legacy_restore.py; codex/v51-r4-legacy-import 54df2e3
+- 源码：`da974fb9444936ac26571da9f64af2a596e2965f`
 ## #296 · 2026-11-21T03:18:24+08:00 · log
 
 - Agent：`qwen38-next-v51-20261120-02`；任务：`V51-008`
