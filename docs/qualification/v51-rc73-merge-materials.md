@@ -5,12 +5,13 @@
 
 ## 被测候选 / candidate under test
 
-- 版本 version: `5.1.0-rc.73` → `5.1.0-rc.74` → `5.1.0-rc.75` → `5.1.0-rc.76` → `5.1.0-rc.77`（同 SHA 复现性轮）（同一栈顶分支 `codex/v51-r4-legacy-import`，PR #76）
+- 版本 version: `5.1.0-rc.73` → `5.1.0-rc.74` → `5.1.0-rc.75` → `5.1.0-rc.76` → `5.1.0-rc.77`（同 SHA 复现性轮）→ `5.1.0-rc.78`（同一栈顶分支 `codex/v51-r4-legacy-import`，PR #76）
 - rc.73 源码 SHA `28c338840d5e5687ef4231885a70c3386f2cfdc8`，run [44718717601](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44718717601)（inputs `product_mode=true complete=true soak_minutes=0`）：**completed=failure**。Program 增益首次通过（controlRatios 440=1.004/880=0.998；880 降增益 585.9/3068.2≈0.191；逐段 peakHz 全部标称）；首个真实失败点为 `backup_restore_windows.py:319`「the installed entry left the native-swap journal behind」——归因为装置侧竞态（第一次启动遗留的 native-status.json 带 phase=running+旧 bootId，被 100ms 首个 tick 接受），产品收敛代码覆盖被杀窗口，非产品缺陷。test-only 修复见下。
 - rc.74 源码 SHA `0bd1a2943dd2234e35194819aa80eadaa7ee7f0f`（含修复提交 `0bd1a29`），run [44728029615](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44728029615)，输入同 rc.73。门禁 gate: `python3 scripts/v51-ci-gate.py 44728029615 --sha 0bd1a2943dd2234e35194819aa80eadaa7ee7f0f --version 5.1.0-rc.74`：**completed=failure**，Program 增益再次通过（controlRatios 440=0.976/880=0.938；880 降增益 611.8/3057.8≈0.200）；第二次安装态启动竞态修复生效，门禁推进到 `backup_restore_windows.py:390`「the refused paired restore leaked staging directories」（回执 phase 字段停留在 `interrupted-restore-pair-recovery` 仅为 checkpoint 滞后，traceback 行号才是首个失败点）。归因为装置记账缺陷：成对档案拒绝在自己的 `.webobs-decrypt-` TemporaryDirectory 内抛 `BackupError`，不可能新建暂存；失败实际记的是早前两次被 `TerminateProcess` 硬终止的恢复遗留的明文解密暂存（硬终止跳过上下文管理器清理，`recover_interrupted()` 只删除 journal 记录的暂存）。test-only 修复 `9b26035`（拒绝前快照暂存名单、只对拒绝新建目录记账、回执披露遗留项）。
 - rc.75 源码 SHA `9b260351368770eec6e81458c9c50f1886e47d71`（含 `9b26035`），run [44735378274](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44735378274)，输入同 rc.73。门禁 gate: `python3 scripts/v51-ci-gate.py 44735378274 --sha 9b260351368770eec6e81458c9c50f1886e47d71 --version 5.1.0-rc.75`：**completed=failure**，`9b26035` 生效、门禁首次越过 legacy-config-only-archive；Program 增益复过（controlRatios 1.0/1.001）。首个真实失败点为安装入口 program-streaming 视频窗口断言（26 帧/0.833 s span、首帧 4015 ms）；归因：同窗口宿主渲染 +421 帧、`streamConnected=true`、包连接 2 个 IDR@2.0 s，OBS 日志 6 次 `WebOBS async video backlog`（30 帧丢弃、间隙 2.689–3.000 s）与 1 次 async timestamp jump——单消费窗口与输入侧解码停滞竞态，属 rc.62 已记录的交付 vs 解码分裂，非产品逻辑缺陷。test-only 修复 `9c2b7af`（共享 `decodable_window` 谓词、一次新连接有界重读、只对最后尝试记账、`probeAttempts` 披露；持续饥饿仍两次失败）。
 - rc.76 源码 SHA `9c2b7afbb90ce6d4a2886730d9d2ba610ae52ef0`（含 `9c2b7af`），run [44746006213](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44746006213)，输入同 rc.73。门禁 gate: `python3 scripts/v51-ci-gate.py 44746006213 --sha 9c2b7afbb90ce6d4a2886730d9d2ba610ae52ef0 --version 5.1.0-rc.76`：**completed=failure**，`9c2b7af` 生效（视频窗口首轮 healthy 100 帧/3.3 s、无重试），entry-ui 首次推进过 program-streaming 与全部录制检查（48 checks）；随后在 `program-publish-disconnect` 出现**真实前端崩溃**（见披露节），门禁中止于该阶段，NSIS 与后续步骤未运行。
-- rc.77 复现性轮：同一 SHA `9c2b7af`、同一输入（无代码改动），run [44751520752](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44751520752)。门禁 gate: `python3 scripts/v51-ci-gate.py 44751520752 --sha 9c2b7afbb90ce6d4a2886730d9d2ba610ae52ef0 --version 5.1.0-rc.77`。用于判定崩溃面是否确定性；不改动代码、不构成对崩溃面的放行。
+- rc.77 复现性轮：同一 SHA `9c2b7af`、同一输入（无代码改动），run [44751520752](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44751520752)。门禁 gate: `python3 scripts/v51-ci-gate.py 44751520752 --sha 9c2b7afbb90ce6d4a2886730d9d2ba610ae52ef0 --version 5.1.0-rc.77`：**completed=failure**，但**未到达 `program-publish-disconnect`**——更早失败于 `native-program-take`：main-preview 八个采样的第 0 个捕获 CUT TAKE 后墙格子重绘中途的变暗旧帧（`Wrong channel 1 in tile 0: 62,30,30`），1-7 采样通道正确、计数器推进、`temporalProgress=true`、fixture publisher 全部存活、无停滞路径。崩溃面复现性因此**无结论**（既未复现也未干净通过该阶段），rc.76 披露保持开放。首个真实失败点归因为装置捕获竞态（rc.47/48/50 已记录的中途交换窗口）：捕获起点与重绘竞态、非产品冻结（同阶段 rc.73/74/76 通过）。test-only 修复 `9460829`（见下）。
+- rc.78 源码 SHA `9460829eea3908d2145083c6d623e54f4f5f86d9`（含 `9460829`），run [44795726091](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44795726091)，输入同 rc.73。门禁 gate: `python3 scripts/v51-ci-gate.py 44795726091 --sha 9460829eea3908d2145083c6d623e54f4f5f86d9 --version 5.1.0-rc.78`。
 - 每轮派发前核对 `gh run list` 无更新/进行中 run，未重复派发。No duplicate dispatch.
 
 ## PR 堆叠与换基顺序 / PR stack and retarget order
@@ -24,7 +25,7 @@
 | #71 | codex/v51-r3-004-lan | `6a7042a` | codex/v51-r4-backup-consistency | 12 |
 | #74 | codex/v51-r5-soak | `f6cf429` | codex/v51-r3-004-lan | 4 |
 | #75 | codex/v51-r3-005-devices | `f60aab8` | codex/v51-r5-soak | 1 |
-| #76 | codex/v51-r4-legacy-import | `9c2b7af`（原 `28c3388`→`0bd1a29`→`9b26035`） | codex/v51-r3-005-devices | 8 |
+| #76 | codex/v51-r4-legacy-import | `9460829`（原 `28c3388`→`0bd1a29`→`9b26035`→`9c2b7af`） | codex/v51-r3-005-devices | 9 |
 
 换基合并顺序 / retarget order（每步合并后把下一层 base 改为 `dev`，核对换基后 diff 只含该层自身改动）：
 
@@ -33,7 +34,7 @@
 3. #71 → dev（LAN/Web 入口与安装态门禁）。
 4. #74 → dev（两小时长稳门禁，本轮 soak_minutes=0 不启用）。
 5. #75 → dev（设备操作安装态门禁）。
-6. #76 → dev（旧数据导入安装态门禁，含 rc.72–rc.76 五个 test-only 修复 `a27a766`、`28c3388`、`0bd1a29`、`9b26035`、`9c2b7af`；`0bd1a29`/`9b26035`/`9c2b7af` 属 V51-007 的门禁文件，知会仍待协调人转达——agent-sync log 对 V51-007 被拒，内容见 revision 289）。
+6. #76 → dev（旧数据导入安装态门禁，含 rc.72–rc.78 六个 test-only 修复 `a27a766`、`28c3388`、`0bd1a29`、`9b26035`、`9c2b7af`、`9460829`；`0bd1a29`/`9b26035`/`9c2b7af`/`9460829` 属 V51-007 的门禁文件，知会仍待协调人转达——agent-sync log 对 V51-007 被拒，内容见 revision 289）。
 
 并行注意 / parallel notes：
 - #69（发布链）base dev：合入 #67 后 rebase，`publish_candidate.py` 为 add/add，保留 #69 的超集实现并复跑发布链测试（V51-005）；发布链只验证到待发布状态，不自动发布。
@@ -42,7 +43,7 @@
 
 ## 本轮已提交的验收回执 / receipts required this round
 
-安装态门禁要求同一 run 内 `native-product-integration-receipts-5.1.0-rc.N` 含以下全部 `passed=true` 且绑定源码 SHA/版本（`upgraded-ui` 用同源 `rc.N+1` 夹具版本，如 rc.73 轮为 rc.74、rc.77 轮为 rc.78）：
+安装态门禁要求同一 run 内 `native-product-integration-receipts-5.1.0-rc.N` 含以下全部 `passed=true` 且绑定源码 SHA/版本（`upgraded-ui` 用同源 `rc.N+1` 夹具版本，如 rc.73 轮为 rc.74、rc.78 轮为 rc.79）：
 
 | 回执 receipt（rc.73 首轮结果 → rc.74 复验） | 含义 | rc.73 状态 | rc.74 状态 |
 | --- | --- | --- | --- |
@@ -63,6 +64,8 @@ rc.75 复验：entry-ui/restore/size-split passed=true；installed-ui（NSIS 流
 
 rc.76 复验：restore passed=true；entry-ui passed=false——`9c2b7af` 生效（视频窗口首轮 healthy、48 checks 首次越过 program-streaming 与全部录制检查），checkpoint `program-publish-disconnect-reported` 已写出（中继被杀已正确上报），随后前端 0xC0000005 异常退出，回执如实记账该断言（见第四披露项），未做掩盖性修改；size-split/nsis/restore-pair/legacy-import/lan/updater/upgraded-ui 与安装包工件均未产出（entry-ui 失败使后续步骤未运行）。
 
+rc.77 复验（同 SHA 复现轮）：restore passed=true；entry-ui passed=false——未触及 `program-publish-disconnect`（崩溃面复现性无结论，第四披露项保持开放），失败于更早的 `native-program-take`（第 0/8 采样捕获中途交换重绘帧，1-7 采样正确且进度已证实，见第五披露项，`9460829` 已修）；size-split/nsis/restore-pair/legacy-import/lan/updater/upgraded-ui 与安装包工件均未产出。
+
 ## 必须保留的已知缺口声明 / disclosed known gap（不得因本轮通过而关闭）
 
 rc.72（run 44711476489）暴露的窗口：`backup/encrypted_backup.py` 中 `os.replace(activated, config_root)` 返回与记录 `nativeRollback` 的 journal `fsync` 落盘之间的微秒级崩溃窗口会真正丢失原生半区引用。`28c3388` 只是把测试哨兵挪到 journal 写入之后（test-only），产品恢复算法本身未改。**rc.73 该阶段通过不能证明该间隙安全**；该边界属产品恢复算法，已交 Codex 主线程复核（见 HANDOFF 2026-11-20 交接段与 DEVLOG `3a99fa4`）。合并材料不将其列为已解决。
@@ -77,12 +80,17 @@ Second disclosed gap (rc.74 attribution): a hard-killed restore skips `Temporary
 
 Third disclosed gap (rc.75 attribution): input-side decode starvation on the software-decode runner during the heavy install flow (six async-backlog drops of 30 undrawn frames, gaps 2.689–3.000 s, plus one async timestamp jump per boot). The one bounded retry in `9c2b7af` tolerates only a consumer window racing a transient stall; it does not claim sustained media behavior is healthy. Marker counts stay visible in receipts, and real device/camera/OBS-parity qualification remains open (R7-001).
 
-**第四披露项（rc.76）：Program 发布中继被杀后的前端访问违例崩溃。** run 44746006213 在 `program-publish-disconnect`：私有 MediaMTX 中继被终止、`publish-relay-exited` 正确上报后，OBS 前端宿主以 `0xC0000005`（访问违例）异常退出——`currentBootFailure=frontend-exited`、`serviceExits` frontend exitCode 3221226505、无 `Shutting down` 标记（非正常退出）、窗口句柄 `gone`、恢复尝试 0 次成功；断言「the product publish control could not resume Program publishing after the relay loss」记账于该崩溃。时间线：14:04:37 中继被杀后 fixture 源断连/重连，14:04:52.940 三路 async timestamp jump，14:04:56 门禁报告时前端已退出。宿主自计量（`a75d0cf` 加入的发布开关 UI 线程归因）：`publishStopWaitMs 5943`、`uiStallMaxMs 5752`、`relayStopMaxMs 5034`。rc.73–75 在同一代码路径同输入下均通过该阶段，属**间歇性竞态崩溃**；归因（中继被杀、media source 异步重连与发布 teardown 在宿主侧的竞态）属崩溃恢复算法与复杂诊断，**交 Codex 主线程排查**，本会话未做掩盖性测试修改、无法本机（Linux）复现。rc.77（同 SHA 重跑）只用于判定复现性，不构成放行；任何回执通过都不能关闭本项。
+**第四披露项（rc.76）：Program 发布中继被杀后的前端访问违例崩溃。** run 44746006213 在 `program-publish-disconnect`：私有 MediaMTX 中继被终止、`publish-relay-exited` 正确上报后，OBS 前端宿主以 `0xC0000005`（访问违例）异常退出——`currentBootFailure=frontend-exited`、`serviceExits` frontend exitCode 3221226505、无 `Shutting down` 标记（非正常退出）、窗口句柄 `gone`、恢复尝试 0 次成功；断言「the product publish control could not resume Program publishing after the relay loss」记账于该崩溃。时间线：14:04:37 中继被杀后 fixture 源断连/重连，14:04:52.940 三路 async timestamp jump，14:04:56 门禁报告时前端已退出。宿主自计量（`a75d0cf` 加入的发布开关 UI 线程归因）：`publishStopWaitMs 5943`、`uiStallMaxMs 5752`、`relayStopMaxMs 5034`。rc.73–75 在同一代码路径同输入下均通过该阶段，属**间歇性竞态崩溃**；归因（中继被杀、media source 异步重连与发布 teardown 在宿主侧的竞态）属崩溃恢复算法与复杂诊断，**交 Codex 主线程排查**，本会话未做掩盖性测试修改、无法本机（Linux）复现。rc.77（同 SHA 重跑）未到达该阶段（更早失败于 `native-program-take`），复现性**无结论**——既未复现也未干净通过；任何回执通过都不能关闭本项。
 
-**Fourth disclosed gap (rc.76): frontend access-violation crash after the Program publish relay is killed.** In run 44746006213's `program-publish-disconnect`, once the private MediaMTX relay was terminated and `publish-relay-exited` correctly reported, the OBS frontend host exited with `0xC0000005` (access violation) — `currentBootFailure=frontend-exited`, frontend exit code 3221226505, no `Shutting down` marker (abnormal exit), window handles `gone`, zero successful recovery attempts; the resume assertion was charged to that crash. Timeline: relay killed 14:04:37, fixture sources disconnect/reconnect, three async timestamp jumps at 14:04:52.940, frontend already exited by the 14:04:56 report. Host self-measurement (`a75d0cf` publish-control UI-thread attribution): `publishStopWaitMs 5943`, `uiStallMaxMs 5752`, `relayStopMaxMs 5034`. rc.73–75 passed the same path under the same inputs, so this is an **intermittent race crash**; attribution belongs to crash-recovery/complex diagnostics and is **handed to the Codex main thread** — no masking test change was made and it cannot be reproduced locally (Linux). rc.77 (same SHA re-run) only probes reproducibility and never clears the disclosure; no passing receipt may close it.
+**Fourth disclosed gap (rc.76): frontend access-violation crash after the Program publish relay is killed.** In run 44746006213's `program-publish-disconnect`, once the private MediaMTX relay was terminated and `publish-relay-exited` correctly reported, the OBS frontend host exited with `0xC0000005` (access violation) — `currentBootFailure=frontend-exited`, frontend exit code 3221226505, no `Shutting down` marker (abnormal exit), window handles `gone`, zero successful recovery attempts; the resume assertion was charged to that crash. Timeline: relay killed 14:04:37, fixture sources disconnect/reconnect, three async timestamp jumps at 14:04:52.940, frontend already exited by the 14:04:56 report. Host self-measurement (`a75d0cf` publish-control UI-thread attribution): `publishStopWaitMs 5943`, `uiStallMaxMs 5752`, `relayStopMaxMs 5034`. rc.73–75 passed the same path under the same inputs, so this is an **intermittent race crash**; attribution belongs to crash-recovery/complex diagnostics and is **handed to the Codex main thread** — no masking test change was made and it cannot be reproduced locally (Linux). rc.77 (same SHA re-run) never reached that phase (it failed earlier in `native-program-take`), so reproducibility is **inconclusive** — neither reproduced nor cleanly passed; no passing receipt may close it.
 
-## 本机回归证据 / local regression evidence（2026-11-20，`.worktrees/v51-legacy` @ `9c2b7af`）
+**第五披露项（rc.77）：CUT TAKE 后墙格子一次约 0.5 s 的瞬态重绘。** run 44751520752 的 `program-after-take` 捕获中，main-preview 八个采样的第 0 个显示 `Wrong channel 1 in tile 0: 62,30,30`（变暗旧帧），其后 7 个采样通道正确且计数器持续推进（`temporalProgress=true`、`stalledPaths=[]`、publisher 全存活）——即 TAKE 提交并确认收敛后，真实用户仍可能看到墙格子首帧约半秒处于中途重绘态。归因与 rc.47/48/50 已记录的“捕获窗口起点与 Program 重绘竞态”同类：同阶段在 rc.73/74/76 全部通过，本次仅第 0 个采样命中，属间歇性观察。`9460829` 只做装置侧有界重捕获（同身份、整窗、每角色全过才算通过），不修改产品行为；该瞬态重绘本身未修复、不得写成已解决。
 
+**Fifth disclosed gap (rc.77): one ~0.5 s transient repaint of a wall tile after the cut TAKE.** In run 44751520752's `program-after-take` capture, main-preview sample 0 showed `Wrong channel 1 in tile 0: 62,30,30` (a darkened stale frame) while samples 1-7 carried correct channels with continuously advancing counters (`temporalProgress=true`, `stalledPaths=[]`, all publishers alive) — a real user can still see one wall tile mid-repaint for roughly half a second after the TAKE is committed and settled. The attribution matches the documented mid-swap capture-start race (rc.47/48/50): the same phase passed in rc.73/74/76 and only sample 0 hit this time, so it is an intermittent observation. `9460829` adds only a bounded device-side settled re-capture (same identity, whole window, every role must pass); the product behavior is unchanged and this repaint itself is not fixed — do not mark it resolved.
+
+## 本机回归证据 / local regression evidence（2026-11-21，`.worktrees/v51-legacy` @ `9460829`）
+
+- @`9460829` 复验：`test_build_contract.py` 63 项中 62 通过（新增中途交换重捕获契约；唯一错误仍为未初始化 obs 子模块）；`test_pixels.py` 31 通过 2 跳过；`py_compile product_windows.py` OK；`git diff --check` OK；谓词 Linux 语义复现——rc.77 形态（仅第 0 采样失败、8 采样齐备、进度已证实、Program 阶段）被容忍，冻结多采样、无进度、后段采样失败、非 Program 阶段、预算耗尽与短窗口一律拒绝。捕获调用抽为 `run_capture` 由主循环与重试共用（契约钉死两处调用与顺序：fixture 修复优先、重捕获先于 probe 窗口）。此前 @`9c2b7af` 各项证据保留如下。
 - `native-host/tests/test_build_contract.py`：加入第二次启动、拒绝记账与视频窗口重试三个静态契约（并把关键帧窗口既有契约改钉共享 `decodable_window` 谓词）后 62 项中 61 通过，唯一错误为本 worktree 未初始化 `obs/obs-studio` 子模块（缺 CMakePresets.json），与前轮记录一致。
 - 第二次启动竞态的 Linux 语义复现（2026-11-20）：旧谓词第一 tick 即接受遗留 bootId；修复谓词拒绝 `status-from-previous-boot`，直到本次启动发布新 bootId 且 journal 已收敛才接受——与第三次启动既有守卫同形。
 - 拒绝暂存记账的 Linux 语义复现（2026-11-20，真实 `backup/encrypted_backup.py` + libsodium）：守护哨兵后硬终止的恢复遗留 `.webobs-decrypt-*` 与 journal/暂存；随后对成对档案的 config-only 调用抛 `BackupError` 拒绝且未新建任何暂存（其自身 TemporaryDirectory 正常清理），journal 与已记录暂存被该调用的先行 `recover_interrupted()` 收敛，旧断言恰好在这一点把被杀恢复的遗留记到拒绝头上；修复谓词（快照差集）在有遗留时通过。
@@ -99,4 +107,4 @@ Third disclosed gap (rc.75 attribution): input-side decode starvation on the sof
 4. 集成后按第 4 节派发 120 分钟冻结候选；候选字节用 `publish_candidate.py --verify-only` 校验后再走授权发布流程。
 5. 崩溃窗口（上节）需要产品侧结论：prepared 成对回滚或 journal 先行 fsync 的顺序调整，属迁移/恢复算法，归主线程。
 6. 硬终止后未跟踪的明文解密暂存 `.webobs-decrypt-*` 是否纳入恢复/启动路径清扫，属崩溃恢复与私有数据边界设计（见披露节与 `9b26035` 门禁记账），归主线程；本轮门禁只披露、不代为修改产品行为。
-7. rc.76 前端访问违例崩溃（第四披露项）需主线程排查：私有 MediaMTX 中继被杀后，media source 异步重连与发布 teardown 在 OBS 宿主侧的竞态疑似导致 `0xC0000005`；证据见 run 44746006213 回执（`publishStopWaitMs 5943`、`uiStallMaxMs 5752`、`relayStopMaxMs 5034`、无 `Shutting down`）。属真实崩溃恢复算法与复杂诊断，本会话未改代码、无本机复现；先读 rc.77（run 44751520752，同 SHA）判定是否确定性，再决定宿主侧修复方向。
+7. rc.76 前端访问违例崩溃（第四披露项）需主线程排查：私有 MediaMTX 中继被杀后，media source 异步重连与发布 teardown 在 OBS 宿主侧的竞态疑似导致 `0xC0000005`；证据见 run 44746006213 回执（`publishStopWaitMs 5943`、`uiStallMaxMs 5752`、`relayStopMaxMs 5034`、无 `Shutting down`）。属真实崩溃恢复算法与复杂诊断，本会话未改代码、无本机复现；rc.77（run 44751520752，同 SHA）未到达该阶段，确定性仍无结论，按后续轮次继续判定后再决定宿主侧修复方向。

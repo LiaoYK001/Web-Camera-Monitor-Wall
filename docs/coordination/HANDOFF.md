@@ -1,7 +1,7 @@
 # 当前交接 / Current handoff
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 294 · 2026-11-20T22:14:41+08:00（UTC+08）
+> 快照版本 295 · 2026-11-21T02:45:41+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -22,6 +22,6 @@
 
 ## 最近一次同步
 
-更正：rc.77 复现性轮实际 run 为 44751520752（@9c2b7af、同输入），上一条登记中预写的 44746006214 为占位、作废。Correction: the rc.77 reproducibility probe is run 44751520752 at 9c2b7af; the 44746006214 in the previous entry was a placeholder and is void.
+rc.77（run 44751520752，同 SHA 9c2b7af）未触及 rc.76 崩溃面：更早失败于 native-program-take——main-preview 第 0/8 采样捕获 CUT TAKE 后墙格子重绘中途变暗旧帧（Wrong channel 1 in tile 0: 62,30,30），1-7 采样通道正确、计数器推进、temporalProgress 真、fixture 全部存活无停滞路径；属 rc.47/48/50 记录的中途交换窗口竞态，非产品冻结。rc.76 前端 AV 崩溃复现性判定因此无结论（未到达该阶段），披露保持开放。test-only 修复 9460829：仅 Program 交换阶段、仅首采样失败、八采样齐备且进度已证实时，同身份重捕获整窗一次并要求每个角色完全通过（pixelSwapTransientRetry 披露）；捕获调用抽为 run_capture 复用。已派发 rc.78（run 44795726091 @ 9460829，输入同前）。
 
 以任务中的验收条件决定完成；没有 Windows/硬件/发布证据时保持对应事项开放。
