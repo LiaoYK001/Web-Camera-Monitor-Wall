@@ -179,8 +179,19 @@ def exercise(runtime, profile_parent, report):
 
         environment = dict(os.environ)
         environment["WEBOBS_PRODUCT_TEST_ROOT"] = str(profile)
+        # native-status.json reaches ``phase=running`` the moment the supervisor has
+        # spawned the frontend (product_supervisor.py publishes right after the Popen);
+        # the host writes product-state.json only once libobs has loaded the product
+        # module and bound its session, carrying this boot's pid and bootId. The two
+        # writes are deliberately asynchronous, so both waits share the 120 s launch
+        # budget computed before the entry starts: the observation is awaited, never
+        # sampled at the instant the status file flipped.
+        launch_deadline = time.monotonic() + 120
+        launch_started = time.monotonic()
         launched = subprocess.Popen([str(entry)], env=environment, stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        def remaining():
+            return max(0.1, launch_deadline - time.monotonic())
         def first_running():
             assert launched.poll() is None, \
                 f"the installed entry refused to start over the interrupted restore ({launched.returncode})"
@@ -191,7 +202,7 @@ def exercise(runtime, profile_parent, report):
         owned = []
         try:
             started = wait_for(first_running,
-                "the installed entry did not converge the interrupted restore and start", timeout=120)
+                "the installed entry did not converge the interrupted restore and start", timeout=remaining())
             assert not journal.exists(), "the installed entry left the interrupted restore journal behind"
             assert not staged.exists(), "the installed entry never landed the pending OBS profile half"
             assert not (profile / "run/restore-recovery.json").exists(), \
@@ -200,8 +211,32 @@ def exercise(runtime, profile_parent, report):
                 "the installed entry started without the restored configuration"
             assert marker_value(native / NATIVE_MARKER) == "backup", \
                 "the installed entry started on a mismatched OBS profile half"
-            state_paths = list((profile / "native-profile").rglob("product-state.json"))
-            assert len(state_paths) == 1, "the running host did not publish one product state"
+            # rc.71 sampled this at the tick the status file flipped and saw zero files.
+            # Wait for exactly one readable observation that belongs to this boot, and
+            # record which outcome the wait saw: zero, several, unreadable or stale boot.
+            frontend_pid = next((service["pid"] for service in started.get("services", [])
+                if service.get("name") == "frontend"), 0)
+            assert frontend_pid, "native-status.json did not report the frontend child of this boot"
+            def one_host_state():
+                paths = list((profile / "native-profile").rglob("product-state.json"))
+                if len(paths) != 1:
+                    evidence["lastStateObservation"] = {"code": "state-file-count", "files": len(paths)}
+                    return None
+                try:
+                    value = read_json(paths[0])
+                except (OSError, ValueError):
+                    evidence["lastStateObservation"] = {"code": "state-file-unreadable"}
+                    return None
+                if value.get("pid") != str(frontend_pid) or value.get("bootId") != started["bootId"]:
+                    evidence["lastStateObservation"] = {"code": "state-from-other-boot",
+                        "pidMatched": value.get("pid") == str(frontend_pid),
+                        "bootIdMatched": value.get("bootId") == started["bootId"]}
+                    return None
+                evidence["lastStateObservation"] = {"code": "state-published", "phase": value.get("phase")}
+                return value
+            host_state = wait_for(one_host_state, lambda:
+                "the running host did not publish one product state for this boot: "
+                + json.dumps(evidence.get("lastStateObservation") or {}), timeout=remaining())
             rollback = Path(payload["configRollback"])
             rollback_native = Path(payload["nativeRollback"])
             assert marker_value(rollback / CONFIG_MARKER) == "live" \
@@ -211,6 +246,8 @@ def exercise(runtime, profile_parent, report):
                 "nativeProfile": marker_value(rollback_native / NATIVE_MARKER)}
             owned = [started["ownerPid"], *[service["pid"] for service in started.get("services", [])]]
             evidence["firstInstalledStart"] = {"bootId": started["bootId"], "phase": started["phase"],
+                "hostStatePhase": host_state.get("phase"),
+                "hostStateMsAfterLaunch": int((time.monotonic() - launch_started) * 1000),
                 "services": sorted(service["name"] for service in started.get("services", []))}
             evidence["checks"].append("first-installed-start-converges-the-pair-and-keeps-previous-data")
         finally:

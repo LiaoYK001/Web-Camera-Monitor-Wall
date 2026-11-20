@@ -1614,6 +1614,57 @@ class BuildContractTests(unittest.TestCase):
         self.assertEqual(gate.count('"uiThread": ui_thread_snapshot()'), 2,
             "both the refusal and a control that needed waits carry the product's own account")
 
+    def test_the_first_installed_start_waits_for_this_boot_host_state(self):
+        """Run 44609775780: the restored-pair first start sampled the host state too early.
+
+        The supervisor publishes native-status.json with ``phase=running`` right after it
+        spawns ``obs64.exe`` (product_supervisor.py calls ``status("running")`` immediately
+        after the frontend Popen), while the host writes product-state.json only once libobs
+        has loaded the product module and bound its session, carrying this boot's pid and
+        bootId. rc.71 passed the portable and installed gates 77 checks each and then failed
+        the interrupted-restore-pair-recovery phase with "the running host did not publish
+        one product state", because the gate sampled the observation on the same tick the
+        entry reported running - the file simply was not written yet. The gate has to wait
+        for exactly one readable state file owned by this boot inside the original 120 s
+        launch budget, and its receipt has to distinguish zero files, several files, an
+        unreadable file and an observation from an older boot. Convergence, dual-directory
+        consistency, rollback retention and process-cleanup assertions stay immediate: a
+        journal, a half pair or a surviving process is a product defect at that instant.
+        运行 44609775780：恢复成对档案后的首次启动采样宿主状态太早。supervisor 在 Popen
+        前端后立即写 native-status.json 的 running，宿主模块加载并绑定会话后才写带本次
+        PID/bootId 的 product-state.json；门禁必须在原 120 秒启动预算内等到恰好一份属于
+        本次启动的可读状态文件，并在回执区分零份、多份、不可读与旧启动文件。
+        """
+        source = (ROOT / "native-host/tests/backup_restore_windows.py").read_text(encoding="utf-8")
+        self.assertNotIn("assert len(state_paths) == 1", source,
+            "the host state must be awaited, not sampled at the instant the entry reported running")
+        for classification in ('"state-file-count"', '"state-file-unreadable"', '"state-from-other-boot"',
+                               '"pidMatched"', '"bootIdMatched"'):
+            self.assertIn(classification, source,
+                "the receipt must name which state-file outcome the bounded wait saw")
+        self.assertRegex(source, r"launch_deadline\s*=\s*time\.monotonic\(\)\s*\+\s*120",
+            "one 120 s launch budget computed before the entry starts governs this phase")
+        tree = ast.parse(source)
+        budgeted_waits = sum(1 for node in ast.walk(tree) if isinstance(node, ast.Call)
+            and getattr(node.func, "id", "") == "wait_for" and any(
+                kw.arg == "timeout" and getattr(kw.value.func, "id", "") == "remaining"
+                for kw in node.keywords if kw.arg == "timeout" and isinstance(kw.value, ast.Call))
+            )
+        self.assertGreaterEqual(budgeted_waits, 2,
+            "both the running-status wait and the host-state wait consume the same launch budget")
+        self.assertIn('service.get("name") == "frontend"', source,
+            "the state file must match the frontend child of this boot, not any obs process")
+        self.assertIn('value.get("bootId") != started["bootId"]', source,
+            "an observation left by a previous boot must be rejected as stale")
+        for preserved in ("the installed entry left the interrupted restore journal behind",
+                          "the installed entry never landed the pending OBS profile half",
+                          "the installed entry recorded a bounded recovery failure instead of converging",
+                          "the installed entry started without the restored configuration",
+                          "the installed entry started on a mismatched OBS profile half",
+                          "the installed entry deleted the previous pair instead of keeping it retryable",
+                          "the interrupted-restore first start left its own product processes alive"):
+            self.assertIn(preserved, source, "convergence, consistency, retention or cleanup lost its assert")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
