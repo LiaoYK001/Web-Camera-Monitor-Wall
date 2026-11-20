@@ -52,10 +52,11 @@ python3 "$project/scripts/v51-ci-gate.py" 44385767337 \
 
 ## 3. 逐轨增益与其后续失败面（历史起点 rc.59）
 
-**当前轮次 / current round**：rc.72 run [44711476489](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44711476489)，
-源码 `a27a76633c16b063156db54584c8a01feb81f758`（栈顶 `codex/v51-r4-legacy-import`），`product_mode=true complete=true soak_minutes=0`。
-rc.71（run 44609775780 @ `cdfe8182`）便携与安装态产品各过 77 项，首个失败点已被定位并修复在门禁侧
-（见下节 rc.71）。本轮先读成对恢复的 `native-product-nsis.json`，再核对同 SHA 的 `legacy-import`、`lan`、
+**当前轮次 / current round**：rc.73 run [44718717601](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44718717601)，
+源码 `28c338840d5e5687ef4231885a70c3386f2cfdc8`（栈顶 `codex/v51-r4-legacy-import`），`product_mode=true complete=true soak_minutes=0`。
+rc.72（run 44711476489 @ `a27a766`）过了 rc.71 的宿主状态等待，成对恢复停在
+`backup_restore_windows.py:281`「journal does not record both previous halves」，失败面已修在门禁侧
+（见下节 rc.72）。本轮先读成对恢复的 `native-product-nsis.json`，再核对同 SHA 的 `legacy-import`、`lan`、
 `updater` 与覆盖升级 `upgraded-ui` 回执是否齐全。
 
 2026-11-19 的直接证据为 [rc.59](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44385767337) 的 `native-product-entry-ui.json`。46 项通过后，`program-track-controls` 失败。Portable 五路 HEVC、Program MP4、回环 RTMP 后通过 RTSP 解码双音、总线隔离、逐轨静音、ONVIF 模拟设备操作与拒绝结果已记录。安装步骤跳过，因此成对恢复、旧数据导入和 LAN 没有本轮安装证据。若 GitHub 有更新的失败，以更新回执的第一项为准。
@@ -229,6 +230,22 @@ rc.71（run 44609775780）在 `native-host/tests/backup_restore_windows.py:204` 
 或 profile 残留旧目录；`state-file-unreadable` → `QSaveFile` 替换与读取竞速；`state-from-other-boot` →
 profile 被第二次启动复用（看 `pidMatched`/`bootIdMatched` 哪一侧不匹配）；零份直到超时 → 登录回调从未完成，
 属产品侧，交主线程查会话绑定。
+
+### rc.72 起：原生半区中断要等 journal 记录完两份前像 / the native-swap interrupt waits for the recorded journal
+
+rc.72（run 44711476489）里 rc.71 的宿主状态等待已通过，成对恢复推进到第二个中断阶段，
+停在 `backup_restore_windows.py:281`「journal does not record both previous halves」，随后清理阶段
+`restore-interrupt-native.log` 报 WinError 32 把断言掩盖成 PS RuntimeException。根因在装置侧：
+`interrupt-native` 钩子在上一次 OBS 档案物理移开后、`os.replace` 尚未返回时写哨兵并暂停，而
+`backup/encrypted_backup.py` 要到该调用返回才 `fsync` 记录 `nativeRollback`；杀进程落在交换与
+journal 写入之间的窗口，真正丢的是原生半区引用，不是产品 `recover_interrupted` 承诺的
+「两份前像已记录、配置半区未落盘」的 prepared 状态——恢复语义要求此时把成对档案整体回滚。
+修复 `28c3388`（test-only）：哨兵改跟在记录 `nativeRollback` 的 `_write_journal` 调用之后、
+`os.replace(activated, config_root)` 落盘之前；两个中断阶段的子进程终止与日志关闭放进 `finally`，
+断言失败不再被 WinError 32 掩盖。产品恢复顺序未改动，全部原断言保留，
+`native-host/tests/test_build_contract.py` 新增静态契约钉住该窗口与 finally 清理。
+读法：若该阶段再失败且断言可见 → 产品侧 prepared 回滚不收敛，交主线程；若失败回到
+`lastStateObservation` 四类码 → 按上节 rc.71 的归因处理。
 
 ### 公开仓库审计：测试夹具里的 RTSP  userinfo 必须登记 / test fixtures must declare their RTSP userinfo
 
