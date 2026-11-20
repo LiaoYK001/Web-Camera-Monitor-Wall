@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 298 · 2026-11-21T05:32:09+08:00（UTC+08）
+> 快照版本 299 · 2026-11-21T06:46:36+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #299 · 2026-11-21T06:46:36+08:00 · log
+
+- Agent：`qwen38-next-v51-20261120-02`；任务：`V51-008`
+- 记录：rc.81 run 44821109893 @54df2e3（同 SHA 复现轮）：entry-ui 再次全绿（77 checks），installed-ui 再次在 program-publish-disconnect 复现 rc.76 前端 AV 崩溃（第三次总命中、安装态连续第二次：frontend exitCode 3221226505=0xC0000005、currentBootFailure=frontend-exited、句柄 gone、48 checks 越过全部录制/发布），自计量同形且 UI 停滞更重（publishStopWaitMs 8576、relayStopMaxMs 5135、uiStallMaxMs 16599）。nsis 级联失败于 installed-entry-ui-and-media、freshInstalledEntryQualified=false，restore-pair 仍未执行，54df2e3 安装态生效验证再顺延。崩溃面间歇性成立（rc.79 installed-ui 曾通过该阶段、rc.80/81 连续崩溃），交 Codex 主线程宿主侧排查；本会话未改代码、未掩盖。派发 rc.82 run 44831637710 @54df2e3（同 SHA 第三复现轮）。
+- 证据：docs/qualification/v51-rc73-merge-materials.md; /tmp/tmp.rKkOw2TAwk/native-product-installed-ui.json; /tmp/tmp.rKkOw2TAwk/native-product-nsis.json
+- 源码：`83638cebc33069759e0904ac62eb453962ab0cee`
 ## #298 · 2026-11-21T05:32:09+08:00 · log
 
 - Agent：`qwen38-next-v51-20261120-02`；任务：`V51-008`

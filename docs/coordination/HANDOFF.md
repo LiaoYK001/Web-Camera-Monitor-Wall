@@ -1,7 +1,7 @@
 # 当前交接 / Current handoff
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 298 · 2026-11-21T05:32:09+08:00（UTC+08）
+> 快照版本 299 · 2026-11-21T06:46:36+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -22,6 +22,6 @@
 
 ## 最近一次同步
 
-rc.80 run 44814303103 @54df2e3：entry-ui 再次全绿（77 checks，含发布断连恢复），但 NSIS 安装态内嵌运行在 program-publish-disconnect 第二次复现 rc.76 前端 AV 崩溃（installed-ui passed=false、frontend exitCode 3221226505=0xC0000005、currentBootFailure=frontend-exited、句柄 gone、checkpoint 已写出、断言如实记账），自计量与 rc.76 同形（publishStopWaitMs 5838、relayStopMaxMs 5028、uiStallMaxMs 5009）。nsis 级联失败于 installed-entry-ui-and-media，restore-pair（备份修复安装态生效点）未执行，54df2e3 的真实安装态验证顺延。第四披露项升级为已两次复现（rc.76 entry-ui、rc.80 installed-ui）、间歇性成立、交主线程；本会话未改代码、未掩盖。派发 rc.81 run 44821109893 @54df2e3（同 SHA 复现轮：判定崩溃面持续性并推进 restore-pair/legacy-import/lan/updater/upgraded-ui）。
+rc.81 run 44821109893 @54df2e3（同 SHA 复现轮）：entry-ui 再次全绿（77 checks），installed-ui 再次在 program-publish-disconnect 复现 rc.76 前端 AV 崩溃（第三次总命中、安装态连续第二次：frontend exitCode 3221226505=0xC0000005、currentBootFailure=frontend-exited、句柄 gone、48 checks 越过全部录制/发布），自计量同形且 UI 停滞更重（publishStopWaitMs 8576、relayStopMaxMs 5135、uiStallMaxMs 16599）。nsis 级联失败于 installed-entry-ui-and-media、freshInstalledEntryQualified=false，restore-pair 仍未执行，54df2e3 安装态生效验证再顺延。崩溃面间歇性成立（rc.79 installed-ui 曾通过该阶段、rc.80/81 连续崩溃），交 Codex 主线程宿主侧排查；本会话未改代码、未掩盖。派发 rc.82 run 44831637710 @54df2e3（同 SHA 第三复现轮）。
 
 以任务中的验收条件决定完成；没有 Windows/硬件/发布证据时保持对应事项开放。

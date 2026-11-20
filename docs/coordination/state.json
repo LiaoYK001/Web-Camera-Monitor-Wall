@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 298,
-  "updated_at": "2026-11-21T05:32:09+08:00",
+  "revision": 299,
+  "updated_at": "2026-11-21T06:46:36+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1349,12 +1349,13 @@
         "gate 44751520752 exit=3 receipts=[entry-ui,restore] failureReceipts=[entry-ui native-program-take/pixels-program-after-take-captured]; 契约 63 项 62 通过（唯一错误为 obs 子模块未初始化）; test_pixels 31/2; 谓词语义复现容忍 rc.77 形态并拒绝冻结/无进度/后段失败/非 Program/预算耗尽/短窗口; 9460829 已推送",
         "gate 44795726091 exit=3 failureReceipts=[entry-ui native-program-take/pixels-program-after-take-captured]; analysis progressError 'Frozen final pixels on slot 1'; probeOnWindow opened=true staleTiles=[0,2,3] renderFramesPerSecond=30.4; feedDecodeProbe distinctFrames 32-38; serialsDuringCapture windowMs 26030 samples 93 publishes 14 全部 inputs advanced=true",
         "docs/qualification/v51-rc73-merge-materials.md; /tmp/tmp.qSBZMfpXSd/repro_legacy_restore.py; codex/v51-r4-legacy-import 54df2e3",
-        "docs/qualification/v51-rc73-merge-materials.md; /tmp/tmp.UmiWx1Q9C0/native-product-installed-ui.json; /tmp/tmp.UmiWx1Q9C0/native-product-nsis.json"
+        "docs/qualification/v51-rc73-merge-materials.md; /tmp/tmp.UmiWx1Q9C0/native-product-installed-ui.json; /tmp/tmp.UmiWx1Q9C0/native-product-nsis.json",
+        "docs/qualification/v51-rc73-merge-materials.md; /tmp/tmp.rKkOw2TAwk/native-product-installed-ui.json; /tmp/tmp.rKkOw2TAwk/native-product-nsis.json"
       ],
       "blocker": "",
       "next_step": "rc.74 结束后读 entry-ui/restore/installed-ui/nsis/restore-pair/legacy-import/lan/updater/upgraded-ui/size-split 全部回执；齐了把合并材料交 Codex 主线程审阅换基与合并顺序。rc.72 journal 间隙声明保留，需主线程产品侧结论。",
-      "updated_at": "2026-11-21T05:32:09+08:00",
-      "last_note": "rc.80 run 44814303103 @54df2e3：entry-ui 再次全绿（77 checks，含发布断连恢复），但 NSIS 安装态内嵌运行在 program-publish-disconnect 第二次复现 rc.76 前端 AV 崩溃（installed-ui passed=false、frontend exitCode 3221226505=0xC0000005、currentBootFailure=frontend-exited、句柄 gone、checkpoint 已写出、断言如实记账），自计量与 rc.76 同形（publishStopWaitMs 5838、relayStopMaxMs 5028、uiStallMaxMs 5009）。nsis 级联失败于 installed-entry-ui-and-media，restore-pair（备份修复安装态生效点）未执行，54df2e3 的真实安装态验证顺延。第四披露项升级为已两次复现（rc.76 entry-ui、rc.80 installed-ui）、间歇性成立、交主线程；本会话未改代码、未掩盖。派发 rc.81 run 44821109893 @54df2e3（同 SHA 复现轮：判定崩溃面持续性并推进 restore-pair/legacy-import/lan/updater/upgraded-ui）。"
+      "updated_at": "2026-11-21T06:46:36+08:00",
+      "last_note": "rc.81 run 44821109893 @54df2e3（同 SHA 复现轮）：entry-ui 再次全绿（77 checks），installed-ui 再次在 program-publish-disconnect 复现 rc.76 前端 AV 崩溃（第三次总命中、安装态连续第二次：frontend exitCode 3221226505=0xC0000005、currentBootFailure=frontend-exited、句柄 gone、48 checks 越过全部录制/发布），自计量同形且 UI 停滞更重（publishStopWaitMs 8576、relayStopMaxMs 5135、uiStallMaxMs 16599）。nsis 级联失败于 installed-entry-ui-and-media、freshInstalledEntryQualified=false，restore-pair 仍未执行，54df2e3 安装态生效验证再顺延。崩溃面间歇性成立（rc.79 installed-ui 曾通过该阶段、rc.80/81 连续崩溃），交 Codex 主线程宿主侧排查；本会话未改代码、未掩盖。派发 rc.82 run 44831637710 @54df2e3（同 SHA 第三复现轮）。"
     },
     {
       "id": "COORD-008",
@@ -5044,6 +5045,18 @@
         "docs/qualification/v51-rc73-merge-materials.md; /tmp/tmp.UmiWx1Q9C0/native-product-installed-ui.json; /tmp/tmp.UmiWx1Q9C0/native-product-nsis.json"
       ],
       "git_revision": "8e8af32c4c16350483761b9526f98ffcb6287e0d"
+    },
+    {
+      "sequence": 299,
+      "at": "2026-11-21T06:46:36+08:00",
+      "agent": "qwen38-next-v51-20261120-02",
+      "task": "V51-008",
+      "action": "log",
+      "note": "rc.81 run 44821109893 @54df2e3（同 SHA 复现轮）：entry-ui 再次全绿（77 checks），installed-ui 再次在 program-publish-disconnect 复现 rc.76 前端 AV 崩溃（第三次总命中、安装态连续第二次：frontend exitCode 3221226505=0xC0000005、currentBootFailure=frontend-exited、句柄 gone、48 checks 越过全部录制/发布），自计量同形且 UI 停滞更重（publishStopWaitMs 8576、relayStopMaxMs 5135、uiStallMaxMs 16599）。nsis 级联失败于 installed-entry-ui-and-media、freshInstalledEntryQualified=false，restore-pair 仍未执行，54df2e3 安装态生效验证再顺延。崩溃面间歇性成立（rc.79 installed-ui 曾通过该阶段、rc.80/81 连续崩溃），交 Codex 主线程宿主侧排查；本会话未改代码、未掩盖。派发 rc.82 run 44831637710 @54df2e3（同 SHA 第三复现轮）。",
+      "evidence": [
+        "docs/qualification/v51-rc73-merge-materials.md; /tmp/tmp.rKkOw2TAwk/native-product-installed-ui.json; /tmp/tmp.rKkOw2TAwk/native-product-nsis.json"
+      ],
+      "git_revision": "83638cebc33069759e0904ac62eb453962ab0cee"
     }
   ]
 }
