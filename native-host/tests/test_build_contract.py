@@ -258,6 +258,13 @@ class BuildContractTests(unittest.TestCase):
         frames over more than two publish keyframe intervals on one connection,
         records when the first decodable frame arrived, and adds a packet probe
         that answers whether the relay hands a late consumer an IDR at all.
+        Since run 44735378274 the publishing gate re-reads a falling-short window
+        once on a fresh connection (shared decodable_window predicate, probeAttempts
+        in the receipt) so one input-side decode stall is not charged as "not
+        delivered"; sustained starvation still fails the same thresholds twice.
+        自 run 44735378274 起，发布门禁会用新连接把未达标的窗口重读一次（共享
+        decodable_window 谓词、回执含 probeAttempts），单次输入侧解码停滞不再被判为
+        "未交付"；持续饥饿仍会两次撞上相同阈值。
         """
         encoder = (ROOT / "native-host/src/product_output.cpp").read_text(encoding="utf-8")
         keyints = re.findall(r'obs_data_set_int\(video_settings\.get\(\), "keyint_sec", (\d+)\)', encoder)
@@ -276,7 +283,8 @@ class BuildContractTests(unittest.TestCase):
         self.assertEqual(gate.count("published_video_window(runtime / \"bin/ffprobe.exe\""), 2)
         self.assertEqual(gate.count("published_packet_window(runtime / \"bin/ffprobe.exe\""), 2)
         self.assertNotIn('"-read_intervals", "%+#20"', gate)
-        for assertion in ("len(stamps) >= 10", "monotonic and span >= float(encoder_keyint_seconds)",
+        for assertion in ('len(window["stamps"]) >= 10', "window[\"monotonicTimestamps\"]",
+                          'window["ptsSpanSeconds"] >= float(encoder_keyint_seconds)',
                           'replay_window["frames"] >= 10', "firstDecodableFrameMs", "packetProbe",
                           "unparsableStamps", "stamp = float(value)"):
             self.assertIn(assertion, gate)
@@ -1807,6 +1815,52 @@ class BuildContractTests(unittest.TestCase):
                           "the refused paired restore still changed one half of the pair",
                           "the refused paired restore left a journal behind"):
             self.assertIn(preserved, source, "the paired-refusal asserts must stay verbatim")
+
+    def test_the_program_video_window_retries_one_stalled_consumer_window(self):
+        """Run 44735378274: rc.75 charged one stalled consumer window as "not delivered".
+
+        The rc.75 gate advanced past the legacy-import phase and failed the Program
+        streaming video assert inside the freshly installed entry: the single 6-second
+        consumer decoded 26 frames over a 0.833 second span (first frame at 4015 ms)
+        while the host rendered 421 frames inside the same probe, the relay reported a
+        connected stream, and the packet connection saw two IDR keyframes 2.0 seconds
+        apart. The boot's OBS log recorded six "WebOBS async video backlog" drops of 30
+        undrawn frames (gaps 2.689-3.000 seconds) and one async timestamp jump around
+        fixture reconnects - the same delivery-versus-decode split the rc.62 keyframe
+        window documented, now caused by an input-side decode stall on the runner. One
+        bounded retry on a fresh connection tolerates the transient stall while
+        sustained starvation still fails the identical thresholds twice; every attempt
+        stays in the receipt via probeAttempts, the packet probe and host render
+        counters stay measured after the last attempt, and the decode starvation itself
+        remains disclosed through the boot markers rather than being declared healthy.
+        运行 44735378274：rc.75 把单个被暂存的消费窗口判成 "未交付"。门禁越过 legacy-import
+        阶段后在新安装入口的 Program 流媒体视频断言失败：单个 6 秒消费窗口只解出 0.833 秒
+        跨度的 26 帧（首帧 4015 ms），而同一探测期间宿主渲染了 421 帧、中继报告流已连接、
+        包连接看到间隔 2.0 秒的两个 IDR 关键帧；该启动的 OBS 日志记录了六次 "WebOBS async
+        video backlog" 丢弃 30 个未绘制帧（间隙 2.689-3.000 秒）与一次异步时间戳跳跃，发生在
+        fixture 重连附近——与 rc.62 关键帧窗口记录的"交付 vs 解码"分裂同类，本次由运行器
+        输入侧解码停滞引起。一次有界重试用新连接容忍瞬时停滞，持续饥饿仍会两次撞上相同阈值；
+        每次尝试经 probeAttempts 留在回执里，包探测与宿主渲染计数保持在最后一次尝试之后测量，
+        解码停滞本身继续经启动标记披露而非宣告健康。
+        """
+        source = (ROOT / "native-host/tests/product_windows.py").read_text(encoding="utf-8")
+        self.assertIn("def decodable_window(window):", source,
+            "the video-window acceptance test must be named once and reused by retry and assert")
+        self.assertIn("for attempt in range(2):", source,
+            "a falling-short video window must be re-read on a fresh connection once")
+        self.assertIn('"probeAttempts": attempts', source,
+            "every window attempt must stay visible in the receipt")
+        retry = source.index("for attempt in range(2):")
+        self.assertLess(retry, source.index("packet_summary = published_packet_window", retry),
+            "the packet probe and host counters must be taken after the final attempt")
+        self.assertIn('assert decodable_window(video_window)', source,
+            "the last attempt alone decides the assertion")
+        for preserved in ("len(window[\"stamps\"]) >= 10", "window[\"monotonicTimestamps\"]",
+                          "window[\"ptsSpanSeconds\"] >= float(encoder_keyint_seconds)"):
+            self.assertIn(preserved, source,
+                "the retry must keep the exact delivery thresholds")
+        self.assertIn("\"published Program did not deliver enough decodable video frames across \"",
+            source, "the window-failure assert message must stay verbatim")
 
 
 if __name__ == "__main__":
