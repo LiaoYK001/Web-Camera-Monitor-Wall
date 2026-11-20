@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 290 · 2026-11-20T19:30:11+08:00（UTC+08）
+> 快照版本 291 · 2026-11-20T20:25:33+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #291 · 2026-11-20T20:25:33+08:00 · log
+
+- Agent：`qwen38-next-v51-20261120-02`；任务：`V51-008`
+- 记录：rc.74 run 44728029615 completed=failure：0bd1a29 竞态修复生效、Program 增益复过（controlRatios 0.976/0.938）；首个真实失败点 backup_restore_windows.py:390 拒绝暂存断言，归因为装置记账——成对档案拒绝在自身 .webobs-decrypt- TemporaryDirectory 内抛 BackupError、不可能泄漏，遗留明文暂存来自早前两次 TerminateProcess 硬终止，recover_interrupted 只删除 journal 记录暂存。Linux 真实模块复现三点确认；test-only 修复 9b26035（拒绝前快照、只对新建目录记账、回执披露 staleStagingFromKilledRestores）已推送；契约套件 61 项 60 通过（唯一错误为 worktree 未初始化 OBS 子模块）、tests/test_encrypted_backup.py 12 OK、py_compile 与 git diff --check OK。派发 rc.75 run 44735378274 @9b26035（同输入），低频轮询中。产品侧新问题交 Codex 主线程：硬终止后未跟踪明文解密暂存是否应清扫（崩溃恢复/私有数据边界）。rc.72 journal/fsync 窗口继续开放。EN: rc.74 failed at the refusal staging assert; the refusal raises BackupError inside its own decrypt TemporaryDirectory and cannot leak — leftovers belong to the two hard-killed restores and recover_interrupted removes only journal-recorded staging. Test-only fix 9b26035 pushed (pre-refusal snapshot, charge-new-only, receipt disclosure); rc.75 run 44735378274 dispatched at 9b26035. Product-side question held for the Codex main thread: sweeping untracked plaintext decrypt staging after a hard kill. The rc.72 journal/fsync window stays open.
+- 证据：run 44728029615 gate inspect-first-failure; commit 9b26035 (codex/v51-r4-legacy-import); contract 61/60; tests/test_encrypted_backup.py 12 OK; Linux repro of kill-leftover vs refusal-no-leak
+- 源码：`7e43a4cfbf89bc807686bb46822424301a97dc06`
 ## #290 · 2026-11-20T19:30:11+08:00 · update
 
 - Agent：`qwen38-next-v51-20261120-02`；任务：`V51-008`

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 290,
-  "updated_at": "2026-11-20T19:30:11+08:00",
+  "revision": 291,
+  "updated_at": "2026-11-20T20:25:33+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1342,12 +1342,13 @@
         "Linux 语义回归 PASS（libsodium.so.26，脚本 /tmp/tmp.FhezGk2Fou/native_swap_window_sim.py，临时目录内 profile/backups 隔离）；gh pr list 确认栈基链与 head 28c3388。",
         "run 44718717601 in_progress；账本 revision 285 记录 rc.72 归因、28c3388 修复与 Linux 回归；本释放不提交不推送。",
         "检查点：V51-008 | worktree .worktrees/v51-legacy | SHA 28c338840d5e5687ef4231885a70c3386f2cfdc8 | rc.73/run 44718717601 | 本轮只验证成对恢复及后续安装态回执是否齐全",
-        "receipt /tmp/tmp.TXOGABfLyV/native-product-nsis.json failurePhase=interrupted-restore-pair-recovery；job 136228630230 日志 6928-6937 行 AssertionError；本机复现脚本输出确认旧谓词 tick1 接受、新谓词拒绝；gh workflow run 44728029615 @ 0bd1a2943dd2234e35194819aa80eadaa7ee7f0f"
+        "receipt /tmp/tmp.TXOGABfLyV/native-product-nsis.json failurePhase=interrupted-restore-pair-recovery；job 136228630230 日志 6928-6937 行 AssertionError；本机复现脚本输出确认旧谓词 tick1 接受、新谓词拒绝；gh workflow run 44728029615 @ 0bd1a2943dd2234e35194819aa80eadaa7ee7f0f",
+        "run 44728029615 gate inspect-first-failure; commit 9b26035 (codex/v51-r4-legacy-import); contract 61/60; tests/test_encrypted_backup.py 12 OK; Linux repro of kill-leftover vs refusal-no-leak"
       ],
       "blocker": "",
       "next_step": "rc.74 结束后读 entry-ui/restore/installed-ui/nsis/restore-pair/legacy-import/lan/updater/upgraded-ui/size-split 全部回执；齐了把合并材料交 Codex 主线程审阅换基与合并顺序。rc.72 journal 间隙声明保留，需主线程产品侧结论。",
-      "updated_at": "2026-11-20T19:30:11+08:00",
-      "last_note": "等 rc.74 run 44728029615 结果（轮询 bpcl89xz2）。V51-007 的跨任务知会经 agent-sync log 被拒（该任务仍由 deepseek-v51-20261118-01 认领，log 需属主），知会内容已在本任务 revision 289 记录，交接释放时一并写入 HANDOFF，供协调人转达；不代改 V51-007 状态。"
+      "updated_at": "2026-11-20T20:25:33+08:00",
+      "last_note": "rc.74 run 44728029615 completed=failure：0bd1a29 竞态修复生效、Program 增益复过（controlRatios 0.976/0.938）；首个真实失败点 backup_restore_windows.py:390 拒绝暂存断言，归因为装置记账——成对档案拒绝在自身 .webobs-decrypt- TemporaryDirectory 内抛 BackupError、不可能泄漏，遗留明文暂存来自早前两次 TerminateProcess 硬终止，recover_interrupted 只删除 journal 记录暂存。Linux 真实模块复现三点确认；test-only 修复 9b26035（拒绝前快照、只对新建目录记账、回执披露 staleStagingFromKilledRestores）已推送；契约套件 61 项 60 通过（唯一错误为 worktree 未初始化 OBS 子模块）、tests/test_encrypted_backup.py 12 OK、py_compile 与 git diff --check OK。派发 rc.75 run 44735378274 @9b26035（同输入），低频轮询中。产品侧新问题交 Codex 主线程：硬终止后未跟踪明文解密暂存是否应清扫（崩溃恢复/私有数据边界）。rc.72 journal/fsync 窗口继续开放。EN: rc.74 failed at the refusal staging assert; the refusal raises BackupError inside its own decrypt TemporaryDirectory and cannot leak — leftovers belong to the two hard-killed restores and recover_interrupted removes only journal-recorded staging. Test-only fix 9b26035 pushed (pre-refusal snapshot, charge-new-only, receipt disclosure); rc.75 run 44735378274 dispatched at 9b26035. Product-side question held for the Codex main thread: sweeping untracked plaintext decrypt staging after a hard kill. The rc.72 journal/fsync window stays open."
     },
     {
       "id": "COORD-008",
@@ -4943,6 +4944,18 @@
       "note": "等 rc.74 run 44728029615 结果（轮询 bpcl89xz2）。V51-007 的跨任务知会经 agent-sync log 被拒（该任务仍由 deepseek-v51-20261118-01 认领，log 需属主），知会内容已在本任务 revision 289 记录，交接释放时一并写入 HANDOFF，供协调人转达；不代改 V51-007 状态。",
       "evidence": [],
       "git_revision": "24c3be6e6e4f3b5080b547b599d96a302650d063"
+    },
+    {
+      "sequence": 291,
+      "at": "2026-11-20T20:25:33+08:00",
+      "agent": "qwen38-next-v51-20261120-02",
+      "task": "V51-008",
+      "action": "log",
+      "note": "rc.74 run 44728029615 completed=failure：0bd1a29 竞态修复生效、Program 增益复过（controlRatios 0.976/0.938）；首个真实失败点 backup_restore_windows.py:390 拒绝暂存断言，归因为装置记账——成对档案拒绝在自身 .webobs-decrypt- TemporaryDirectory 内抛 BackupError、不可能泄漏，遗留明文暂存来自早前两次 TerminateProcess 硬终止，recover_interrupted 只删除 journal 记录暂存。Linux 真实模块复现三点确认；test-only 修复 9b26035（拒绝前快照、只对新建目录记账、回执披露 staleStagingFromKilledRestores）已推送；契约套件 61 项 60 通过（唯一错误为 worktree 未初始化 OBS 子模块）、tests/test_encrypted_backup.py 12 OK、py_compile 与 git diff --check OK。派发 rc.75 run 44735378274 @9b26035（同输入），低频轮询中。产品侧新问题交 Codex 主线程：硬终止后未跟踪明文解密暂存是否应清扫（崩溃恢复/私有数据边界）。rc.72 journal/fsync 窗口继续开放。EN: rc.74 failed at the refusal staging assert; the refusal raises BackupError inside its own decrypt TemporaryDirectory and cannot leak — leftovers belong to the two hard-killed restores and recover_interrupted removes only journal-recorded staging. Test-only fix 9b26035 pushed (pre-refusal snapshot, charge-new-only, receipt disclosure); rc.75 run 44735378274 dispatched at 9b26035. Product-side question held for the Codex main thread: sweeping untracked plaintext decrypt staging after a hard kill. The rc.72 journal/fsync window stays open.",
+      "evidence": [
+        "run 44728029615 gate inspect-first-failure; commit 9b26035 (codex/v51-r4-legacy-import); contract 61/60; tests/test_encrypted_backup.py 12 OK; Linux repro of kill-leftover vs refusal-no-leak"
+      ],
+      "git_revision": "7e43a4cfbf89bc807686bb46822424301a97dc06"
     }
   ]
 }
