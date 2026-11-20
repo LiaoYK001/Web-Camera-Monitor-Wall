@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 274,
-  "updated_at": "2026-11-20T04:45:17+08:00",
+  "revision": 288,
+  "updated_at": "2026-11-20T18:42:24+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1254,7 +1254,7 @@
       "title": "把 Program 合成输出验收落到用户实际收到的产物 / accept Program output from the delivered recording and stream",
       "priority": "P1",
       "status": "in_progress",
-      "owner": "qwen38-next-v51-20261119-01",
+      "owner": "qwen38-next-v51-20261120-02",
       "scope": [
         "native-host/src/product_output.cpp",
         "native-host/src/product_window.cpp",
@@ -1336,12 +1336,17 @@
         "codex/v51-r5-soak 0686c2b（test_build_contract.py 55 项 OK；换回 bd617e8 的 product_windows.py 后新增回放断言失败于已重启发布进程）；codex/v51-r3-005-devices da2fc15；codex/v51-r4-legacy-import bf8c1ce；试合树 /tmp/merge-dry.9r6A 六次 merge 无冲突且 native-host 套件 OK；rc.69 run 44587525224 仍 in_progress，当前步骤 Build and qualify a fresh integrated product NSIS installation（首次执行安装态门禁）。",
         "rc.69 回执 /tmp/rc69.ht0c/native-product-integration-receipts-5.1.0-rc.69/：installed-ui passed=false failurePhase=program-publish-disconnect lastCheckpoint=program-publish-disconnect-reported publishDisconnectError=publish-relay-exited publishRelayPid=2908 programTrackGain controlRatios 1.01/1.005 gainPointTwo 比值 0.2012 programTrackMute 880=6.5 programBusIsolation busTwo 440=4070.2/1200=2.7、busThree 1200=4102.9/440=5.5 programTrackOffsets [[0,500,300],[1,0,-200]] recordingFailureReceipt=recording-directory-failed deviceOperations 有 ONVIF GetProfiles；entry-ui passed=true（77 项）restore/size-split 通过，restore-pair、legacy-import、lan、updater、upgraded-ui 因门禁中断未执行；本机 native-host/tests/test_*.py 全部 OK（两个需 --probe 的真机探针除外），test_build_contract 56 OK（非 v51 worktree 仍因 obs 子模块未初始化报 1 error，与本轮无关），git diff --check 干净，staged diff 无新增 rtsp userinfo；新回归在修复前文件上失败于残留裸 assert（2686/2703），修复后三种结局与空消息补全全部通过。rc.70 run 44599567300 已派发，监视 /tmp/watch70.log。",
         "rc.70 回执 /tmp/rc70.aZVt/：installed-ui passed=false failurePhase=program-publish-disconnect failureDetail='the product publish control could not resume Program publishing after the relay loss' lastCheckpoint=program-publish-disconnect-reported publishDisconnectError=publish-relay-exited publishRelayPid=7824 productControlWaits=[{label:'publish again after a relay loss',recoveredAfterAttempts:0,unusableAttempts:[],lastUnavailable:null,lastUiFailure:{stage:'initialize',code:'product-window'}}] lastStateObservation={code:'state-from-other-boot',pidMatched:false,bootIdMatched:false}（该条来自结束时的观察，不属开关调用）；entry-ui passed=true、restore 通过、size-split 含 installedTree；restore-pair、legacy-import、lan、updater、upgraded-ui 仍未执行。本机 test_build_contract 55 OK（新契约在修复前的 product_windows.py 上失败于 reportedHandles 计数 1≠2；在修复前的 product-ui.ps1 上缺少两个区分 code），git diff --check 干净，无新增 rtsp userinfo。rc.71 run 44609775780 已派发，监视 /tmp/watch71.log。",
-        "commit 9ed32ae (codex/v51-r3-output, PR #67)；栈顶 codex/v51-r4-legacy-import e3a9519f7a61376ba4f5ca1e53798f55dd17fbd9；静态契约缺少计量时 FAILED、补齐后 OK；native-host/tests 在 v51 worktree 通过"
+        "commit 9ed32ae (codex/v51-r3-output, PR #67)；栈顶 codex/v51-r4-legacy-import e3a9519f7a61376ba4f5ca1e53798f55dd17fbd9；静态契约缺少计量时 FAILED、补齐后 OK；native-host/tests 在 v51 worktree 通过",
+        "a27a76633c16b063156db54584c8a01feb81f758（codex/v51-r4-legacy-import，已推送）：回归测试 test_the_first_installed_start_waits_for_this_boot_host_state 修复前失败、修复后通过；Fedora worktree 与 v51qt 容器复跑 OK（容器补拷 tests/onvif_device_emulator.py）。手册更新单独提交 8124cb1643736caafdde3452a859e96eb976ab04。",
+        "run 44711476489 回执 native-product-nsis.json failurePhase=interrupted-restore-pair-recovery exceptionType=PS RuntimeException；job 136203981742 日志 6926-6940 行给出 AssertionError: journal does not record both previous halves 与 WinError 32；28c3388 后 BuildContractTests 两个契约测试 OK；runbook 提交见本轮。",
+        "Linux 语义回归 PASS（libsodium.so.26，脚本 /tmp/tmp.FhezGk2Fou/native_swap_window_sim.py，临时目录内 profile/backups 隔离）；gh pr list 确认栈基链与 head 28c3388。",
+        "run 44718717601 in_progress；账本 revision 285 记录 rc.72 归因、28c3388 修复与 Linux 回归；本释放不提交不推送。",
+        "检查点：V51-008 | worktree .worktrees/v51-legacy | SHA 28c338840d5e5687ef4231885a70c3386f2cfdc8 | rc.73/run 44718717601 | 本轮只验证成对恢复及后续安装态回执是否齐全"
       ],
       "blocker": "",
-      "next_step": "读 rc.71（run 44609775780 @ cdfe8182）首个失败点与 reportedHandles/productControlWaits；若仍是发布开关拒绝，从 e3a9519 派发 soak_minutes=0 的 rc.72 读心跳与拆除耗时；若通过则补齐 restore-pair/legacy-import/lan/updater/upgraded-ui 回执再按依赖合入 dev。",
-      "updated_at": "2026-11-20T04:45:17+08:00",
-      "last_note": "本轮增加产品侧 UI 线程归因计量并沿 PR 链同步到栈顶 e3a9519；等待 rc.71 结果决定下一轮。"
+      "next_step": "run 结束后用 v51-ci-gate.py 读 entry-ui/restore/installed-ui/nsis/restore-pair/legacy-import/lan/updater/upgraded-ui/size-split；齐了把材料交主线程审阅，缺项按第一个失败点做本地可复现的低风险修复与回归。",
+      "updated_at": "2026-11-20T18:42:24+08:00",
+      "last_note": "rc.73 run 44718717601 @ 28c3388 进行中（当前步骤为整合启动器门禁），无更新 run、未重复派发。本机在 .worktrees/v51-legacy 复跑：build_contract 58/59（1 项子模块缺口）、pixels 31OK/2skip、lan 24OK、complete_supervisor PASS、native_updater PASS、camera_registry 58OK、py_compile/diff-check OK。六层 PR 检查全绿、层级 diff 各自独立。合并材料（换基顺序、#69/#73 处理、rc.72 journal 间隙保留声明）写入 docs/qualification/v51-rc73-merge-materials.md，待回执齐全后交 Codex 主线程。"
     },
     {
       "id": "COORD-008",
@@ -1548,6 +1553,52 @@
       "next_step": "本地 Qwen 先核对 V51-008 归属与 PR #67 源码，复现逐轨增益 A/A 与 A/B；修复后由全栈顶层派发 Windows 安装回归。",
       "updated_at": "2026-11-19T14:05:18+08:00",
       "last_note": "后续由本地 Qwen 3.8 Next 接手。新增 Qwen 手册和只读 CI 检查脚本。真实 rc.59 run 44385767337 已失败于 program-track-controls，NSIS 未执行；旧任务认领原样保留，按手册交接。"
+    },
+    {
+      "id": "T3-001",
+      "milestone": "COORD",
+      "title": "接入 T3 模型路由与本地 Pi 备用 / configure T3 routing and local Pi fallback",
+      "priority": "P1",
+      "status": "done",
+      "owner": null,
+      "scope": [
+        "AGENTS.md"
+      ],
+      "depends_on": [],
+      "acceptance": [
+        "Wall Monitor 的项目说明记录 Codex、Claude+Qwen、Pi+Qwen、DSH 的顺序、委派验收与协作约定；使用 T3 验证路由"
+      ],
+      "evidence": [
+        "AGENTS.md 模型分工；T3 0.1.10 隔离 Git 测试仓库中，Codex 调用 orchestrator_capabilities 并串行委派 Claude Code、Pi 和 DSH，三个子任务完成读写、终端检查及逐字节校验；未改产品代码。脱敏本机证明为 ~/.local/share/t3-integrations/20261120-orchestration/verification.json。"
+      ],
+      "blocker": "",
+      "next_step": "后续由 Codex 按项目规则串行委派本地任务，回报 diff 和验证后同步交接。",
+      "updated_at": "2026-11-20T12:38:51+08:00",
+      "last_note": "本机 T3 以 Codex 订阅作为 Wall Monitor 默认主线程，Claude Code 加 Strata Qwen 接常规任务，Pi 加同一 Qwen 作为备用，DSH DeepSeek Flash 接升级任务。路由及账本同步约定已写入 AGENTS.md。"
+    },
+    {
+      "id": "T3-002",
+      "milestone": "COORD",
+      "title": "本地 Qwen 直用真实模型 ID / use the native local Qwen model ID",
+      "priority": "P1",
+      "status": "done",
+      "owner": null,
+      "scope": [
+        "AGENTS.md"
+      ],
+      "depends_on": [
+        "T3-001"
+      ],
+      "acceptance": [
+        "Claude Code 和 T3 用 Strata 实际报告的模型 ID，项目委派说明同步，模型读写链路实测通过"
+      ],
+      "evidence": [
+        "T3 隔离仓库实测读写、git diff --check 与逐字节比对通过；Strata 四次 HTTP 200 请求均记录原始 Qwen ID；正式 T3 Provider 目录已注册同名自定义项；脱敏回执 ~/.local/share/t3-integrations/20261120-qwen-direct-id/verification.json。"
+      ],
+      "blocker": "",
+      "next_step": "后续 Claude Code 子任务显式指定实际 Qwen ID，Pi 继续作为本地备用。",
+      "updated_at": "2026-11-20T15:25:21+08:00",
+      "last_note": "正式 T3 已加载 Qwen 3.8 Flash Next（本地），请求直接使用 qwen3.8-flash-next-gyro-gyro-m。已同步项目委派 ID 和优先使用真实模型名称、ID 的配置原则。"
     }
   ],
   "events": [
@@ -4715,6 +4766,160 @@
       "note": "本轮增加产品侧 UI 线程归因计量并沿 PR 链同步到栈顶 e3a9519；等待 rc.71 结果决定下一轮。",
       "evidence": [],
       "git_revision": "210020f2c686ffc00ec4e9726a95a09aa810a7b0"
+    },
+    {
+      "sequence": 275,
+      "at": "2026-11-20T12:33:54+08:00",
+      "agent": "codex-t3-orchestration-20261120",
+      "task": "T3-001",
+      "action": "add",
+      "note": "用户要求依照附件的多模型方案操作，并将本地 Qwen 的 Pi 作为备用。",
+      "evidence": [],
+      "git_revision": "a75d0cf3841e9c96a8ef48f53d843c47d512e6c9"
+    },
+    {
+      "sequence": 276,
+      "at": "2026-11-20T12:33:55+08:00",
+      "agent": "codex-t3-orchestration-20261120",
+      "task": "T3-001",
+      "action": "claim",
+      "note": "认领 Wall Monitor 的多模型路由说明和本机配置验证。",
+      "evidence": [],
+      "git_revision": "a75d0cf3841e9c96a8ef48f53d843c47d512e6c9"
+    },
+    {
+      "sequence": 277,
+      "at": "2026-11-20T12:35:51+08:00",
+      "agent": "codex-t3-orchestration-20261120",
+      "task": "T3-001",
+      "action": "update",
+      "note": "已安装独立 Claude Code 和 Pi CLI，Strata 鉴权成功，Pi 能列出本机实际 Qwen；开始通过 T3 验证。",
+      "evidence": [],
+      "git_revision": "a75d0cf3841e9c96a8ef48f53d843c47d512e6c9"
+    },
+    {
+      "sequence": 278,
+      "at": "2026-11-20T12:38:51+08:00",
+      "agent": "codex-t3-orchestration-20261120",
+      "task": "T3-001",
+      "action": "update",
+      "note": "本机 T3 以 Codex 订阅作为 Wall Monitor 默认主线程，Claude Code 加 Strata Qwen 接常规任务，Pi 加同一 Qwen 作为备用，DSH DeepSeek Flash 接升级任务。路由及账本同步约定已写入 AGENTS.md。",
+      "evidence": [
+        "AGENTS.md 模型分工；T3 0.1.10 隔离 Git 测试仓库中，Codex 调用 orchestrator_capabilities 并串行委派 Claude Code、Pi 和 DSH，三个子任务完成读写、终端检查及逐字节校验；未改产品代码。脱敏本机证明为 ~/.local/share/t3-integrations/20261120-orchestration/verification.json。"
+      ],
+      "git_revision": "a75d0cf3841e9c96a8ef48f53d843c47d512e6c9"
+    },
+    {
+      "sequence": 279,
+      "at": "2026-11-20T15:21:25+08:00",
+      "agent": "codex-t3-direct-model-20261120",
+      "task": "T3-002",
+      "action": "add",
+      "note": "用户要求后续按实际模型显示与请求，尽量避免模型 ID 映射。",
+      "evidence": [],
+      "git_revision": "a75d0cf3841e9c96a8ef48f53d843c47d512e6c9"
+    },
+    {
+      "sequence": 280,
+      "at": "2026-11-20T15:21:25+08:00",
+      "agent": "codex-t3-direct-model-20261120",
+      "task": "T3-002",
+      "action": "claim",
+      "note": "认领路由设置与 AGENTS.md 的模型 ID 同步。",
+      "evidence": [],
+      "git_revision": "a75d0cf3841e9c96a8ef48f53d843c47d512e6c9"
+    },
+    {
+      "sequence": 281,
+      "at": "2026-11-20T15:24:44+08:00",
+      "agent": "codex-t3-direct-model-20261120",
+      "task": "T3-002",
+      "action": "update",
+      "note": "隔离 T3 的 Claude Code 已使用 Strata 原始 Qwen ID 完成读写；请求记录与本机配置、AGENTS 路由均已更新。",
+      "evidence": [],
+      "git_revision": "a75d0cf3841e9c96a8ef48f53d843c47d512e6c9"
+    },
+    {
+      "sequence": 282,
+      "at": "2026-11-20T15:25:21+08:00",
+      "agent": "codex-t3-direct-model-20261120",
+      "task": "T3-002",
+      "action": "update",
+      "note": "正式 T3 已加载 Qwen 3.8 Flash Next（本地），请求直接使用 qwen3.8-flash-next-gyro-gyro-m。已同步项目委派 ID 和优先使用真实模型名称、ID 的配置原则。",
+      "evidence": [
+        "T3 隔离仓库实测读写、git diff --check 与逐字节比对通过；Strata 四次 HTTP 200 请求均记录原始 Qwen ID；正式 T3 Provider 目录已注册同名自定义项；脱敏回执 ~/.local/share/t3-integrations/20261120-qwen-direct-id/verification.json。"
+      ],
+      "git_revision": "a75d0cf3841e9c96a8ef48f53d843c47d512e6c9"
+    },
+    {
+      "sequence": 283,
+      "at": "2026-11-20T17:36:38+08:00",
+      "agent": "qwen38-next-v51-20261119-01",
+      "task": "V51-008",
+      "action": "update",
+      "note": "rc.71（run 44609775780）失败点确认为 backup_restore_windows.py:204 的同一 tick 硬断言，非产品恢复顺序缺陷：product_supervisor.py 在 Popen obs64 后立即 status(running) 写 native-status.json，product_window.cpp 的 observe_state 需等 libobs 模块加载与 12s 内会话绑定后才写带 pid/bootId 的 product-state.json，两者本就异步。按用户 2026-11-20 指示把门禁改为在原 120s 启动预算内有界等待恰好一份可读且匹配本次 frontend PID 与 bootId 的状态文件，失败回执分类 state-file-count/state-file-unreadable/state-from-other-boot/state-published，保留双目录一致性、回滚保留与进程清理原断言；该文件属 V51-007 声明范围，改动依据用户本轮直接指示。",
+      "evidence": [
+        "a27a76633c16b063156db54584c8a01feb81f758（codex/v51-r4-legacy-import，已推送）：回归测试 test_the_first_installed_start_waits_for_this_boot_host_state 修复前失败、修复后通过；Fedora worktree 与 v51qt 容器复跑 OK（容器补拷 tests/onvif_device_emulator.py）。手册更新单独提交 8124cb1643736caafdde3452a859e96eb976ab04。"
+      ],
+      "git_revision": "8124cb1643736caafdde3452a859e96eb976ab04"
+    },
+    {
+      "sequence": 284,
+      "at": "2026-11-20T18:23:38+08:00",
+      "agent": "qwen38-next-v51-20261119-01",
+      "task": "V51-008",
+      "action": "update",
+      "note": "rc.72（run 44711476489）通过 rc.71 修复的宿主状态等待，成对恢复停在 backup_restore_windows.py:281 journal 双前像断言，清理阶段 WinError 32 掩盖断言。归因为装置侧时序：interrupt-native 哨兵在 os.replace 返回前触发，杀进程落在物理交换与 nativeRollback fsync 之间，真正丢原生半区引用而非产品 recover_interrupted 承诺的 prepared 窗口；产品恢复顺序未改。修复 28c3388（test-only，已推送）：哨兵改跟记录 nativeRollback 的 _write_journal 之后、配置半区落盘之前，两个中断阶段 finally 终止子进程并关日志，静态契约新增；回归测试修复前后各一次验证通过。已确认无重复 dispatch，派发 rc.73 run 44718717601（soak_minutes=0）。",
+      "evidence": [
+        "run 44711476489 回执 native-product-nsis.json failurePhase=interrupted-restore-pair-recovery exceptionType=PS RuntimeException；job 136203981742 日志 6926-6940 行给出 AssertionError: journal does not record both previous halves 与 WinError 32；28c3388 后 BuildContractTests 两个契约测试 OK；runbook 提交见本轮。"
+      ],
+      "git_revision": "3a99fa420d1446b456aa3ed56db8743064e588e1"
+    },
+    {
+      "sequence": 285,
+      "at": "2026-11-20T18:33:42+08:00",
+      "agent": "qwen38-next-v51-20261119-01",
+      "task": "V51-008",
+      "action": "update",
+      "note": "Fedora 独立回归完成：用 /tmp 一次性脚本对仓库 backup/encrypted_backup.py（与安装包同源）做 interrupt-native 语义实测——哨兵在 fsync journal 记录 nativeRollback 之后触发，prepared 窗口（双前像已记录、config/native 均不在位、两份 staged 在位）内 SIGKILL，recover_interrupted 返回 rolled-back，前像成对回位、parked 目录回位、staging 清零、journal 消失。该回归只证明修复后的窗口语义，不覆盖 os.replace 返回与 journal fsync 之间的真实微秒崩溃窗口；该窗口会真正丢 nativeRollback 引用，属产品恢复算法边界，按指示交 Codex 主线程复核，任何回执通过都不写成整个窗口无风险。已核对 PR 栈链 #67(dev←r3-output)→#70→#71→#74→#75→#76 与草稿 #69/#73；合并顺序与差异材料整理后交主线程复核，本线程不执行合并。",
+      "evidence": [
+        "Linux 语义回归 PASS（libsodium.so.26，脚本 /tmp/tmp.FhezGk2Fou/native_swap_window_sim.py，临时目录内 profile/backups 隔离）；gh pr list 确认栈基链与 head 28c3388。"
+      ],
+      "git_revision": "3a99fa420d1446b456aa3ed56db8743064e588e1"
+    },
+    {
+      "sequence": 286,
+      "at": "2026-11-20T18:36:56+08:00",
+      "agent": "qwen38-next-v51-20261119-01",
+      "task": "V51-008",
+      "action": "release",
+      "note": "交接释放：rc.73 run 44718717601 @ 28c338840d5e5687ef4231885a70c3386f2cfdc8（栈顶 codex/v51-r4-legacy-import，product_mode=true complete=true soak_minutes=0）仍 in_progress，本会话已停止监控且不再派发。下一步：新会话用 scripts/v51-ci-gate.py 44718717601 --sha 28c338840d5e5687ef4231885a70c3386f2cfdc8 --version 5.1.0-rc.73 依次读 native-product-nsis 成对恢复（含 lastStateObservation）、legacy-import、lan、updater、upgraded-ui 回执；齐了把 #67→#70→#71→#74→#75→#76 差异与 retarget 合并顺序交 Codex 主线程复核，不自行合并或发布。已交 Codex 复核：os.replace 返回与 journal fsync 之间的微秒崩溃窗口会真正丢 nativeRollback 引用，属产品恢复算法边界，回执通过不等于整个窗口无风险。rc.72 修复 28c3388 已推送；Linux 语义回归 PASS；契约套件 58/59（1 项为 worktree 子模块缺口）。本会话按用户要求结束，未做合并、发布或派发。",
+      "evidence": [
+        "run 44718717601 in_progress；账本 revision 285 记录 rc.72 归因、28c3388 修复与 Linux 回归；本释放不提交不推送。"
+      ],
+      "git_revision": "3a99fa420d1446b456aa3ed56db8743064e588e1"
+    },
+    {
+      "sequence": 287,
+      "at": "2026-11-20T18:38:10+08:00",
+      "agent": "qwen38-next-v51-20261120-02",
+      "task": "V51-008",
+      "action": "claim",
+      "note": "接手 V51-008 继续 rc.73 验收：栈顶 codex/v51-r4-legacy-import @ 28c338840d5e5687ef4231885a70c3386f2cfdc8，run 44718717601（5.1.0-rc.73，product_mode=true complete=true soak_minutes=0）in_progress，无更新 run，不重复派发。本轮先读 native-product-nsis 成对恢复回执（含 lastStateObservation），再核对 legacy-import/lan/updater/upgraded-ui。",
+      "evidence": [
+        "检查点：V51-008 | worktree .worktrees/v51-legacy | SHA 28c338840d5e5687ef4231885a70c3386f2cfdc8 | rc.73/run 44718717601 | 本轮只验证成对恢复及后续安装态回执是否齐全"
+      ],
+      "git_revision": "3a99fa420d1446b456aa3ed56db8743064e588e1"
+    },
+    {
+      "sequence": 288,
+      "at": "2026-11-20T18:42:24+08:00",
+      "agent": "qwen38-next-v51-20261120-02",
+      "task": "V51-008",
+      "action": "update",
+      "note": "rc.73 run 44718717601 @ 28c3388 进行中（当前步骤为整合启动器门禁），无更新 run、未重复派发。本机在 .worktrees/v51-legacy 复跑：build_contract 58/59（1 项子模块缺口）、pixels 31OK/2skip、lan 24OK、complete_supervisor PASS、native_updater PASS、camera_registry 58OK、py_compile/diff-check OK。六层 PR 检查全绿、层级 diff 各自独立。合并材料（换基顺序、#69/#73 处理、rc.72 journal 间隙保留声明）写入 docs/qualification/v51-rc73-merge-materials.md，待回执齐全后交 Codex 主线程。",
+      "evidence": [],
+      "git_revision": "3a99fa420d1446b456aa3ed56db8743064e588e1"
     }
   ]
 }

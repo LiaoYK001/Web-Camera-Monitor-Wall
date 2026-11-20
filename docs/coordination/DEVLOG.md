@@ -1,12 +1,96 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 274 · 2026-11-20T04:45:17+08:00（UTC+08）
+> 快照版本 288 · 2026-11-20T18:42:24+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #288 · 2026-11-20T18:42:24+08:00 · update
+
+- Agent：`qwen38-next-v51-20261120-02`；任务：`V51-008`
+- 记录：rc.73 run 44718717601 @ 28c3388 进行中（当前步骤为整合启动器门禁），无更新 run、未重复派发。本机在 .worktrees/v51-legacy 复跑：build_contract 58/59（1 项子模块缺口）、pixels 31OK/2skip、lan 24OK、complete_supervisor PASS、native_updater PASS、camera_registry 58OK、py_compile/diff-check OK。六层 PR 检查全绿、层级 diff 各自独立。合并材料（换基顺序、#69/#73 处理、rc.72 journal 间隙保留声明）写入 docs/qualification/v51-rc73-merge-materials.md，待回执齐全后交 Codex 主线程。
+- 证据：无新增验收证据
+- 源码：`3a99fa420d1446b456aa3ed56db8743064e588e1`
+## #287 · 2026-11-20T18:38:10+08:00 · claim
+
+- Agent：`qwen38-next-v51-20261120-02`；任务：`V51-008`
+- 记录：接手 V51-008 继续 rc.73 验收：栈顶 codex/v51-r4-legacy-import @ 28c338840d5e5687ef4231885a70c3386f2cfdc8，run 44718717601（5.1.0-rc.73，product_mode=true complete=true soak_minutes=0）in_progress，无更新 run，不重复派发。本轮先读 native-product-nsis 成对恢复回执（含 lastStateObservation），再核对 legacy-import/lan/updater/upgraded-ui。
+- 证据：检查点：V51-008 | worktree .worktrees/v51-legacy | SHA 28c338840d5e5687ef4231885a70c3386f2cfdc8 | rc.73/run 44718717601 | 本轮只验证成对恢复及后续安装态回执是否齐全
+- 源码：`3a99fa420d1446b456aa3ed56db8743064e588e1`
+## #286 · 2026-11-20T18:36:56+08:00 · release
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：交接释放：rc.73 run 44718717601 @ 28c338840d5e5687ef4231885a70c3386f2cfdc8（栈顶 codex/v51-r4-legacy-import，product_mode=true complete=true soak_minutes=0）仍 in_progress，本会话已停止监控且不再派发。下一步：新会话用 scripts/v51-ci-gate.py 44718717601 --sha 28c338840d5e5687ef4231885a70c3386f2cfdc8 --version 5.1.0-rc.73 依次读 native-product-nsis 成对恢复（含 lastStateObservation）、legacy-import、lan、updater、upgraded-ui 回执；齐了把 #67→#70→#71→#74→#75→#76 差异与 retarget 合并顺序交 Codex 主线程复核，不自行合并或发布。已交 Codex 复核：os.replace 返回与 journal fsync 之间的微秒崩溃窗口会真正丢 nativeRollback 引用，属产品恢复算法边界，回执通过不等于整个窗口无风险。rc.72 修复 28c3388 已推送；Linux 语义回归 PASS；契约套件 58/59（1 项为 worktree 子模块缺口）。本会话按用户要求结束，未做合并、发布或派发。
+- 证据：run 44718717601 in_progress；账本 revision 285 记录 rc.72 归因、28c3388 修复与 Linux 回归；本释放不提交不推送。
+- 源码：`3a99fa420d1446b456aa3ed56db8743064e588e1`
+## #285 · 2026-11-20T18:33:42+08:00 · update
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：Fedora 独立回归完成：用 /tmp 一次性脚本对仓库 backup/encrypted_backup.py（与安装包同源）做 interrupt-native 语义实测——哨兵在 fsync journal 记录 nativeRollback 之后触发，prepared 窗口（双前像已记录、config/native 均不在位、两份 staged 在位）内 SIGKILL，recover_interrupted 返回 rolled-back，前像成对回位、parked 目录回位、staging 清零、journal 消失。该回归只证明修复后的窗口语义，不覆盖 os.replace 返回与 journal fsync 之间的真实微秒崩溃窗口；该窗口会真正丢 nativeRollback 引用，属产品恢复算法边界，按指示交 Codex 主线程复核，任何回执通过都不写成整个窗口无风险。已核对 PR 栈链 #67(dev←r3-output)→#70→#71→#74→#75→#76 与草稿 #69/#73；合并顺序与差异材料整理后交主线程复核，本线程不执行合并。
+- 证据：Linux 语义回归 PASS（libsodium.so.26，脚本 /tmp/tmp.FhezGk2Fou/native_swap_window_sim.py，临时目录内 profile/backups 隔离）；gh pr list 确认栈基链与 head 28c3388。
+- 源码：`3a99fa420d1446b456aa3ed56db8743064e588e1`
+## #284 · 2026-11-20T18:23:38+08:00 · update
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：rc.72（run 44711476489）通过 rc.71 修复的宿主状态等待，成对恢复停在 backup_restore_windows.py:281 journal 双前像断言，清理阶段 WinError 32 掩盖断言。归因为装置侧时序：interrupt-native 哨兵在 os.replace 返回前触发，杀进程落在物理交换与 nativeRollback fsync 之间，真正丢原生半区引用而非产品 recover_interrupted 承诺的 prepared 窗口；产品恢复顺序未改。修复 28c3388（test-only，已推送）：哨兵改跟记录 nativeRollback 的 _write_journal 之后、配置半区落盘之前，两个中断阶段 finally 终止子进程并关日志，静态契约新增；回归测试修复前后各一次验证通过。已确认无重复 dispatch，派发 rc.73 run 44718717601（soak_minutes=0）。
+- 证据：run 44711476489 回执 native-product-nsis.json failurePhase=interrupted-restore-pair-recovery exceptionType=PS RuntimeException；job 136203981742 日志 6926-6940 行给出 AssertionError: journal does not record both previous halves 与 WinError 32；28c3388 后 BuildContractTests 两个契约测试 OK；runbook 提交见本轮。
+- 源码：`3a99fa420d1446b456aa3ed56db8743064e588e1`
+## #283 · 2026-11-20T17:36:38+08:00 · update
+
+- Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`
+- 记录：rc.71（run 44609775780）失败点确认为 backup_restore_windows.py:204 的同一 tick 硬断言，非产品恢复顺序缺陷：product_supervisor.py 在 Popen obs64 后立即 status(running) 写 native-status.json，product_window.cpp 的 observe_state 需等 libobs 模块加载与 12s 内会话绑定后才写带 pid/bootId 的 product-state.json，两者本就异步。按用户 2026-11-20 指示把门禁改为在原 120s 启动预算内有界等待恰好一份可读且匹配本次 frontend PID 与 bootId 的状态文件，失败回执分类 state-file-count/state-file-unreadable/state-from-other-boot/state-published，保留双目录一致性、回滚保留与进程清理原断言；该文件属 V51-007 声明范围，改动依据用户本轮直接指示。
+- 证据：a27a76633c16b063156db54584c8a01feb81f758（codex/v51-r4-legacy-import，已推送）：回归测试 test_the_first_installed_start_waits_for_this_boot_host_state 修复前失败、修复后通过；Fedora worktree 与 v51qt 容器复跑 OK（容器补拷 tests/onvif_device_emulator.py）。手册更新单独提交 8124cb1643736caafdde3452a859e96eb976ab04。
+- 源码：`8124cb1643736caafdde3452a859e96eb976ab04`
+## #282 · 2026-11-20T15:25:21+08:00 · update
+
+- Agent：`codex-t3-direct-model-20261120`；任务：`T3-002`
+- 记录：正式 T3 已加载 Qwen 3.8 Flash Next（本地），请求直接使用 qwen3.8-flash-next-gyro-gyro-m。已同步项目委派 ID 和优先使用真实模型名称、ID 的配置原则。
+- 证据：T3 隔离仓库实测读写、git diff --check 与逐字节比对通过；Strata 四次 HTTP 200 请求均记录原始 Qwen ID；正式 T3 Provider 目录已注册同名自定义项；脱敏回执 ~/.local/share/t3-integrations/20261120-qwen-direct-id/verification.json。
+- 源码：`a75d0cf3841e9c96a8ef48f53d843c47d512e6c9`
+## #281 · 2026-11-20T15:24:44+08:00 · update
+
+- Agent：`codex-t3-direct-model-20261120`；任务：`T3-002`
+- 记录：隔离 T3 的 Claude Code 已使用 Strata 原始 Qwen ID 完成读写；请求记录与本机配置、AGENTS 路由均已更新。
+- 证据：无新增验收证据
+- 源码：`a75d0cf3841e9c96a8ef48f53d843c47d512e6c9`
+## #280 · 2026-11-20T15:21:25+08:00 · claim
+
+- Agent：`codex-t3-direct-model-20261120`；任务：`T3-002`
+- 记录：认领路由设置与 AGENTS.md 的模型 ID 同步。
+- 证据：无新增验收证据
+- 源码：`a75d0cf3841e9c96a8ef48f53d843c47d512e6c9`
+## #279 · 2026-11-20T15:21:25+08:00 · add
+
+- Agent：`codex-t3-direct-model-20261120`；任务：`T3-002`
+- 记录：用户要求后续按实际模型显示与请求，尽量避免模型 ID 映射。
+- 证据：无新增验收证据
+- 源码：`a75d0cf3841e9c96a8ef48f53d843c47d512e6c9`
+## #278 · 2026-11-20T12:38:51+08:00 · update
+
+- Agent：`codex-t3-orchestration-20261120`；任务：`T3-001`
+- 记录：本机 T3 以 Codex 订阅作为 Wall Monitor 默认主线程，Claude Code 加 Strata Qwen 接常规任务，Pi 加同一 Qwen 作为备用，DSH DeepSeek Flash 接升级任务。路由及账本同步约定已写入 AGENTS.md。
+- 证据：AGENTS.md 模型分工；T3 0.1.10 隔离 Git 测试仓库中，Codex 调用 orchestrator_capabilities 并串行委派 Claude Code、Pi 和 DSH，三个子任务完成读写、终端检查及逐字节校验；未改产品代码。脱敏本机证明为 ~/.local/share/t3-integrations/20261120-orchestration/verification.json。
+- 源码：`a75d0cf3841e9c96a8ef48f53d843c47d512e6c9`
+## #277 · 2026-11-20T12:35:51+08:00 · update
+
+- Agent：`codex-t3-orchestration-20261120`；任务：`T3-001`
+- 记录：已安装独立 Claude Code 和 Pi CLI，Strata 鉴权成功，Pi 能列出本机实际 Qwen；开始通过 T3 验证。
+- 证据：无新增验收证据
+- 源码：`a75d0cf3841e9c96a8ef48f53d843c47d512e6c9`
+## #276 · 2026-11-20T12:33:55+08:00 · claim
+
+- Agent：`codex-t3-orchestration-20261120`；任务：`T3-001`
+- 记录：认领 Wall Monitor 的多模型路由说明和本机配置验证。
+- 证据：无新增验收证据
+- 源码：`a75d0cf3841e9c96a8ef48f53d843c47d512e6c9`
+## #275 · 2026-11-20T12:33:54+08:00 · add
+
+- Agent：`codex-t3-orchestration-20261120`；任务：`T3-001`
+- 记录：用户要求依照附件的多模型方案操作，并将本地 Qwen 的 Pi 作为备用。
+- 证据：无新增验收证据
+- 源码：`a75d0cf3841e9c96a8ef48f53d843c47d512e6c9`
 ## #274 · 2026-11-20T04:45:17+08:00 · update
 
 - Agent：`qwen38-next-v51-20261119-01`；任务：`V51-008`

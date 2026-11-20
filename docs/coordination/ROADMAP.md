@@ -1,7 +1,7 @@
 # 详细执行路线图 / Execution roadmap
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 274 · 2026-11-20T04:45:17+08:00（UTC+08）
+> 快照版本 288 · 2026-11-20T18:42:24+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -22,6 +22,8 @@
 - **HANDOFF-004 · 完成**：编写 DeepSeek 的 v5.1 成品执行指南 / write the v5.1 completion guide；依赖：无。验收：核对最新源码、PR 和 Windows 失败回执，给出可执行定位、分支顺序、完整功能与发布验收，不接管进行中开发
 - **COORD-008 · 完成**：记录 CI 下载临时目录约定 / document temporary directories for CI downloads；依赖：无。验收：AGENTS.md 指定每次 CI 下载使用 mktemp -d 和带引号的下载路径，不清空旧目录或改变 Codex 审批配置
 - **HANDOFF-005 · 完成**：交接本地 Qwen 并接入 Windows CI 回执检查 / hand off to local Qwen and add Windows CI receipt checks；依赖：无。验收：提供可逐步执行的交接指南与只读回执脚本；用 rc.59 实测脚本准确定位失败并拒绝将旧或不完整证据用于候选评审
+- **T3-001 · 完成**：接入 T3 模型路由与本地 Pi 备用 / configure T3 routing and local Pi fallback；依赖：无。验收：Wall Monitor 的项目说明记录 Codex、Claude+Qwen、Pi+Qwen、DSH 的顺序、委派验收与协作约定；使用 T3 验证路由
+- **T3-002 · 完成**：本地 Qwen 直用真实模型 ID / use the native local Qwen model ID；依赖：T3-001。验收：Claude Code 和 T3 用 Strata 实际报告的模型 ID，项目委派说明同步，模型读写链路实测通过
 
 ## R0 · 冻结基线与差距清单
 
