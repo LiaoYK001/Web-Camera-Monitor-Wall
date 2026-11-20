@@ -1,7 +1,7 @@
 # 当前进度 / Current status
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 297 · 2026-11-21T04:46:31+08:00（UTC+08）
+> 快照版本 298 · 2026-11-21T05:32:09+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
