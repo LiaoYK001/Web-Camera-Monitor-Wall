@@ -378,6 +378,22 @@ def exercise(runtime, profile_parent, report):
         set_marker(native / NATIVE_MARKER, "kept-native")
         # A paired archive must never be half-restored. The packaged service refuses it
         # when the caller does not name the OBS profile, so both halves stay as they are.
+        # The two restores killed mid-swap above exit through TerminateProcess, which
+        # skips TemporaryDirectory cleanup, so their plaintext .webobs-decrypt-*
+        # extraction staging is still on disk here: recover_interrupted() only removes
+        # the staging the journal names, never the untracked decrypt directory. The
+        # refusal raises BackupError inside its own staging context, so it cannot leak
+        # one - the Linux repro against backup/encrypted_backup.py shows the refusal
+        # cleaning its own directory while the killed restores' leftovers persist.
+        # Snapshot the staging standing before the refusal, charge only directories
+        # this refusal created, and disclose the stale plaintext leftovers in the
+        # receipt. Whether the product should sweep untracked decrypt staging after a
+        # hard kill is crash-recovery design and stays with the Codex main thread.
+        def staging_names():
+            return {p.name for pattern in (".webobs-restore-*", ".webobs-native-restore-*",
+                                           ".webobs-decrypt-*") for p in profile.glob(pattern)}
+        stale_staging = sorted(staging_names())
+        evidence["staleStagingFromKilledRestores"] = stale_staging
         refused, refused_log = run_restore(runtime_python, runtime, profile, archive, key_file,
             private / "unused-paired-sentinel.txt", "config-only", private)
         assert refused.wait(timeout=120) != 0, \
@@ -387,8 +403,8 @@ def exercise(runtime, profile_parent, report):
             and marker_value(native / NATIVE_MARKER) == "kept-native", \
             "the refused paired restore still changed one half of the pair"
         assert not journal.exists(), "the refused paired restore left a journal behind"
-        assert not any(list(profile.glob(".webobs-restore-*")) + list(profile.glob(".webobs-native-restore-*"))
-            + list(profile.glob(".webobs-decrypt-*"))), "the refused paired restore leaked staging directories"
+        leaked = sorted(staging_names() - set(stale_staging))
+        assert not leaked, "the refused paired restore leaked staging directories"
         evidence["checks"].append("paired-archive-refuses-a-half-restore")
 
         legacy_process, legacy_log = run_restore(runtime_python, runtime, profile, legacy_archive, key_file,

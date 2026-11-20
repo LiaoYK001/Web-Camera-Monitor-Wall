@@ -1765,6 +1765,49 @@ class BuildContractTests(unittest.TestCase):
                           "the installed entry left the previous OBS profile parked"):
             self.assertIn(preserved, source, "the native-swap rollback asserts must stay verbatim")
 
+    def test_the_refused_paired_restore_is_charged_only_for_its_own_staging(self):
+        """Run 44728029615: the refusal assert charged the staging left by the killed restores.
+
+        rc.74 advanced past the second installed start and failed at
+        "the refused paired restore leaked staging directories". restore() converges
+        any earlier interruption first and only then refuses a paired archive whose
+        caller omits the OBS profile, raising BackupError inside its own
+        .webobs-decrypt- TemporaryDirectory, so the refusal cannot leak a directory.
+        The two restores killed mid-swap earlier in this gate exit through
+        TerminateProcess, which skips context-manager cleanup, and recover_interrupted()
+        removes only the staging the journal names - the untracked plaintext decrypt
+        directory survives every recovery. The gate must snapshot the staging names
+        standing before the refusal, charge only directories the refusal created, and
+        disclose the stale leftovers in the receipt; whether the product should sweep
+        untracked decrypt staging after a hard kill is crash-recovery design and stays
+        with the Codex main thread. A Linux repro against backup/encrypted_backup.py
+        confirms the refusal creates no new staging while killed leftovers persist.
+        运行 44728029615：拒绝对账把被杀恢复遗留的暂存算到了拒绝本身。rc.74 越过第二次安装态
+        启动后在 "the refused paired restore leaked staging directories" 失败。restore()
+        先收敛此前的中断，之后才拒绝未指明 OBS 档案的成对档案，并在自己的 .webobs-decrypt-
+        TemporaryDirectory 内抛出 BackupError，因此拒绝本身不可能泄漏目录。门禁中此前两次被
+        硬终止的恢复经 TerminateProcess 退出，跳过上下文管理器清理，而 recover_interrupted()
+        只删除 journal 记录的暂存——未被记录的明文解密暂存会在每次恢复后留存。门禁必须先记录
+        拒绝前的暂存名单、只对拒绝新创建的目录记账，并在回执里披露遗留的明文暂存；产品是否
+        应在硬终止后清扫未记录的解密暂存属崩溃恢复算法设计，留给 Codex 主线程。对
+        backup/encrypted_backup.py 的 Linux 复现确认拒绝不产生新暂存、被杀恢复的遗留仍在。
+        """
+        source = (ROOT / "native-host/tests/backup_restore_windows.py").read_text(encoding="utf-8")
+        refusal_phase = source.index('phase = "legacy-config-only-archive"')
+        refusal_launch = source.index('private / "unused-paired-sentinel.txt"', refusal_phase)
+        self.assertLess(source.index("stale_staging = sorted(staging_names())", refusal_phase),
+            refusal_launch,
+            "the staging baseline must be captured before the refused restore runs")
+        self.assertIn("staging_names() - set(stale_staging)", source,
+            "only staging created by the refusal itself may be charged")
+        self.assertIn('evidence["staleStagingFromKilledRestores"]', source,
+            "the stale plaintext staging of the killed restores must be disclosed in the receipt")
+        for preserved in ("the refused paired restore leaked staging directories",
+                          "a paired archive was half-restored without naming the OBS profile",
+                          "the refused paired restore still changed one half of the pair",
+                          "the refused paired restore left a journal behind"):
+            self.assertIn(preserved, source, "the paired-refusal asserts must stay verbatim")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
