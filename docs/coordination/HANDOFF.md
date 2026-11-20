@@ -1,7 +1,7 @@
 # 当前交接 / Current handoff
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 292 · 2026-11-20T21:38:29+08:00（UTC+08）
+> 快照版本 294 · 2026-11-20T22:14:41+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -22,6 +22,6 @@
 
 ## 最近一次同步
 
-rc.75 run 44735378274 completed=failure：9b26035 记账修复生效、门禁首次越过 legacy-config-only-archive 并推进到安装入口的 program-streaming；Program 增益复过（controlRatios 1.0/1.001）。首个真实失败点为 Program 视频窗口断言（frames 26/ptsSpan 0.833s、首帧 4015ms、monotonic true），归因证据：同窗口宿主渲染 +421 帧、中继 streamConnected=true、包连接 140 packets/2 IDR@2.0s，且该启动 OBS 日志 6 次 WebOBS async video backlog（30 帧丢弃、间隙 2.689-3.000s）与 1 次 async timestamp jump——单消费窗口与输入侧解码停滞竞态，同 rc.62 记录的交付 vs 解码分裂，非产品逻辑缺陷；Windows 侧无法本机复现，做低风险有界重试修复 9c2b7af（共享 decodable_window 谓词、一次新连接重读、只对最后尝试记账、probeAttempts 披露、断言消息原样；持续饥饿仍两次失败），并同步更新既有关键帧窗口契约。Linux 语义复现（stalled→retry→healthy 接受、连续 stalled 拒绝、healthy 不重试）、契约 62 项 61 通过（唯一错误仍为 worktree 未初始化 OBS 子模块）、test_pixels 31 通过 2 跳过、py_compile/diff-check OK。派发 rc.76 run 44746006213 @9c2b7af（同输入），轮询中。运行器解码停滞本身保留为披露项（经启动标记），未宣告健康；rc.72 journal/fsync 窗口与硬终止明文暂存清扫两项继续开放交 Codex 主线程。EN: rc.75 passed the legacy-import phase (9b26035 effective) and failed the Program video-window assert: 26 frames over 0.833 s while the host rendered 421 frames, the relay reported a connected stream and the packet probe saw two IDRs 2 s apart - a single consumer window racing input-side async-backlog decode stalls, the documented rc.62 delivery-vs-decode split, not a product logic defect. Low-risk test-only fix 9c2b7af (shared decodable_window predicate, one fresh-connection retry, charge-last-attempt only, probeAttempts disclosure, verbatim message; sustained starvation still fails twice). rc.76 run 44746006213 dispatched at 9c2b7af. Runner decode starvation stays disclosed via boot markers; the rc.72 journal/fsync window and the hard-kill decrypt-staging sweep question remain open for the Codex main thread.
+更正：rc.77 复现性轮实际 run 为 44751520752（@9c2b7af、同输入），上一条登记中预写的 44746006214 为占位、作废。Correction: the rc.77 reproducibility probe is run 44751520752 at 9c2b7af; the 44746006214 in the previous entry was a placeholder and is void.
 
 以任务中的验收条件决定完成；没有 Windows/硬件/发布证据时保持对应事项开放。

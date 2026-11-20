@@ -1,12 +1,24 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 292 · 2026-11-20T21:38:29+08:00（UTC+08）
+> 快照版本 294 · 2026-11-20T22:14:41+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #294 · 2026-11-20T22:14:41+08:00 · log
+
+- Agent：`qwen38-next-v51-20261120-02`；任务：`V51-008`
+- 记录：更正：rc.77 复现性轮实际 run 为 44751520752（@9c2b7af、同输入），上一条登记中预写的 44746006214 为占位、作废。Correction: the rc.77 reproducibility probe is run 44751520752 at 9c2b7af; the 44746006214 in the previous entry was a placeholder and is void.
+- 证据：无新增验收证据
+- 源码：`527616615b275cf7b8ef82b2a40b76b1ed139152`
+## #293 · 2026-11-20T22:14:12+08:00 · log
+
+- Agent：`qwen38-next-v51-20261120-02`；任务：`V51-008`
+- 记录：rc.76 run 44746006213 completed=failure：9c2b7af 生效（attempt 1 healthy 100帧/3.3s、无重试），entry-ui 首次推进过 program-streaming 与全部录制/发布检查（48 checks），随后在 program-publish-disconnect 出现真实产品崩溃：私有 MediaMTX 中继被终止、publish-relay-exited 正确上报后，前端宿主以 0xC0000005（访问违例）异常退出（currentBootFailure=frontend-exited、frontend exitCode 3221226505、无 Shutting down 标记），窗口句柄 gone、恢复尝试 0 次成功，断言 "could not resume Program publishing after the relay loss" 记账于崩溃。rc.73–75 同路径同代码均通过，属间歇性竞态崩溃；uiThread 计量：publishStopWaitMs 5943、uiStallMaxMs 5752、relayStopMaxMs 5034（a75d0cf 计量首次捕获该崩溃面）。崩溃归因（中继被杀与 media source 异步重连/发布 teardown 的宿主侧竞态）属崩溃恢复算法与复杂诊断，交 Codex 主线程；无本机 Windows 复现、不做掩盖性测试修改。派发 rc.77 run（同 SHA 9c2b7af、同输入）测复现性：若通过则该面为间歇竞态并继续回执链，若同点失败则确定性崩溃升级。回执披露保持开放。EN: rc.76: the 9c2b7af retry worked and entry-ui advanced past program-streaming plus all recording/publish checks (48), then the frontend host crashed with 0xC0000005 after the private MediaMTX relay was killed in program-publish-disconnect (currentBootFailure=frontend-exited, no Shutting down marker, window handles gone, 0 successful recovery attempts). rc.73-75 passed the same path - an intermittent race crash. Attribution (relay kill vs async media-source reconnect/publish teardown inside the host) is crash-recovery/complex-diagnostics territory: handed to the Codex main thread; no local Windows repro, no masking test change. Dispatching rc.77 at the same SHA to probe reproducibility; disclosure stays open either way.
+- 证据：run 44746006214 gate pending; receipt native-product-entry-ui.json: serviceExits frontend 3221226505, publishDisconnectError publish-relay-exited, lastUiFailure window-pid-mismatch gone, uiThread publishStopWaitMs 5943
+- 源码：`527616615b275cf7b8ef82b2a40b76b1ed139152`
 ## #292 · 2026-11-20T21:38:29+08:00 · log
 
 - Agent：`qwen38-next-v51-20261120-02`；任务：`V51-008`
