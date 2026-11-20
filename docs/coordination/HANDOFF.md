@@ -1,7 +1,7 @@
 # 当前交接 / Current handoff
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 299 · 2026-11-21T06:46:36+08:00（UTC+08）
+> 快照版本 300 · 2026-11-21T07:13:54+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -22,6 +22,6 @@
 
 ## 最近一次同步
 
-rc.81 run 44821109893 @54df2e3（同 SHA 复现轮）：entry-ui 再次全绿（77 checks），installed-ui 再次在 program-publish-disconnect 复现 rc.76 前端 AV 崩溃（第三次总命中、安装态连续第二次：frontend exitCode 3221226505=0xC0000005、currentBootFailure=frontend-exited、句柄 gone、48 checks 越过全部录制/发布），自计量同形且 UI 停滞更重（publishStopWaitMs 8576、relayStopMaxMs 5135、uiStallMaxMs 16599）。nsis 级联失败于 installed-entry-ui-and-media、freshInstalledEntryQualified=false，restore-pair 仍未执行，54df2e3 安装态生效验证再顺延。崩溃面间歇性成立（rc.79 installed-ui 曾通过该阶段、rc.80/81 连续崩溃），交 Codex 主线程宿主侧排查；本会话未改代码、未掩盖。派发 rc.82 run 44831637710 @54df2e3（同 SHA 第三复现轮）。
+rc.82（run 44831637710，同 SHA 54df2e3 复现轮）completed=failure：entry-ui 便携运行在 program-publish-disconnect 以 0xC0000005 前端退出崩溃（exitCode 3221226505、currentBootFailure=frontend-exited、句柄 gone、publishStopWaitMs 5820、relayStopMaxMs 5135、uiStallMaxMs 4826，与 rc.76 同形）——第四披露项第四次总命中，便携形态在 rc.79-81 三轮通过后再次命中；nsis/installed-ui/size-split 未产出，54df2e3 安装态生效验证再顺延。崩溃面已在两种形态四次命中（76/82 便携、80/81 安装态），无本机复现、不改代码、不掩盖，交 Codex 主线程。派发同 SHA rc.83（run 44835178571）再判一轮持续性；若再命中则停止同 SHA 轮次、链条暂停待主线程排查。
 
 以任务中的验收条件决定完成；没有 Windows/硬件/发布证据时保持对应事项开放。

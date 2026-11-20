@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 299 · 2026-11-21T06:46:36+08:00（UTC+08）
+> 快照版本 300 · 2026-11-21T07:13:54+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #300 · 2026-11-21T07:13:54+08:00 · log
+
+- Agent：`qwen38-next-v51-20261120-02`；任务：`V51-008`
+- 记录：rc.82（run 44831637710，同 SHA 54df2e3 复现轮）completed=failure：entry-ui 便携运行在 program-publish-disconnect 以 0xC0000005 前端退出崩溃（exitCode 3221226505、currentBootFailure=frontend-exited、句柄 gone、publishStopWaitMs 5820、relayStopMaxMs 5135、uiStallMaxMs 4826，与 rc.76 同形）——第四披露项第四次总命中，便携形态在 rc.79-81 三轮通过后再次命中；nsis/installed-ui/size-split 未产出，54df2e3 安装态生效验证再顺延。崩溃面已在两种形态四次命中（76/82 便携、80/81 安装态），无本机复现、不改代码、不掩盖，交 Codex 主线程。派发同 SHA rc.83（run 44835178571）再判一轮持续性；若再命中则停止同 SHA 轮次、链条暂停待主线程排查。
+- 证据：gate exit=3 receipts=entry-ui,restore；entry-ui receipt frontend exitCode 3221226505；run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44831637710；rc.83 run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44835178571
+- 源码：`d76167f5888468ce161710d318c8ab869eac8307`
 ## #299 · 2026-11-21T06:46:36+08:00 · log
 
 - Agent：`qwen38-next-v51-20261120-02`；任务：`V51-008`

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 299,
-  "updated_at": "2026-11-21T06:46:36+08:00",
+  "revision": 300,
+  "updated_at": "2026-11-21T07:13:54+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1350,12 +1350,13 @@
         "gate 44795726091 exit=3 failureReceipts=[entry-ui native-program-take/pixels-program-after-take-captured]; analysis progressError 'Frozen final pixels on slot 1'; probeOnWindow opened=true staleTiles=[0,2,3] renderFramesPerSecond=30.4; feedDecodeProbe distinctFrames 32-38; serialsDuringCapture windowMs 26030 samples 93 publishes 14 全部 inputs advanced=true",
         "docs/qualification/v51-rc73-merge-materials.md; /tmp/tmp.qSBZMfpXSd/repro_legacy_restore.py; codex/v51-r4-legacy-import 54df2e3",
         "docs/qualification/v51-rc73-merge-materials.md; /tmp/tmp.UmiWx1Q9C0/native-product-installed-ui.json; /tmp/tmp.UmiWx1Q9C0/native-product-nsis.json",
-        "docs/qualification/v51-rc73-merge-materials.md; /tmp/tmp.rKkOw2TAwk/native-product-installed-ui.json; /tmp/tmp.rKkOw2TAwk/native-product-nsis.json"
+        "docs/qualification/v51-rc73-merge-materials.md; /tmp/tmp.rKkOw2TAwk/native-product-installed-ui.json; /tmp/tmp.rKkOw2TAwk/native-product-nsis.json",
+        "gate exit=3 receipts=entry-ui,restore；entry-ui receipt frontend exitCode 3221226505；run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44831637710；rc.83 run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44835178571"
       ],
       "blocker": "",
       "next_step": "rc.74 结束后读 entry-ui/restore/installed-ui/nsis/restore-pair/legacy-import/lan/updater/upgraded-ui/size-split 全部回执；齐了把合并材料交 Codex 主线程审阅换基与合并顺序。rc.72 journal 间隙声明保留，需主线程产品侧结论。",
-      "updated_at": "2026-11-21T06:46:36+08:00",
-      "last_note": "rc.81 run 44821109893 @54df2e3（同 SHA 复现轮）：entry-ui 再次全绿（77 checks），installed-ui 再次在 program-publish-disconnect 复现 rc.76 前端 AV 崩溃（第三次总命中、安装态连续第二次：frontend exitCode 3221226505=0xC0000005、currentBootFailure=frontend-exited、句柄 gone、48 checks 越过全部录制/发布），自计量同形且 UI 停滞更重（publishStopWaitMs 8576、relayStopMaxMs 5135、uiStallMaxMs 16599）。nsis 级联失败于 installed-entry-ui-and-media、freshInstalledEntryQualified=false，restore-pair 仍未执行，54df2e3 安装态生效验证再顺延。崩溃面间歇性成立（rc.79 installed-ui 曾通过该阶段、rc.80/81 连续崩溃），交 Codex 主线程宿主侧排查；本会话未改代码、未掩盖。派发 rc.82 run 44831637710 @54df2e3（同 SHA 第三复现轮）。"
+      "updated_at": "2026-11-21T07:13:54+08:00",
+      "last_note": "rc.82（run 44831637710，同 SHA 54df2e3 复现轮）completed=failure：entry-ui 便携运行在 program-publish-disconnect 以 0xC0000005 前端退出崩溃（exitCode 3221226505、currentBootFailure=frontend-exited、句柄 gone、publishStopWaitMs 5820、relayStopMaxMs 5135、uiStallMaxMs 4826，与 rc.76 同形）——第四披露项第四次总命中，便携形态在 rc.79-81 三轮通过后再次命中；nsis/installed-ui/size-split 未产出，54df2e3 安装态生效验证再顺延。崩溃面已在两种形态四次命中（76/82 便携、80/81 安装态），无本机复现、不改代码、不掩盖，交 Codex 主线程。派发同 SHA rc.83（run 44835178571）再判一轮持续性；若再命中则停止同 SHA 轮次、链条暂停待主线程排查。"
     },
     {
       "id": "COORD-008",
@@ -5057,6 +5058,18 @@
         "docs/qualification/v51-rc73-merge-materials.md; /tmp/tmp.rKkOw2TAwk/native-product-installed-ui.json; /tmp/tmp.rKkOw2TAwk/native-product-nsis.json"
       ],
       "git_revision": "83638cebc33069759e0904ac62eb453962ab0cee"
+    },
+    {
+      "sequence": 300,
+      "at": "2026-11-21T07:13:54+08:00",
+      "agent": "qwen38-next-v51-20261120-02",
+      "task": "V51-008",
+      "action": "log",
+      "note": "rc.82（run 44831637710，同 SHA 54df2e3 复现轮）completed=failure：entry-ui 便携运行在 program-publish-disconnect 以 0xC0000005 前端退出崩溃（exitCode 3221226505、currentBootFailure=frontend-exited、句柄 gone、publishStopWaitMs 5820、relayStopMaxMs 5135、uiStallMaxMs 4826，与 rc.76 同形）——第四披露项第四次总命中，便携形态在 rc.79-81 三轮通过后再次命中；nsis/installed-ui/size-split 未产出，54df2e3 安装态生效验证再顺延。崩溃面已在两种形态四次命中（76/82 便携、80/81 安装态），无本机复现、不改代码、不掩盖，交 Codex 主线程。派发同 SHA rc.83（run 44835178571）再判一轮持续性；若再命中则停止同 SHA 轮次、链条暂停待主线程排查。",
+      "evidence": [
+        "gate exit=3 receipts=entry-ui,restore；entry-ui receipt frontend exitCode 3221226505；run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44831637710；rc.83 run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44835178571"
+      ],
+      "git_revision": "d76167f5888468ce161710d318c8ab869eac8307"
     }
   ]
 }
