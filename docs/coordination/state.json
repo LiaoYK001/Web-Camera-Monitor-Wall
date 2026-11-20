@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 295,
-  "updated_at": "2026-11-21T02:45:41+08:00",
+  "revision": 296,
+  "updated_at": "2026-11-21T03:18:24+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1346,12 +1346,13 @@
         "run 44728029615 gate inspect-first-failure; commit 9b26035 (codex/v51-r4-legacy-import); contract 61/60; tests/test_encrypted_backup.py 12 OK; Linux repro of kill-leftover vs refusal-no-leak",
         "run 44735378274 gate inspect-first-failure; receipt programStreamVideoProbe (frames 26, span 0.833, render +421); commit 9c2b7af (codex/v51-r4-legacy-import); contract 62 tests/61 pass; test_pixels OK; Linux retry-semantics repro",
         "run 44746006214 gate pending; receipt native-product-entry-ui.json: serviceExits frontend 3221226505, publishDisconnectError publish-relay-exited, lastUiFailure window-pid-mismatch gone, uiThread publishStopWaitMs 5943",
-        "gate 44751520752 exit=3 receipts=[entry-ui,restore] failureReceipts=[entry-ui native-program-take/pixels-program-after-take-captured]; 契约 63 项 62 通过（唯一错误为 obs 子模块未初始化）; test_pixels 31/2; 谓词语义复现容忍 rc.77 形态并拒绝冻结/无进度/后段失败/非 Program/预算耗尽/短窗口; 9460829 已推送"
+        "gate 44751520752 exit=3 receipts=[entry-ui,restore] failureReceipts=[entry-ui native-program-take/pixels-program-after-take-captured]; 契约 63 项 62 通过（唯一错误为 obs 子模块未初始化）; test_pixels 31/2; 谓词语义复现容忍 rc.77 形态并拒绝冻结/无进度/后段失败/非 Program/预算耗尽/短窗口; 9460829 已推送",
+        "gate 44795726091 exit=3 failureReceipts=[entry-ui native-program-take/pixels-program-after-take-captured]; analysis progressError 'Frozen final pixels on slot 1'; probeOnWindow opened=true staleTiles=[0,2,3] renderFramesPerSecond=30.4; feedDecodeProbe distinctFrames 32-38; serialsDuringCapture windowMs 26030 samples 93 publishes 14 全部 inputs advanced=true"
       ],
       "blocker": "",
       "next_step": "rc.74 结束后读 entry-ui/restore/installed-ui/nsis/restore-pair/legacy-import/lan/updater/upgraded-ui/size-split 全部回执；齐了把合并材料交 Codex 主线程审阅换基与合并顺序。rc.72 journal 间隙声明保留，需主线程产品侧结论。",
-      "updated_at": "2026-11-21T02:45:41+08:00",
-      "last_note": "rc.77（run 44751520752，同 SHA 9c2b7af）未触及 rc.76 崩溃面：更早失败于 native-program-take——main-preview 第 0/8 采样捕获 CUT TAKE 后墙格子重绘中途变暗旧帧（Wrong channel 1 in tile 0: 62,30,30），1-7 采样通道正确、计数器推进、temporalProgress 真、fixture 全部存活无停滞路径；属 rc.47/48/50 记录的中途交换窗口竞态，非产品冻结。rc.76 前端 AV 崩溃复现性判定因此无结论（未到达该阶段），披露保持开放。test-only 修复 9460829：仅 Program 交换阶段、仅首采样失败、八采样齐备且进度已证实时，同身份重捕获整窗一次并要求每个角色完全通过（pixelSwapTransientRetry 披露）；捕获调用抽为 run_capture 复用。已派发 rc.78（run 44795726091 @ 9460829，输入同前）。"
+      "updated_at": "2026-11-21T03:18:24+08:00",
+      "last_note": "rc.78（run 44795726091 @ 9460829）在同一 native-program-take 失败但形态更持久：program-after-take 捕获窗内 main-preview 八个采样全部通道正确但计数器完全冻结（counters 全 [31,31,38,38,38]、distinctClientCount=1、distinctTileCounts 全 1、temporalProgress=false，'Frozen final pixels on slot 1'），SerialWatch 窗口 26.03 s；同期宿主渲染计数 9923→10702（~30fps）、六个输入 serial 全部 advance、fixture publisher 全存活无停滞路径、feed 解码探测 32-38 个不同帧——帧已到源、宿主在渲染，但窗口像素整窗不重绘。开渲染探针复测仍部分冻结（tiles 0,2,3 stale 而 1,4 更新），排除整体捕获失效与 fixture 故障；9460829 的首采样瞬态形态不匹配（正确地未触发重试）。归因：cut TAKE 后产品侧预览重绘停滞（真实用户可见），与 rc.76 AV 崩溃同属 TAKE retirement/rebind 宿主竞态疑似根因族；连续两轮（rc.77 瞬态、rc.78 持久）失败于该阶段。属复杂诊断/崩溃恢复面，交 Codex 主线程；本会话未改代码。已派发 rc.79（同 SHA 9460829、同输入）判定该重绘停滞面的复现性（rc.76 曾通过该阶段），不构成放行。"
     },
     {
       "id": "COORD-008",
@@ -5005,6 +5006,18 @@
         "gate 44751520752 exit=3 receipts=[entry-ui,restore] failureReceipts=[entry-ui native-program-take/pixels-program-after-take-captured]; 契约 63 项 62 通过（唯一错误为 obs 子模块未初始化）; test_pixels 31/2; 谓词语义复现容忍 rc.77 形态并拒绝冻结/无进度/后段失败/非 Program/预算耗尽/短窗口; 9460829 已推送"
       ],
       "git_revision": "f47146ceb13d7ab14ad1ba65690bdbc25e67a585"
+    },
+    {
+      "sequence": 296,
+      "at": "2026-11-21T03:18:24+08:00",
+      "agent": "qwen38-next-v51-20261120-02",
+      "task": "V51-008",
+      "action": "log",
+      "note": "rc.78（run 44795726091 @ 9460829）在同一 native-program-take 失败但形态更持久：program-after-take 捕获窗内 main-preview 八个采样全部通道正确但计数器完全冻结（counters 全 [31,31,38,38,38]、distinctClientCount=1、distinctTileCounts 全 1、temporalProgress=false，'Frozen final pixels on slot 1'），SerialWatch 窗口 26.03 s；同期宿主渲染计数 9923→10702（~30fps）、六个输入 serial 全部 advance、fixture publisher 全存活无停滞路径、feed 解码探测 32-38 个不同帧——帧已到源、宿主在渲染，但窗口像素整窗不重绘。开渲染探针复测仍部分冻结（tiles 0,2,3 stale 而 1,4 更新），排除整体捕获失效与 fixture 故障；9460829 的首采样瞬态形态不匹配（正确地未触发重试）。归因：cut TAKE 后产品侧预览重绘停滞（真实用户可见），与 rc.76 AV 崩溃同属 TAKE retirement/rebind 宿主竞态疑似根因族；连续两轮（rc.77 瞬态、rc.78 持久）失败于该阶段。属复杂诊断/崩溃恢复面，交 Codex 主线程；本会话未改代码。已派发 rc.79（同 SHA 9460829、同输入）判定该重绘停滞面的复现性（rc.76 曾通过该阶段），不构成放行。",
+      "evidence": [
+        "gate 44795726091 exit=3 failureReceipts=[entry-ui native-program-take/pixels-program-after-take-captured]; analysis progressError 'Frozen final pixels on slot 1'; probeOnWindow opened=true staleTiles=[0,2,3] renderFramesPerSecond=30.4; feedDecodeProbe distinctFrames 32-38; serialsDuringCapture windowMs 26030 samples 93 publishes 14 全部 inputs advanced=true"
+      ],
+      "git_revision": "4bc7b077fafa231e68fc677af784a1165f4a2203"
     }
   ]
 }

@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 295 · 2026-11-21T02:45:41+08:00（UTC+08）
+> 快照版本 296 · 2026-11-21T03:18:24+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #296 · 2026-11-21T03:18:24+08:00 · log
+
+- Agent：`qwen38-next-v51-20261120-02`；任务：`V51-008`
+- 记录：rc.78（run 44795726091 @ 9460829）在同一 native-program-take 失败但形态更持久：program-after-take 捕获窗内 main-preview 八个采样全部通道正确但计数器完全冻结（counters 全 [31,31,38,38,38]、distinctClientCount=1、distinctTileCounts 全 1、temporalProgress=false，'Frozen final pixels on slot 1'），SerialWatch 窗口 26.03 s；同期宿主渲染计数 9923→10702（~30fps）、六个输入 serial 全部 advance、fixture publisher 全存活无停滞路径、feed 解码探测 32-38 个不同帧——帧已到源、宿主在渲染，但窗口像素整窗不重绘。开渲染探针复测仍部分冻结（tiles 0,2,3 stale 而 1,4 更新），排除整体捕获失效与 fixture 故障；9460829 的首采样瞬态形态不匹配（正确地未触发重试）。归因：cut TAKE 后产品侧预览重绘停滞（真实用户可见），与 rc.76 AV 崩溃同属 TAKE retirement/rebind 宿主竞态疑似根因族；连续两轮（rc.77 瞬态、rc.78 持久）失败于该阶段。属复杂诊断/崩溃恢复面，交 Codex 主线程；本会话未改代码。已派发 rc.79（同 SHA 9460829、同输入）判定该重绘停滞面的复现性（rc.76 曾通过该阶段），不构成放行。
+- 证据：gate 44795726091 exit=3 failureReceipts=[entry-ui native-program-take/pixels-program-after-take-captured]; analysis progressError 'Frozen final pixels on slot 1'; probeOnWindow opened=true staleTiles=[0,2,3] renderFramesPerSecond=30.4; feedDecodeProbe distinctFrames 32-38; serialsDuringCapture windowMs 26030 samples 93 publishes 14 全部 inputs advanced=true
+- 源码：`4bc7b077fafa231e68fc677af784a1165f4a2203`
 ## #295 · 2026-11-21T02:45:41+08:00 · log
 
 - Agent：`qwen38-next-v51-20261120-02`；任务：`V51-008`
