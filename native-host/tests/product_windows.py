@@ -1129,7 +1129,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                         return {"samples": len(series), "distinctCellsPerTile": tiles,
                             "scenes": sorted({str(item.get("scene") or "")[:32] for _, item in series})[:4],
                             "timeline": [{"atMs": ms - end, "renderFrames": item.get("renderFrames"),
-                                "cells": item.get("cells")} for _, item in series[-24:]]}
+                                "cells": item.get("cells")} for ms, item in series[-24:]]}
                     report["renderProbe"] = {"preview": probe_report("preview"),
                         "program": probe_report("program")}
                 return report
