@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 302,
-  "updated_at": "2026-11-21T09:10:53+08:00",
+  "revision": 303,
+  "updated_at": "2026-11-21T09:42:33+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1353,12 +1353,13 @@
         "docs/qualification/v51-rc73-merge-materials.md; /tmp/tmp.rKkOw2TAwk/native-product-installed-ui.json; /tmp/tmp.rKkOw2TAwk/native-product-nsis.json",
         "gate exit=3 receipts=entry-ui,restore；entry-ui receipt frontend exitCode 3221226505；run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44831637710；rc.83 run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44835178571",
         "job log traceback backup_restore_windows.py:438；nsis receipt freshInstalledEntryQualified=true、failurePhase interrupted-restore-pair-recovery（checkpoint 滞后）；run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44835178571；rc.84 run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44845177402；修复提交 bae0610 已推送",
-        "gate exit=3 receipts=entry-ui,restore；entry-ui capture20 analysis temporalProgress=false staleTiles=[1,2,3,4] distinctTileCounts=[2,1,1,1,1]；serialsDuringCapture renderFramesPerSecond 32.2、inputs 全 advanced、publishes 14；run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44845177402；rc.85 run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44848537440"
+        "gate exit=3 receipts=entry-ui,restore；entry-ui capture20 analysis temporalProgress=false staleTiles=[1,2,3,4] distinctTileCounts=[2,1,1,1,1]；serialsDuringCapture renderFramesPerSecond 32.2、inputs 全 advanced、publishes 14；run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44845177402；rc.85 run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44848537440",
+        "gate exit=3 receipts=entry-ui,restore；capture20 progressError=Frozen final pixels on slot 1 staleTiles=[0,1,2,3] distinctTileCounts=[1,1,1,1,2]；serials renderFramesPerSecond 31.7 windowMs 26469 publishes 15 inputs 全 advanced；run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44848537440"
       ],
       "blocker": "",
       "next_step": "rc.74 结束后读 entry-ui/restore/installed-ui/nsis/restore-pair/legacy-import/lan/updater/upgraded-ui/size-split 全部回执；齐了把合并材料交 Codex 主线程审阅换基与合并顺序。rc.72 journal 间隙声明保留，需主线程产品侧结论。",
-      "updated_at": "2026-11-21T09:10:53+08:00",
-      "last_note": "rc.84（run 44845177402 @ bae0610）completed=failure：entry-ui 于 program-after-take 失败——第六披露项整窗重绘停滞第二次持久命中（第一次为 rc.78 @9c2b7af）：八采样通道/布局全部正确、计数器自第 1 采样起冻结（tile 0 跳一次 17→33 后停滞、tiles 1-4 恒为 [39,14,14,15]、distinctClientCount=2、temporalProgress=false、staleTiles=[1,2,3,4]），同窗 24.219s 宿主渲染计数 9888→10668（~32fps）、六输入 serial 全 advance、feed 身份已观测且内容变化、14 次 publish；前端存活（handle frontend），崩溃面未命中（第四披露项开放）；9460829 瞬态重试形态正确地未触发、未掩盖、未改代码。恢复/尺寸/安装态/nsis 等未产出，bae0610 末段修复的安装态验证再顺延（本地语义复现与契约回归已记录）。停滞面两次命中跨两个 SHA、间歇性成立，属复杂诊断面待 Codex 主线程。派发同 SHA rc.85（run 44848537440）复现轮判持续性并争取首次产出 restore-pair 回执。"
+      "updated_at": "2026-11-21T09:42:33+08:00",
+      "last_note": "rc.85（run 44848537440 @ bae0610 同 SHA 复现轮）completed=failure：entry-ui 于 program-after-take 失败——第六披露项整窗重绘停滞第三次持久命中、同 SHA 连续第二次命中：八采样通道/布局正确、tiles 0-3 摘要全窗恒定、tile 4 恰跳一次（52ae516d→f3f318a3、计数器 24→20）、progressError『Frozen final pixels on slot 1』、distinctClientCount=2、temporalProgress=false、staleTiles=[0,1,2,3]；同窗 26.469s 宿主渲染 9982→10822（~31.7fps）、六输入 serial 全 advance（maxFrameAgeMs≤113）、15 次 publish、feed 身份全观测；前端存活、崩溃面未命中（第四披露项开放）。rc.84/85 与 rc.83（全绿）产品代码逐字节相同（差异仅 test-only bae0610、且只在 nsis 段执行），排除装置修复引入停滞；同 SHA 连续两中对照 rc.83 同码通过，间歇性/宿主侧依赖成立。按判定计划：第三次持久命中→强化第六披露项、链路暂停、不派发 rc.86，交 Codex 主线程宿主侧诊断；bae0610 末段安装态验证随之顺延，十回执目标待主线程诊断后恢复。"
     },
     {
       "id": "COORD-008",
@@ -5096,6 +5097,18 @@
         "gate exit=3 receipts=entry-ui,restore；entry-ui capture20 analysis temporalProgress=false staleTiles=[1,2,3,4] distinctTileCounts=[2,1,1,1,1]；serialsDuringCapture renderFramesPerSecond 32.2、inputs 全 advanced、publishes 14；run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44845177402；rc.85 run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44848537440"
       ],
       "git_revision": "29713b2326614b1aa76f12b29e38f41d5850d928"
+    },
+    {
+      "sequence": 303,
+      "at": "2026-11-21T09:42:33+08:00",
+      "agent": "qwen38-next-v51-20261120-02",
+      "task": "V51-008",
+      "action": "log",
+      "note": "rc.85（run 44848537440 @ bae0610 同 SHA 复现轮）completed=failure：entry-ui 于 program-after-take 失败——第六披露项整窗重绘停滞第三次持久命中、同 SHA 连续第二次命中：八采样通道/布局正确、tiles 0-3 摘要全窗恒定、tile 4 恰跳一次（52ae516d→f3f318a3、计数器 24→20）、progressError『Frozen final pixels on slot 1』、distinctClientCount=2、temporalProgress=false、staleTiles=[0,1,2,3]；同窗 26.469s 宿主渲染 9982→10822（~31.7fps）、六输入 serial 全 advance（maxFrameAgeMs≤113）、15 次 publish、feed 身份全观测；前端存活、崩溃面未命中（第四披露项开放）。rc.84/85 与 rc.83（全绿）产品代码逐字节相同（差异仅 test-only bae0610、且只在 nsis 段执行），排除装置修复引入停滞；同 SHA 连续两中对照 rc.83 同码通过，间歇性/宿主侧依赖成立。按判定计划：第三次持久命中→强化第六披露项、链路暂停、不派发 rc.86，交 Codex 主线程宿主侧诊断；bae0610 末段安装态验证随之顺延，十回执目标待主线程诊断后恢复。",
+      "evidence": [
+        "gate exit=3 receipts=entry-ui,restore；capture20 progressError=Frozen final pixels on slot 1 staleTiles=[0,1,2,3] distinctTileCounts=[1,1,1,1,2]；serials renderFramesPerSecond 31.7 windowMs 26469 publishes 15 inputs 全 advanced；run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44848537440"
+      ],
+      "git_revision": "a0b6dd3f9172588567ec8ac902028a1fcbda6a26"
     }
   ]
 }

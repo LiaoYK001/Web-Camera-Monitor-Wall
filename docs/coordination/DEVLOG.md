@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 302 · 2026-11-21T09:10:53+08:00（UTC+08）
+> 快照版本 303 · 2026-11-21T09:42:33+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #303 · 2026-11-21T09:42:33+08:00 · log
+
+- Agent：`qwen38-next-v51-20261120-02`；任务：`V51-008`
+- 记录：rc.85（run 44848537440 @ bae0610 同 SHA 复现轮）completed=failure：entry-ui 于 program-after-take 失败——第六披露项整窗重绘停滞第三次持久命中、同 SHA 连续第二次命中：八采样通道/布局正确、tiles 0-3 摘要全窗恒定、tile 4 恰跳一次（52ae516d→f3f318a3、计数器 24→20）、progressError『Frozen final pixels on slot 1』、distinctClientCount=2、temporalProgress=false、staleTiles=[0,1,2,3]；同窗 26.469s 宿主渲染 9982→10822（~31.7fps）、六输入 serial 全 advance（maxFrameAgeMs≤113）、15 次 publish、feed 身份全观测；前端存活、崩溃面未命中（第四披露项开放）。rc.84/85 与 rc.83（全绿）产品代码逐字节相同（差异仅 test-only bae0610、且只在 nsis 段执行），排除装置修复引入停滞；同 SHA 连续两中对照 rc.83 同码通过，间歇性/宿主侧依赖成立。按判定计划：第三次持久命中→强化第六披露项、链路暂停、不派发 rc.86，交 Codex 主线程宿主侧诊断；bae0610 末段安装态验证随之顺延，十回执目标待主线程诊断后恢复。
+- 证据：gate exit=3 receipts=entry-ui,restore；capture20 progressError=Frozen final pixels on slot 1 staleTiles=[0,1,2,3] distinctTileCounts=[1,1,1,1,2]；serials renderFramesPerSecond 31.7 windowMs 26469 publishes 15 inputs 全 advanced；run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44848537440
+- 源码：`a0b6dd3f9172588567ec8ac902028a1fcbda6a26`
 ## #302 · 2026-11-21T09:10:53+08:00 · log
 
 - Agent：`qwen38-next-v51-20261120-02`；任务：`V51-008`
