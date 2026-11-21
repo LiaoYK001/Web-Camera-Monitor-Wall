@@ -1,7 +1,7 @@
 # 当前交接 / Current handoff
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 301 · 2026-11-21T08:39:07+08:00（UTC+08）
+> 快照版本 302 · 2026-11-21T09:10:53+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -22,6 +22,6 @@
 
 ## 最近一次同步
 
-rc.83（run 44835178571，同 SHA 54df2e3 复现轮）completed=failure 但为最深一轮：entry-ui 全绿、installed-ui 首次通过（崩溃阶段两种形态同轮均未复现，第四披露项保持开放）、freshInstalledEntryQualified=true、complete-candidate 安装包工件已产出；nsis 推进到 backup_restore_windows.py:438 installed-entry-after-recovery 断言『the running installed product did not read the recovered pair』失败。归因为装置侧潜伏缺陷：配置专用阶段刚断言原生半区保持 kept-native（54df2e3 修复后 line 412/414-417 首次通过，即备份修复在真实安装态生效），无 journal 的普通启动不改动半区，而末段断言自 12d779d 引入起一直期望原生翻回 backup，与配置专用契约自相矛盾、此前从未执行。test-only 修复 bae0610（期望 config=backup 且 native=kept-native，双语注释引 run）；Linux 语义复现末段状态 config=backup/native=kept-native/无 journal；test_build_contract 63 项仅余既有 obs 子模块错误、test_encrypted_backup 14/14 OK。派发 rc.84（run 44845177402 @ bae0610）验证末段并推进 restore-pair/legacy-import/lan/updater/upgraded-ui 十回执目标。
+rc.84（run 44845177402 @ bae0610）completed=failure：entry-ui 于 program-after-take 失败——第六披露项整窗重绘停滞第二次持久命中（第一次为 rc.78 @9c2b7af）：八采样通道/布局全部正确、计数器自第 1 采样起冻结（tile 0 跳一次 17→33 后停滞、tiles 1-4 恒为 [39,14,14,15]、distinctClientCount=2、temporalProgress=false、staleTiles=[1,2,3,4]），同窗 24.219s 宿主渲染计数 9888→10668（~32fps）、六输入 serial 全 advance、feed 身份已观测且内容变化、14 次 publish；前端存活（handle frontend），崩溃面未命中（第四披露项开放）；9460829 瞬态重试形态正确地未触发、未掩盖、未改代码。恢复/尺寸/安装态/nsis 等未产出，bae0610 末段修复的安装态验证再顺延（本地语义复现与契约回归已记录）。停滞面两次命中跨两个 SHA、间歇性成立，属复杂诊断面待 Codex 主线程。派发同 SHA rc.85（run 44848537440）复现轮判持续性并争取首次产出 restore-pair 回执。
 
 以任务中的验收条件决定完成；没有 Windows/硬件/发布证据时保持对应事项开放。

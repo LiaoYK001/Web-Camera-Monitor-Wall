@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 301 · 2026-11-21T08:39:07+08:00（UTC+08）
+> 快照版本 302 · 2026-11-21T09:10:53+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #302 · 2026-11-21T09:10:53+08:00 · log
+
+- Agent：`qwen38-next-v51-20261120-02`；任务：`V51-008`
+- 记录：rc.84（run 44845177402 @ bae0610）completed=failure：entry-ui 于 program-after-take 失败——第六披露项整窗重绘停滞第二次持久命中（第一次为 rc.78 @9c2b7af）：八采样通道/布局全部正确、计数器自第 1 采样起冻结（tile 0 跳一次 17→33 后停滞、tiles 1-4 恒为 [39,14,14,15]、distinctClientCount=2、temporalProgress=false、staleTiles=[1,2,3,4]），同窗 24.219s 宿主渲染计数 9888→10668（~32fps）、六输入 serial 全 advance、feed 身份已观测且内容变化、14 次 publish；前端存活（handle frontend），崩溃面未命中（第四披露项开放）；9460829 瞬态重试形态正确地未触发、未掩盖、未改代码。恢复/尺寸/安装态/nsis 等未产出，bae0610 末段修复的安装态验证再顺延（本地语义复现与契约回归已记录）。停滞面两次命中跨两个 SHA、间歇性成立，属复杂诊断面待 Codex 主线程。派发同 SHA rc.85（run 44848537440）复现轮判持续性并争取首次产出 restore-pair 回执。
+- 证据：gate exit=3 receipts=entry-ui,restore；entry-ui capture20 analysis temporalProgress=false staleTiles=[1,2,3,4] distinctTileCounts=[2,1,1,1,1]；serialsDuringCapture renderFramesPerSecond 32.2、inputs 全 advanced、publishes 14；run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44845177402；rc.85 run https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/44848537440
+- 源码：`29713b2326614b1aa76f12b29e38f41d5850d928`
 ## #301 · 2026-11-21T08:39:07+08:00 · log
 
 - Agent：`qwen38-next-v51-20261120-02`；任务：`V51-008`
