@@ -656,6 +656,9 @@ struct ProductProgramOutputImpl {
 		obs_data_set_string(video_settings.get(), "preset", "veryfast");
 		obs_data_set_string(video_settings.get(), "profile", "high");
 		obs_service_apply_encoder_settings(publish_service.value, video_settings.get(), nullptr);
+		// The relay also serves live RTSP and WebRTC. Avoid B-frame reordering
+		// and encoder lookahead for consumers joining the running stream.
+		obs_data_set_string(video_settings.get(), "tune", "zerolatency");
 		obs_encoder_t *video = obs_video_encoder_create("obs_x264", "WebOBS Program publish x264",
 			video_settings.get(), nullptr);
 		if (!video) {
