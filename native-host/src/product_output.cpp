@@ -545,12 +545,8 @@ struct ProductProgramOutputImpl {
 		if (!streaming)
 			return;
 		const bool relay_running = media_mtx.state() == QProcess::Running;
-		// The publish output becomes active only after the loopback handshake
-		// completes, and a live reconnect is still the same user-facing output, so
-		// neither counts as a loss. A dead relay is definitive; a dead output needs
-		// the short start window so a slow handshake is not reported as a failure.
-		const bool output_live = publish_output.value &&
-			(obs_output_active(publish_output.value) || obs_output_reconnecting(publish_output.value));
+		// Allow the initial loopback handshake while the relay is still alive.
+		const bool output_live = publish_output.value && obs_output_active(publish_output.value);
 		if (relay_running && (output_live || stream_clock.elapsed() < 5000))
 			return;
 		const QString detail = publish_output.value ?
@@ -707,6 +703,9 @@ struct ProductProgramOutputImpl {
 			return false;
 		}
 		publish_output.reset(output);
+		// Each publish attempt owns a private relay and its endpoint. Recovery
+		// creates a new pair; the old RTMP output must not retry during teardown.
+		obs_output_set_reconnect_settings(publish_output.value, 0, 0);
 		obs_output_set_mixers(publish_output.value, size_t(1u << selected_track));
 		obs_output_set_video_encoder(publish_output.value, publish_video.value);
 		obs_output_set_audio_encoder(publish_output.value, publish_audio.value, 0);
