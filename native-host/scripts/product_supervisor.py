@@ -796,6 +796,9 @@ class ProductSupervisor:
                 WEBOBS_NATIVE_PROFILE_ROOT=str(self.root / "native-profile"),
                 WEBOBS_NATIVE_LAN_SWITCH=(f"http://127.0.0.1:{self.lan_server.server_port}/lan"
                     if self.lan_server else ""))
+            if (os.environ.get("WEBOBS_PRODUCT_ALLOW_TEST_ENDPOINTS") == "true"
+                    and os.environ.get("WEBOBS_PRODUCT_RENDER_PROBE") == "1"):
+                frontend_environment["WEBOBS_PRODUCT_RENDER_PROBE"] = "1"
             if self.complete and getattr(self, "program_recordings", None) is not None:
                 frontend_environment["WEBOBS_PROGRAM_RECORDINGS"] = str(self.program_recordings)
                 frontend_environment["WEBOBS_SUPPORT_BUNDLE_ROOT"] = str(self.root / "support")
