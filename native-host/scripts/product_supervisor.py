@@ -186,6 +186,7 @@ class ProductSupervisor:
         self.complete = False
         self.recordings = None
         self.backup_key = None
+        self.frontend_render_probe = False
 
     def status(self, phase):
         self.phase = phase
@@ -422,6 +423,9 @@ class ProductSupervisor:
                 self.environment["WEBOBS_GO2RTC_BINARY"] = str(self.runtime / "bin/go2rtc.exe")
         if os.environ.get("WEBOBS_PRODUCT_ALLOW_TEST_ENDPOINTS") == "true":
             self.environment["WEBOBS_CAMERA_ALLOW_TEST_ENDPOINTS"] = "true"
+            # The in-process authority replaces os.environ before OBS starts.
+            # Keep the probe opt-in separate from the shared service environment.
+            self.frontend_render_probe = os.environ.get("WEBOBS_PRODUCT_RENDER_PROBE") == "1"
         return True
 
     def port(self, preferred=0):
@@ -796,8 +800,7 @@ class ProductSupervisor:
                 WEBOBS_NATIVE_PROFILE_ROOT=str(self.root / "native-profile"),
                 WEBOBS_NATIVE_LAN_SWITCH=(f"http://127.0.0.1:{self.lan_server.server_port}/lan"
                     if self.lan_server else ""))
-            if (os.environ.get("WEBOBS_PRODUCT_ALLOW_TEST_ENDPOINTS") == "true"
-                    and os.environ.get("WEBOBS_PRODUCT_RENDER_PROBE") == "1"):
+            if self.frontend_render_probe:
                 frontend_environment["WEBOBS_PRODUCT_RENDER_PROBE"] = "1"
             if self.complete and getattr(self, "program_recordings", None) is not None:
                 frontend_environment["WEBOBS_PROGRAM_RECORDINGS"] = str(self.program_recordings)
