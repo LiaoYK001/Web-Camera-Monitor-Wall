@@ -435,9 +435,21 @@ def exercise(runtime, profile_parent, report):
                 and re.fullmatch(r"[a-f0-9]{32}", value["bootId"]) and value["bootId"] != previous_boot else None
         value = wait_for(running, "installed entry did not start after the recovered pair", timeout=75)
         owned = [value["ownerPid"], *[service["pid"] for service in value.get("services", [])]]
+        # 配置专用恢复阶段把原生半区留在 kept-native（上面刚按产品契约断言过它未被替换），
+        # 无 journal 时普通启动不会改动任何半区。这里必须读取恢复出的配置半区并保留
+        # 用户当前的 OBS 档案；期望原生半区翻回归档值会与配置专用契约自相矛盾，
+        # 该断言从引入起因早前阶段先行失败而从未真正执行过（run 44835178571 首次到达）。
+        # The configuration-only restore above kept the user's current OBS profile
+        # (asserted against the product contract just before this phase), and ordinary
+        # startup without a journal changes neither half. The running product must read
+        # the recovered configuration half and leave that native profile untouched;
+        # expecting it to flip back to the archived value contradicts the
+        # configuration-only contract. This assertion never executed before run
+        # 44835178571 because earlier phases failed first, so the stale expectation
+        # was never exercised until the manifest fix let the sequence reach it.
         assert marker_value(config / CONFIG_MARKER) == "backup" \
-            and marker_value(native / NATIVE_MARKER) == "backup", \
-            "the running installed product did not read the recovered pair"
+            and marker_value(native / NATIVE_MARKER) == "kept-native", \
+            "the running installed product did not read the recovered configuration-only profile"
         assert not journal.exists(), "running product recreated the restore journal"
         launched.kill()
         launched.wait(timeout=30)
