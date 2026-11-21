@@ -394,6 +394,26 @@ def terminate_process(powershell, pid):
     assert killed.returncode == 0, f"could not terminate PID {pid}: {killed.stderr[:200]}"
 
 
+def obs_crash_summary(profile, boot_started_at):
+    """Return only the exception code and module basename from this boot."""
+    crash_dir = profile / "native-profile/obs-studio/crashes"
+    try:
+        reports = [(path.stat().st_mtime, path) for path in crash_dir.glob("Crash *.txt")
+                   if not path.is_symlink() and path.is_file()]
+        current = [entry for entry in reports if entry[0] >= boot_started_at]
+        if not current:
+            return {"available": False}
+        with max(current)[1].open("rb") as report:
+            header = report.read(4096).decode("utf-8-sig", errors="replace")
+    except OSError:
+        return {"available": False}
+    code = re.search(r"^Unhandled exception: ([0-9a-fA-F]{1,8})\s*$", header, re.MULTILINE)
+    module = re.search(r"^Fault address: [0-9a-fA-F]+ \(([^\r\n]+)\)\s*$", header, re.MULTILINE)
+    basename = module[1].replace("\\", "/").rsplit("/", 1)[-1] if module else ""
+    return {"available": True, "exceptionCode": int(code[1], 16) if code else None,
+            "module": basename if re.fullmatch(r"[a-zA-Z0-9_.-]{1,80}\.(?:dll|exe)", basename, re.IGNORECASE) else None}
+
+
 def failure_detail(error, evidence):
     """Name the failed product assertion even when the assert itself had no message.
 
@@ -3593,6 +3613,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 detail = detail.replace(private_value, "<private>")
             evidence["failureDetail"] = detail[:300]
             evidence["entryExitCode"] = process.poll() if process is not None else None
+            if boot_started_at:
+                evidence["obsCrash"] = obs_crash_summary(profile, boot_started_at)
             stopped = status()
             if stopped.get("bootId") == active_boot_id or (process is not None and stopped.get("ownerPid") == process.pid):
                 reason = stopped.get("failureReason")
