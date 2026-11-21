@@ -273,11 +273,11 @@
  
 +/* Content digest of one delivered frame: sampled bytes only, never a copy of the
 + * frame. A frame whose visible timecode or markers differ changes this digest. */
-+static long webobs_frame_digest(const struct obs_source_frame *f)
++static uint32_t webobs_frame_digest(const struct obs_source_frame *f)
 +{
 +	if (!f || !f->data[0] || !f->linesize[0] || !f->width || !f->height)
 +		return 0;
-+	unsigned long hash = 2166136261UL;
++	uint32_t hash = 2166136261U;
 +	const uint32_t row_bytes = f->linesize[0] < f->width ? f->linesize[0] : f->width;
 +	for (uint32_t y = 0; y < f->height; y += 17) {
 +		const uint8_t *row = f->data[0] + (size_t)y * (size_t)f->linesize[0];
@@ -293,7 +293,7 @@
 +		for (uint32_t x = 0; x + 1 < chroma_bytes; x += 41)
 +			hash = (hash ^ row[x]) * 16777619UL;
 +	}
-+	return (long)hash;
++	return hash;
 +}
 +
  static void get_frame(void *opaque, struct obs_source_frame *f)
@@ -308,7 +308,7 @@
 +			os_atomic_inc_long(&s->webobs_video_serial);
 +		s->webobs_last_frame_ts = (long long)f->timestamp;
 +		s->webobs_last_frame_ms = (long long)(os_gettime_ns() / 1000000ULL);
-+		s->webobs_last_frame_hash = webobs_frame_digest(f);
++		os_atomic_store_long(&s->webobs_last_frame_hash, (long)webobs_frame_digest(f));
 +	}
  }
  
@@ -324,7 +324,7 @@
 +	calldata_set_int(cd, "serial", os_atomic_load_long(&s->webobs_video_serial));
 +	calldata_set_int(cd, "frameTs", (long long)s->webobs_last_frame_ts);
 +	calldata_set_int(cd, "frameMs", (long long)s->webobs_last_frame_ms);
-+	calldata_set_int(cd, "frameHash", (long long)s->webobs_last_frame_hash);
++	calldata_set_int(cd, "frameHash", (uint32_t)os_atomic_load_long(&s->webobs_last_frame_hash));
 +}
 +
  static void *ffmpeg_source_create(obs_data_t *settings, obs_source_t *source)
