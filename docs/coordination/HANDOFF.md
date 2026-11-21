@@ -1,7 +1,7 @@
 # 当前交接 / Current handoff
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 300 · 2026-11-21T07:13:54+08:00（UTC+08）
+> 快照版本 301 · 2026-11-21T08:39:07+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -22,6 +22,6 @@
 
 ## 最近一次同步
 
-rc.82（run 44831637710，同 SHA 54df2e3 复现轮）completed=failure：entry-ui 便携运行在 program-publish-disconnect 以 0xC0000005 前端退出崩溃（exitCode 3221226505、currentBootFailure=frontend-exited、句柄 gone、publishStopWaitMs 5820、relayStopMaxMs 5135、uiStallMaxMs 4826，与 rc.76 同形）——第四披露项第四次总命中，便携形态在 rc.79-81 三轮通过后再次命中；nsis/installed-ui/size-split 未产出，54df2e3 安装态生效验证再顺延。崩溃面已在两种形态四次命中（76/82 便携、80/81 安装态），无本机复现、不改代码、不掩盖，交 Codex 主线程。派发同 SHA rc.83（run 44835178571）再判一轮持续性；若再命中则停止同 SHA 轮次、链条暂停待主线程排查。
+rc.83（run 44835178571，同 SHA 54df2e3 复现轮）completed=failure 但为最深一轮：entry-ui 全绿、installed-ui 首次通过（崩溃阶段两种形态同轮均未复现，第四披露项保持开放）、freshInstalledEntryQualified=true、complete-candidate 安装包工件已产出；nsis 推进到 backup_restore_windows.py:438 installed-entry-after-recovery 断言『the running installed product did not read the recovered pair』失败。归因为装置侧潜伏缺陷：配置专用阶段刚断言原生半区保持 kept-native（54df2e3 修复后 line 412/414-417 首次通过，即备份修复在真实安装态生效），无 journal 的普通启动不改动半区，而末段断言自 12d779d 引入起一直期望原生翻回 backup，与配置专用契约自相矛盾、此前从未执行。test-only 修复 bae0610（期望 config=backup 且 native=kept-native，双语注释引 run）；Linux 语义复现末段状态 config=backup/native=kept-native/无 journal；test_build_contract 63 项仅余既有 obs 子模块错误、test_encrypted_backup 14/14 OK。派发 rc.84（run 44845177402 @ bae0610）验证末段并推进 restore-pair/legacy-import/lan/updater/upgraded-ui 十回执目标。
 
 以任务中的验收条件决定完成；没有 Windows/硬件/发布证据时保持对应事项开放。
