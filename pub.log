@@ -1,0 +1,5 @@
+[vost#0:0/copy @ 0x55898214acc0] Error submitting a packet to the muxer: Broken pipe
+    Last message repeated 1 times
+[out#0/rtsp @ 0x55898214a900] Error muxing a packet
+[out#0/rtsp @ 0x55898214a900] Task finished with error code: -32 (Broken pipe)
+[out#0/rtsp @ 0x55898214a900] Terminating thread with return code -32 (Broken pipe)

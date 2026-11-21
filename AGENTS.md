@@ -10,6 +10,15 @@
 - 本机提权仍只限用户已授权任务：先 `sudo -n true`，有效期内使用 `sudo -n`；不得自行 grant/延长租期/创建永久免密规则，不索要或记录密码。协作任务登记本身不扩大系统或发布授权。
 - 本地 Qwen 接手 Windows v5.1 时，从 [Qwen 执行手册](docs/coordination/V51-QWEN-RUNBOOK.md) 开始。固定任务、worktree、源码 SHA 与 CI run；用 `scripts/v51-ci-gate.py` 读取当前回执，一轮处理一个已验证的失败点。 / Local Qwen sessions working on Windows v5.1 follow the Qwen runbook and use the read-only CI receipt checker for the exact source and run.
 
+## T3 Code 模型分工 / Model routing
+
+- Wall Monitor 的 T3 主线程用 Codex 订阅（`codex-sub`）规划、分配和验收。架构、权限、迁移、破坏性操作和疑难调试由主线程负责，沿用现有审批与发布规则。 / Use the Codex subscription for planning, delegation and final review. Keep architecture, permissions, migrations, destructive changes and difficult debugging with the parent.
+- 简单、低风险的任务直接用本地 Qwen，或通过 `delegate_task` 指定 `claude-qwen-local` / `qwen3.8-flash-next-gyro-gyro-m`。Claude Harness 启动或接口不兼容时，用备用 `pi-qwen-local` / `strata-qwen/qwen3.8-flash-next-gyro-gyro-m`。两者共享同一个本地 Strata 服务，同一轮调度至多有一个 Qwen 子任务在跑。 / Use Claude Code for routine local work and Pi as the fallback when the Claude harness or its API path fails. Run one local Qwen worker at a time.
+- 模型选择器使用实际模型名称，请求直接使用上游或本地服务提供的模型 ID。仅在客户端明确要求时保留兼容映射，并注明实际模型。 / Use the actual model name in the picker and the endpoint's model ID in requests. Use a compatibility mapping only when the client requires one, and identify the actual model.
+- 中等难度、跨文件调试，或本地任务经一次有针对性的返工仍未通过，用 `dsh-local` / `["deepseek-official","deepseek-flash"]`。Strata 服务不可用时也走此路由。未经用户授权，不调度其他付费 Provider 或 Pro 模型。 / Route moderately complex work and unresolved local failures to DeepSeek Flash via DSH. Use only authorized paid routes.
+- 首次委派先调用 `orchestrator_capabilities` 核对本机 Provider、模型和权限。目标不可用时按上述顺序切换并报告；给子任务具体文件、目标、约束和验收命令。并行写入用隔离 worktree，为每个任务指定唯一 Agent ID 和共享账本入口。 / Verify the actual catalog before dispatch. Give each child a bounded scope, checks and a unique Agent ID. Isolate concurrent writes with worktrees and use the shared ledger.
+- 子任务回报改动、测试和未解决问题，由 Codex 复核关键 diff、运行适用检查并同步交接。没有 T3 委派工具的客户端直接执行当前已认领的任务。 / Review important diffs and deterministic checks, then record the result in the ledger. Clients without T3 delegation continue their assigned work directly.
+
 ## Architecture
 
 - `web/`: React/TypeScript/Vite local-first PWA, account workspace and monitor wall.

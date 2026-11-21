@@ -1,0 +1,3629 @@
+{
+  "schema": 1,
+  "kind": "native-product-entry-ui",
+  "sourceRevision": "c6351a5d21b0e6b2cc43a0c1dc9f5eae759168e0",
+  "version": "5.0.0-rc.1",
+  "passed": false,
+  "checks": [
+    "single-entry-real-core-authority-and-qt",
+    "management-entry-serves-actual-staged-ui-through-supervised-core",
+    "saved-studio-preference-starts-locked-through-product-only",
+    "active-control-origin-refuses-forced-rebind",
+    "first-account-through-product-ui",
+    "complete-business-services-running-in-one-product-entry",
+    "five-hevc-delivered-video-progress",
+    "authenticated-existing-obs-statistics-window",
+    "existing-camera-api-to-native-selection",
+    "five-hevc-final-pixels",
+    "save-only-bound-camera-profile-ids",
+    "five-items-one-owned-hevc-source-final-pixels",
+    "quick-wall-one-four-seven-final-pixels",
+    "quick-wall-draft-does-not-change-running-media",
+    "quick-wall-resize-retains-shared-inputs-and-idle-program",
+    "quick-wall-seven-save-logout-authenticated-restore",
+    "actual-obs-input-stall-and-rtsp-recovery-final-pixels",
+    "unrelated-studio-save-preserves-authorized-fixed-scene-and-main",
+    "ordinary-studio-document-to-native-final-pixels",
+    "saved-scene-id-restores-only-after-login",
+    "studio-revision-change-clears-stale-native-pixels",
+    "same-canvas-layout-retains-owned-sources-without-projectors",
+    "local-monitor-switches-preserve-independent-program-output",
+    "two-fixed-scene-projectors-share-owned-decoders",
+    "main-switch-preserves-two-different-projector-scenes",
+    "native-projector-fullscreen-windowed-final-pixels",
+    "closing-one-projector-preserves-other-and-main"
+  ],
+  "installedProductQualified": false,
+  "mediaQualified": false,
+  "hardwareDecodeVerified": false,
+  "fullFeatureMigrationQualified": false,
+  "fixtures": [
+    {
+      "channel": 1,
+      "codec": "hevc",
+      "width": 320,
+      "height": 180,
+      "requestedBFrames": 2,
+      "hasBFrames": 2,
+      "probedPictureCount": 32,
+      "probedBPictureCount": 18,
+      "sha256": "5c0af799ae7a7fcef7ea4f8c7a72d5b710c6828817168fe888494adb224af584"
+    },
+    {
+      "channel": 2,
+      "codec": "hevc",
+      "width": 320,
+      "height": 180,
+      "requestedBFrames": 0,
+      "hasBFrames": 0,
+      "probedPictureCount": 32,
+      "probedBPictureCount": 0,
+      "sha256": "993dc0dba1a21b3001c9071a8f79dcd42863828a4c7b981a3c65cb2db803bf95"
+    },
+    {
+      "channel": 3,
+      "codec": "hevc",
+      "width": 320,
+      "height": 180,
+      "requestedBFrames": 2,
+      "hasBFrames": 2,
+      "probedPictureCount": 32,
+      "probedBPictureCount": 18,
+      "sha256": "d385c76c7c8003a7caa5f830f0008e14d26841cd3a282da7e6daadd2673dd2c3"
+    },
+    {
+      "channel": 4,
+      "codec": "hevc",
+      "width": 320,
+      "height": 180,
+      "requestedBFrames": 2,
+      "hasBFrames": 2,
+      "probedPictureCount": 32,
+      "probedBPictureCount": 18,
+      "sha256": "d45d080ed0bfb7321019f74ab1d1e4f941c32e948767448d1647ad4ea3729d03"
+    },
+    {
+      "channel": 5,
+      "codec": "hevc",
+      "width": 320,
+      "height": 180,
+      "requestedBFrames": 2,
+      "hasBFrames": 2,
+      "probedPictureCount": 32,
+      "probedBPictureCount": 18,
+      "sha256": "abf3c87901749844b719979ca8a166f2c0e56136868235cb20438e8e0b66d0d6"
+    }
+  ],
+  "captures": [
+    {
+      "phase": "watch",
+      "schema": 1,
+      "captureFailed": false,
+      "captures": [
+        {
+          "role": "main-preview",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            489,
+            857,
+            1193,
+            1545,
+            1884,
+            2251,
+            2592,
+            2942
+          ]
+        }
+      ],
+      "processExitCode": 0,
+      "analysis": {
+        "passed": true,
+        "samples": [
+          {
+            "sample": 0,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              3,
+              2,
+              3,
+              3,
+              3
+            ]
+          },
+          {
+            "sample": 1,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              7,
+              6,
+              7,
+              7,
+              7
+            ]
+          },
+          {
+            "sample": 2,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              10,
+              9,
+              10,
+              10,
+              10
+            ]
+          },
+          {
+            "sample": 3,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              14,
+              13,
+              14,
+              14,
+              14
+            ]
+          },
+          {
+            "sample": 4,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              17,
+              16,
+              17,
+              17,
+              17
+            ]
+          },
+          {
+            "sample": 5,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              21,
+              20,
+              21,
+              21,
+              21
+            ]
+          },
+          {
+            "sample": 6,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              24,
+              23,
+              24,
+              24,
+              24
+            ]
+          },
+          {
+            "sample": 7,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              28,
+              27,
+              28,
+              28,
+              28
+            ]
+          }
+        ],
+        "temporalProgress": true
+      }
+    },
+    {
+      "phase": "shared-camera",
+      "schema": 1,
+      "captureFailed": false,
+      "captures": [
+        {
+          "role": "main-preview",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            455,
+            789,
+            1128,
+            1465,
+            1799,
+            2150,
+            2489,
+            2823
+          ]
+        }
+      ],
+      "processExitCode": 0,
+      "analysis": {
+        "passed": true,
+        "samples": [
+          {
+            "sample": 0,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              23,
+              23,
+              23,
+              23,
+              23
+            ]
+          },
+          {
+            "sample": 1,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              26,
+              26,
+              26,
+              26,
+              26
+            ]
+          },
+          {
+            "sample": 2,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              29,
+              29,
+              29,
+              29,
+              29
+            ]
+          },
+          {
+            "sample": 3,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              33,
+              33,
+              33,
+              33,
+              33
+            ]
+          },
+          {
+            "sample": 4,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              36,
+              36,
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "sample": 5,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          {
+            "sample": 6,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              3,
+              3,
+              3,
+              3,
+              3
+            ]
+          },
+          {
+            "sample": 7,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              6,
+              6,
+              6,
+              6,
+              6
+            ]
+          }
+        ],
+        "temporalProgress": true
+      }
+    },
+    {
+      "phase": "distinct-after-sharing",
+      "schema": 1,
+      "captureFailed": false,
+      "captures": [
+        {
+          "role": "main-preview",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            452,
+            787,
+            1127,
+            1493,
+            1829,
+            2196,
+            2548,
+            2887
+          ]
+        }
+      ],
+      "processExitCode": 0,
+      "analysis": {
+        "passed": true,
+        "samples": [
+          {
+            "sample": 0,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              13,
+              12,
+              14,
+              14,
+              14
+            ]
+          },
+          {
+            "sample": 1,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              17,
+              16,
+              18,
+              18,
+              18
+            ]
+          },
+          {
+            "sample": 2,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              20,
+              19,
+              21,
+              21,
+              21
+            ]
+          },
+          {
+            "sample": 3,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              24,
+              23,
+              25,
+              25,
+              25
+            ]
+          },
+          {
+            "sample": 4,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              27,
+              26,
+              28,
+              28,
+              28
+            ]
+          },
+          {
+            "sample": 5,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              31,
+              30,
+              32,
+              32,
+              32
+            ]
+          },
+          {
+            "sample": 6,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              34,
+              33,
+              35,
+              35,
+              35
+            ]
+          },
+          {
+            "sample": 7,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              38,
+              37,
+              39,
+              39,
+              39
+            ]
+          }
+        ],
+        "temporalProgress": true
+      }
+    },
+    {
+      "phase": "quick-wall-1",
+      "schema": 1,
+      "captureFailed": false,
+      "captures": [
+        {
+          "role": "main-preview",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            473,
+            838,
+            1189,
+            1529,
+            1870,
+            2238,
+            2588,
+            2925
+          ]
+        }
+      ],
+      "processExitCode": 0,
+      "analysis": {
+        "passed": true,
+        "samples": [
+          {
+            "sample": 0,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              9
+            ]
+          },
+          {
+            "sample": 1,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              12
+            ]
+          },
+          {
+            "sample": 2,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              16
+            ]
+          },
+          {
+            "sample": 3,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              19
+            ]
+          },
+          {
+            "sample": 4,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              23
+            ]
+          },
+          {
+            "sample": 5,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              26
+            ]
+          },
+          {
+            "sample": 6,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              30
+            ]
+          },
+          {
+            "sample": 7,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              33
+            ]
+          }
+        ],
+        "temporalProgress": true
+      }
+    },
+    {
+      "phase": "quick-wall-4",
+      "schema": 1,
+      "captureFailed": false,
+      "captures": [
+        {
+          "role": "main-preview",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            453,
+            820,
+            1154,
+            1506,
+            1844,
+            2217,
+            2586,
+            2920
+          ]
+        }
+      ],
+      "processExitCode": 0,
+      "analysis": {
+        "passed": true,
+        "samples": [
+          {
+            "sample": 0,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              10,
+              8,
+              11,
+              11
+            ]
+          },
+          {
+            "sample": 1,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              14,
+              12,
+              14,
+              14
+            ]
+          },
+          {
+            "sample": 2,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              17,
+              15,
+              18,
+              18
+            ]
+          },
+          {
+            "sample": 3,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              21,
+              19,
+              21,
+              21
+            ]
+          },
+          {
+            "sample": 4,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              24,
+              22,
+              25,
+              25
+            ]
+          },
+          {
+            "sample": 5,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              28,
+              26,
+              28,
+              28
+            ]
+          },
+          {
+            "sample": 6,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              31,
+              30,
+              32,
+              32
+            ]
+          },
+          {
+            "sample": 7,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              35,
+              33,
+              35,
+              35
+            ]
+          }
+        ],
+        "temporalProgress": true
+      }
+    },
+    {
+      "phase": "quick-wall-7",
+      "schema": 1,
+      "captureFailed": false,
+      "captures": [
+        {
+          "role": "main-preview",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            460,
+            796,
+            1134,
+            1500,
+            1842,
+            2209,
+            2561,
+            2899
+          ]
+        }
+      ],
+      "processExitCode": 0,
+      "analysis": {
+        "passed": true,
+        "samples": [
+          {
+            "sample": 0,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              29,
+              27,
+              29,
+              29,
+              28,
+              29,
+              27
+            ]
+          },
+          {
+            "sample": 1,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              32,
+              30,
+              33,
+              33,
+              31,
+              32,
+              30
+            ]
+          },
+          {
+            "sample": 2,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              35,
+              34,
+              36,
+              36,
+              34,
+              35,
+              34
+            ]
+          },
+          {
+            "sample": 3,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              39,
+              37,
+              0,
+              0,
+              38,
+              39,
+              37
+            ]
+          },
+          {
+            "sample": 4,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              2,
+              1,
+              3,
+              3,
+              1,
+              2,
+              1
+            ]
+          },
+          {
+            "sample": 5,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              6,
+              4,
+              7,
+              7,
+              5,
+              6,
+              4
+            ]
+          },
+          {
+            "sample": 6,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              10,
+              8,
+              10,
+              10,
+              9,
+              10,
+              8
+            ]
+          },
+          {
+            "sample": 7,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              13,
+              11,
+              14,
+              14,
+              12,
+              13,
+              11
+            ]
+          }
+        ],
+        "temporalProgress": true
+      }
+    },
+    {
+      "phase": "quick-wall-seven-restored",
+      "schema": 1,
+      "captureFailed": false,
+      "captures": [
+        {
+          "role": "main-preview",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            463,
+            828,
+            1163,
+            1515,
+            1853,
+            2220,
+            2562,
+            2897
+          ]
+        }
+      ],
+      "processExitCode": 0,
+      "analysis": {
+        "passed": true,
+        "samples": [
+          {
+            "sample": 0,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              35,
+              34,
+              35,
+              35,
+              35,
+              35,
+              34
+            ]
+          },
+          {
+            "sample": 1,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              39,
+              38,
+              39,
+              39,
+              39,
+              39,
+              38
+            ]
+          },
+          {
+            "sample": 2,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              2,
+              1,
+              2,
+              2,
+              2,
+              2,
+              1
+            ]
+          },
+          {
+            "sample": 3,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              6,
+              5,
+              6,
+              6,
+              6,
+              6,
+              5
+            ]
+          },
+          {
+            "sample": 4,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              9,
+              8,
+              9,
+              9,
+              9,
+              9,
+              8
+            ]
+          },
+          {
+            "sample": 5,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              13,
+              12,
+              13,
+              13,
+              13,
+              13,
+              12
+            ]
+          },
+          {
+            "sample": 6,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              16,
+              15,
+              16,
+              16,
+              16,
+              16,
+              15
+            ]
+          },
+          {
+            "sample": 7,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              19,
+              19,
+              19,
+              19,
+              19,
+              19,
+              19
+            ]
+          }
+        ],
+        "temporalProgress": true
+      }
+    },
+    {
+      "phase": "native-rtsp-recovered",
+      "schema": 1,
+      "captureFailed": false,
+      "captures": [
+        {
+          "role": "main-preview",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            460,
+            798,
+            1134,
+            1501,
+            1841,
+            2192,
+            2531,
+            2866
+          ]
+        }
+      ],
+      "processExitCode": 0,
+      "analysis": {
+        "passed": true,
+        "samples": [
+          {
+            "sample": 0,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              32,
+              9,
+              9,
+              9,
+              9
+            ]
+          },
+          {
+            "sample": 1,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              36,
+              12,
+              13,
+              13,
+              13
+            ]
+          },
+          {
+            "sample": 2,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              39,
+              15,
+              16,
+              16,
+              16
+            ]
+          },
+          {
+            "sample": 3,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              3,
+              19,
+              20,
+              20,
+              20
+            ]
+          },
+          {
+            "sample": 4,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              6,
+              22,
+              23,
+              23,
+              23
+            ]
+          },
+          {
+            "sample": 5,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              10,
+              26,
+              27,
+              27,
+              27
+            ]
+          },
+          {
+            "sample": 6,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              13,
+              29,
+              30,
+              30,
+              30
+            ]
+          },
+          {
+            "sample": 7,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              16,
+              33,
+              33,
+              33,
+              33
+            ]
+          }
+        ],
+        "temporalProgress": true
+      }
+    },
+    {
+      "phase": "studio-scene",
+      "schema": 1,
+      "captureFailed": false,
+      "captures": [
+        {
+          "role": "main-preview",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            442,
+            809,
+            1159,
+            1495,
+            1833,
+            2201,
+            2575,
+            2910
+          ]
+        }
+      ],
+      "processExitCode": 0,
+      "analysis": {
+        "passed": true,
+        "samples": [
+          {
+            "sample": 0,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              11,
+              27,
+              28,
+              28,
+              28
+            ]
+          },
+          {
+            "sample": 1,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              14,
+              31,
+              31,
+              31,
+              31
+            ]
+          },
+          {
+            "sample": 2,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              18,
+              34,
+              35,
+              35,
+              35
+            ]
+          },
+          {
+            "sample": 3,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              21,
+              38,
+              38,
+              38,
+              38
+            ]
+          },
+          {
+            "sample": 4,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              25,
+              1,
+              2,
+              2,
+              2
+            ]
+          },
+          {
+            "sample": 5,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              28,
+              5,
+              5,
+              5,
+              5
+            ]
+          },
+          {
+            "sample": 6,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              32,
+              8,
+              9,
+              9,
+              9
+            ]
+          },
+          {
+            "sample": 7,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              35,
+              12,
+              12,
+              12,
+              12
+            ]
+          }
+        ],
+        "temporalProgress": true
+      }
+    },
+    {
+      "phase": "studio-unrelated-revision",
+      "schema": 1,
+      "captureFailed": false,
+      "captures": [
+        {
+          "role": "main-preview",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            476,
+            825,
+            1165,
+            1508,
+            1873,
+            2240,
+            2575,
+            2927
+          ]
+        },
+        {
+          "role": "fixed-scene-1",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            454,
+            792,
+            1168,
+            1535,
+            1903,
+            2272,
+            2637,
+            2987
+          ]
+        }
+      ],
+      "processExitCode": 0,
+      "analysis": {
+        "passed": true,
+        "samples": [
+          {
+            "sample": 0,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              33,
+              9,
+              10,
+              10,
+              10
+            ]
+          },
+          {
+            "sample": 1,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              37,
+              13,
+              14,
+              14,
+              14
+            ]
+          },
+          {
+            "sample": 2,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              0,
+              16,
+              17,
+              17,
+              17
+            ]
+          },
+          {
+            "sample": 3,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              3,
+              20,
+              20,
+              20,
+              20
+            ]
+          },
+          {
+            "sample": 4,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              7,
+              23,
+              24,
+              24,
+              24
+            ]
+          },
+          {
+            "sample": 5,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              11,
+              27,
+              28,
+              28,
+              28
+            ]
+          },
+          {
+            "sample": 6,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              14,
+              30,
+              31,
+              31,
+              31
+            ]
+          },
+          {
+            "sample": 7,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              18,
+              34,
+              35,
+              35,
+              35
+            ]
+          }
+        ],
+        "temporalProgress": true
+      },
+      "projectorAnalysis": {
+        "fixed-scene-1": {
+          "passed": true,
+          "samples": [
+            {
+              "sample": 0,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                22,
+                39,
+                39,
+                39,
+                39
+              ]
+            },
+            {
+              "sample": 1,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                26,
+                2,
+                3,
+                3,
+                3
+              ]
+            },
+            {
+              "sample": 2,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                29,
+                6,
+                6,
+                6,
+                6
+              ]
+            },
+            {
+              "sample": 3,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                33,
+                9,
+                10,
+                10,
+                10
+              ]
+            },
+            {
+              "sample": 4,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                37,
+                13,
+                14,
+                14,
+                14
+              ]
+            },
+            {
+              "sample": 5,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                0,
+                17,
+                17,
+                17,
+                17
+              ]
+            },
+            {
+              "sample": 6,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                4,
+                20,
+                21,
+                21,
+                21
+              ]
+            },
+            {
+              "sample": 7,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                8,
+                24,
+                25,
+                25,
+                25
+              ]
+            }
+          ],
+          "temporalProgress": true
+        }
+      }
+    },
+    {
+      "phase": "studio-logout",
+      "schema": 1,
+      "captureFailed": false,
+      "captures": [
+        {
+          "role": "main-preview",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            451,
+            816,
+            1154,
+            1508,
+            1844,
+            2181,
+            2516,
+            2854
+          ]
+        }
+      ],
+      "processExitCode": 0,
+      "analysis": {
+        "passed": true,
+        "samples": [
+          {
+            "sample": 0,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": []
+          },
+          {
+            "sample": 1,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": []
+          },
+          {
+            "sample": 2,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": []
+          },
+          {
+            "sample": 3,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": []
+          },
+          {
+            "sample": 4,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": []
+          },
+          {
+            "sample": 5,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": []
+          },
+          {
+            "sample": 6,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": []
+          },
+          {
+            "sample": 7,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": []
+          }
+        ],
+        "temporalProgress": true
+      }
+    },
+    {
+      "phase": "studio-restored",
+      "schema": 1,
+      "captureFailed": false,
+      "captures": [
+        {
+          "role": "main-preview",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            468,
+            803,
+            1139,
+            1480,
+            1829,
+            2166,
+            2503,
+            2842
+          ]
+        }
+      ],
+      "processExitCode": 0,
+      "analysis": {
+        "passed": true,
+        "samples": [
+          {
+            "sample": 0,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              28,
+              4,
+              6,
+              6,
+              6
+            ]
+          },
+          {
+            "sample": 1,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              32,
+              8,
+              10,
+              10,
+              10
+            ]
+          },
+          {
+            "sample": 2,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              35,
+              11,
+              13,
+              13,
+              13
+            ]
+          },
+          {
+            "sample": 3,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              38,
+              14,
+              16,
+              16,
+              16
+            ]
+          },
+          {
+            "sample": 4,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              2,
+              18,
+              20,
+              20,
+              20
+            ]
+          },
+          {
+            "sample": 5,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              5,
+              21,
+              23,
+              23,
+              23
+            ]
+          },
+          {
+            "sample": 6,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              9,
+              25,
+              27,
+              27,
+              27
+            ]
+          },
+          {
+            "sample": 7,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              12,
+              28,
+              30,
+              30,
+              30
+            ]
+          }
+        ],
+        "temporalProgress": true
+      }
+    },
+    {
+      "phase": "studio-changed",
+      "schema": 1,
+      "captureFailed": false,
+      "captures": [
+        {
+          "role": "main-preview",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            446,
+            795,
+            1132,
+            1469,
+            1837,
+            2175,
+            2510,
+            2862
+          ]
+        }
+      ],
+      "processExitCode": 0,
+      "analysis": {
+        "passed": true,
+        "samples": [
+          {
+            "sample": 0,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": []
+          },
+          {
+            "sample": 1,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": []
+          },
+          {
+            "sample": 2,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": []
+          },
+          {
+            "sample": 3,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": []
+          },
+          {
+            "sample": 4,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": []
+          },
+          {
+            "sample": 5,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": []
+          },
+          {
+            "sample": 6,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": []
+          },
+          {
+            "sample": 7,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": []
+          }
+        ],
+        "temporalProgress": true
+      }
+    },
+    {
+      "phase": "studio-current-revision",
+      "schema": 1,
+      "captureFailed": false,
+      "captures": [
+        {
+          "role": "main-preview",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            455,
+            795,
+            1131,
+            1481,
+            1820,
+            2156,
+            2491,
+            2832
+          ]
+        }
+      ],
+      "processExitCode": 0,
+      "analysis": {
+        "passed": true,
+        "samples": [
+          {
+            "sample": 0,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              6,
+              22,
+              24,
+              24,
+              24
+            ]
+          },
+          {
+            "sample": 1,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              10,
+              25,
+              27,
+              27,
+              27
+            ]
+          },
+          {
+            "sample": 2,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              13,
+              28,
+              30,
+              30,
+              30
+            ]
+          },
+          {
+            "sample": 3,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              17,
+              32,
+              34,
+              34,
+              34
+            ]
+          },
+          {
+            "sample": 4,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              20,
+              35,
+              37,
+              37,
+              37
+            ]
+          },
+          {
+            "sample": 5,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              23,
+              39,
+              1,
+              1,
+              1
+            ]
+          },
+          {
+            "sample": 6,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              27,
+              2,
+              4,
+              4,
+              4
+            ]
+          },
+          {
+            "sample": 7,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              30,
+              5,
+              7,
+              7,
+              7
+            ]
+          }
+        ],
+        "temporalProgress": true
+      }
+    },
+    {
+      "phase": "continuous-reordered",
+      "schema": 1,
+      "captureFailed": false,
+      "captures": [
+        {
+          "role": "main-preview",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            447,
+            814,
+            1154,
+            1488,
+            1844,
+            2211,
+            2553,
+            2919
+          ]
+        }
+      ],
+      "processExitCode": 0,
+      "analysis": {
+        "passed": true,
+        "samples": [
+          {
+            "sample": 0,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              6,
+              7,
+              7,
+              5,
+              30
+            ]
+          },
+          {
+            "sample": 1,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              10,
+              11,
+              11,
+              9,
+              34
+            ]
+          },
+          {
+            "sample": 2,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              13,
+              14,
+              14,
+              12,
+              37
+            ]
+          },
+          {
+            "sample": 3,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              17,
+              18,
+              18,
+              16,
+              0
+            ]
+          },
+          {
+            "sample": 4,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              20,
+              21,
+              21,
+              19,
+              4
+            ]
+          },
+          {
+            "sample": 5,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              24,
+              25,
+              25,
+              23,
+              8
+            ]
+          },
+          {
+            "sample": 6,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              27,
+              28,
+              28,
+              26,
+              11
+            ]
+          },
+          {
+            "sample": 7,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              31,
+              32,
+              32,
+              30,
+              15
+            ]
+          }
+        ],
+        "temporalProgress": true
+      }
+    },
+    {
+      "phase": "fixed-different-scenes",
+      "schema": 1,
+      "captureFailed": false,
+      "captures": [
+        {
+          "role": "main-preview",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            462,
+            830,
+            1195,
+            1563,
+            1932,
+            2297,
+            2633,
+            2986
+          ]
+        },
+        {
+          "role": "fixed-scene-1",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            454,
+            822,
+            1199,
+            1568,
+            1936,
+            2302,
+            2668,
+            3019
+          ]
+        },
+        {
+          "role": "fixed-scene-2",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            456,
+            826,
+            1176,
+            1542,
+            1911,
+            2278,
+            2645,
+            3013
+          ]
+        }
+      ],
+      "processExitCode": 0,
+      "analysis": {
+        "passed": true,
+        "samples": [
+          {
+            "sample": 0,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              23,
+              23,
+              23,
+              23,
+              23
+            ]
+          },
+          {
+            "sample": 1,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              27,
+              27,
+              27,
+              27,
+              27
+            ]
+          },
+          {
+            "sample": 2,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              31,
+              31,
+              31,
+              31,
+              31
+            ]
+          },
+          {
+            "sample": 3,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              34,
+              34,
+              34,
+              34,
+              34
+            ]
+          },
+          {
+            "sample": 4,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              38,
+              38,
+              38,
+              38,
+              38
+            ]
+          },
+          {
+            "sample": 5,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              2,
+              2,
+              2,
+              2,
+              2
+            ]
+          },
+          {
+            "sample": 6,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              5,
+              5,
+              5,
+              5,
+              5
+            ]
+          },
+          {
+            "sample": 7,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              9,
+              9,
+              9,
+              9,
+              9
+            ]
+          }
+        ],
+        "temporalProgress": true
+      },
+      "projectorAnalysis": {
+        "fixed-scene-1": {
+          "passed": true,
+          "samples": [
+            {
+              "sample": 0,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                13,
+                29,
+                31,
+                31,
+                30
+              ]
+            },
+            {
+              "sample": 1,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                17,
+                32,
+                34,
+                34,
+                33
+              ]
+            },
+            {
+              "sample": 2,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                21,
+                36,
+                38,
+                38,
+                37
+              ]
+            },
+            {
+              "sample": 3,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                24,
+                0,
+                2,
+                2,
+                1
+              ]
+            },
+            {
+              "sample": 4,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                28,
+                3,
+                5,
+                5,
+                4
+              ]
+            },
+            {
+              "sample": 5,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                32,
+                7,
+                9,
+                9,
+                8
+              ]
+            },
+            {
+              "sample": 6,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                35,
+                11,
+                13,
+                13,
+                12
+              ]
+            },
+            {
+              "sample": 7,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                39,
+                14,
+                16,
+                16,
+                15
+              ]
+            }
+          ],
+          "temporalProgress": true
+        },
+        "fixed-scene-2": {
+          "passed": true,
+          "samples": [
+            {
+              "sample": 0,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                20,
+                21,
+                21,
+                19,
+                4
+              ]
+            },
+            {
+              "sample": 1,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                24,
+                25,
+                25,
+                23,
+                7
+              ]
+            },
+            {
+              "sample": 2,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                27,
+                28,
+                28,
+                26,
+                11
+              ]
+            },
+            {
+              "sample": 3,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                31,
+                32,
+                32,
+                30,
+                14
+              ]
+            },
+            {
+              "sample": 4,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                34,
+                35,
+                35,
+                33,
+                18
+              ]
+            },
+            {
+              "sample": 5,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                38,
+                39,
+                39,
+                37,
+                22
+              ]
+            },
+            {
+              "sample": 6,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                2,
+                3,
+                3,
+                1,
+                25
+              ]
+            },
+            {
+              "sample": 7,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                5,
+                6,
+                6,
+                4,
+                29
+              ]
+            }
+          ],
+          "temporalProgress": true
+        }
+      }
+    },
+    {
+      "phase": "fixed-fullscreen",
+      "schema": 1,
+      "captureFailed": false,
+      "captures": [
+        {
+          "role": "main-preview",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            462,
+            828,
+            1194,
+            1561,
+            1928,
+            2293,
+            2629,
+            2994
+          ]
+        },
+        {
+          "role": "fixed-scene-fullscreen-1",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            436,
+            788,
+            1152,
+            1490,
+            1826,
+            2185,
+            2530,
+            2887
+          ]
+        },
+        {
+          "role": "fixed-scene-2",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            459,
+            827,
+            1191,
+            1560,
+            1923,
+            2290,
+            2657,
+            3025
+          ]
+        }
+      ],
+      "processExitCode": 0,
+      "analysis": {
+        "passed": true,
+        "samples": [
+          {
+            "sample": 0,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              34,
+              34,
+              34,
+              34,
+              34
+            ]
+          },
+          {
+            "sample": 1,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              38,
+              38,
+              38,
+              38,
+              38
+            ]
+          },
+          {
+            "sample": 2,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              2,
+              2,
+              2,
+              2,
+              2
+            ]
+          },
+          {
+            "sample": 3,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              5,
+              5,
+              5,
+              5,
+              5
+            ]
+          },
+          {
+            "sample": 4,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              9,
+              9,
+              9,
+              9,
+              9
+            ]
+          },
+          {
+            "sample": 5,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              13,
+              13,
+              13,
+              13,
+              13
+            ]
+          },
+          {
+            "sample": 6,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              16,
+              16,
+              16,
+              16,
+              16
+            ]
+          },
+          {
+            "sample": 7,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              20,
+              20,
+              20,
+              20,
+              20
+            ]
+          }
+        ],
+        "temporalProgress": true
+      },
+      "projectorAnalysis": {
+        "fixed-scene-fullscreen-1": {
+          "passed": true,
+          "samples": [
+            {
+              "sample": 0,
+              "passed": true,
+              "width": 1024,
+              "height": 768,
+              "counters": [
+                24,
+                0,
+                2,
+                2,
+                1
+              ]
+            },
+            {
+              "sample": 1,
+              "passed": true,
+              "width": 1024,
+              "height": 768,
+              "counters": [
+                28,
+                3,
+                5,
+                5,
+                4
+              ]
+            },
+            {
+              "sample": 2,
+              "passed": true,
+              "width": 1024,
+              "height": 768,
+              "counters": [
+                31,
+                7,
+                9,
+                9,
+                8
+              ]
+            },
+            {
+              "sample": 3,
+              "passed": true,
+              "width": 1024,
+              "height": 768,
+              "counters": [
+                35,
+                10,
+                12,
+                12,
+                11
+              ]
+            },
+            {
+              "sample": 4,
+              "passed": true,
+              "width": 1024,
+              "height": 768,
+              "counters": [
+                38,
+                14,
+                16,
+                16,
+                15
+              ]
+            },
+            {
+              "sample": 5,
+              "passed": true,
+              "width": 1024,
+              "height": 768,
+              "counters": [
+                2,
+                17,
+                19,
+                19,
+                18
+              ]
+            },
+            {
+              "sample": 6,
+              "passed": true,
+              "width": 1024,
+              "height": 768,
+              "counters": [
+                5,
+                21,
+                23,
+                23,
+                22
+              ]
+            },
+            {
+              "sample": 7,
+              "passed": true,
+              "width": 1024,
+              "height": 768,
+              "counters": [
+                9,
+                24,
+                26,
+                26,
+                25
+              ]
+            }
+          ],
+          "temporalProgress": true
+        },
+        "fixed-scene-2": {
+          "passed": true,
+          "samples": [
+            {
+              "sample": 0,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                30,
+                31,
+                31,
+                29,
+                13
+              ]
+            },
+            {
+              "sample": 1,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                33,
+                34,
+                34,
+                32,
+                17
+              ]
+            },
+            {
+              "sample": 2,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                37,
+                38,
+                38,
+                36,
+                21
+              ]
+            },
+            {
+              "sample": 3,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                1,
+                2,
+                2,
+                0,
+                24
+              ]
+            },
+            {
+              "sample": 4,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                4,
+                5,
+                5,
+                3,
+                28
+              ]
+            },
+            {
+              "sample": 5,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                8,
+                9,
+                9,
+                7,
+                32
+              ]
+            },
+            {
+              "sample": 6,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                12,
+                13,
+                13,
+                11,
+                35
+              ]
+            },
+            {
+              "sample": 7,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                15,
+                16,
+                16,
+                14,
+                39
+              ]
+            }
+          ],
+          "temporalProgress": true
+        }
+      }
+    },
+    {
+      "phase": "fixed-one-closed",
+      "schema": 1,
+      "captureFailed": false,
+      "captures": [
+        {
+          "role": "main-preview",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            481,
+            847,
+            1192,
+            1559,
+            1927,
+            2277,
+            2613,
+            2954
+          ]
+        },
+        {
+          "role": "fixed-scene-2",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            443,
+            811,
+            1188,
+            1556,
+            1923,
+            2290,
+            2641,
+            2978
+          ]
+        }
+      ],
+      "processExitCode": 0,
+      "analysis": {
+        "passed": true,
+        "samples": [
+          {
+            "sample": 0,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          {
+            "sample": 1,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              3,
+              3,
+              3,
+              3,
+              3
+            ]
+          },
+          {
+            "sample": 2,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              7,
+              7,
+              7,
+              7,
+              7
+            ]
+          },
+          {
+            "sample": 3,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              10,
+              10,
+              10,
+              10,
+              10
+            ]
+          },
+          {
+            "sample": 4,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              14,
+              14,
+              14,
+              14,
+              14
+            ]
+          },
+          {
+            "sample": 5,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              18,
+              18,
+              18,
+              18,
+              18
+            ]
+          },
+          {
+            "sample": 6,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              21,
+              21,
+              21,
+              21,
+              21
+            ]
+          },
+          {
+            "sample": 7,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              24,
+              24,
+              24,
+              24,
+              24
+            ]
+          }
+        ],
+        "temporalProgress": true
+      },
+      "projectorAnalysis": {
+        "fixed-scene-2": {
+          "passed": true,
+          "samples": [
+            {
+              "sample": 0,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                5,
+                6,
+                6,
+                4,
+                29
+              ]
+            },
+            {
+              "sample": 1,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                9,
+                10,
+                10,
+                8,
+                33
+              ]
+            },
+            {
+              "sample": 2,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                13,
+                14,
+                14,
+                12,
+                36
+              ]
+            },
+            {
+              "sample": 3,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                16,
+                17,
+                17,
+                15,
+                0
+              ]
+            },
+            {
+              "sample": 4,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                20,
+                21,
+                21,
+                19,
+                4
+              ]
+            },
+            {
+              "sample": 5,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                24,
+                25,
+                25,
+                23,
+                7
+              ]
+            },
+            {
+              "sample": 6,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                27,
+                28,
+                28,
+                26,
+                11
+              ]
+            },
+            {
+              "sample": 7,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                31,
+                32,
+                32,
+                30,
+                14
+              ]
+            }
+          ],
+          "temporalProgress": true
+        }
+      }
+    },
+    {
+      "phase": "fixed-all-closed",
+      "schema": 1,
+      "captureFailed": false,
+      "captures": [
+        {
+          "role": "main-preview",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            463,
+            834,
+            1201,
+            1537,
+            1888,
+            2224,
+            2561,
+            2927
+          ]
+        }
+      ],
+      "processExitCode": 0,
+      "analysis": {
+        "passed": true,
+        "samples": [
+          {
+            "sample": 0,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              1,
+              16,
+              18,
+              18,
+              17
+            ]
+          },
+          {
+            "sample": 1,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              5,
+              20,
+              22,
+              22,
+              21
+            ]
+          },
+          {
+            "sample": 2,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              8,
+              24,
+              26,
+              26,
+              25
+            ]
+          },
+          {
+            "sample": 3,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              12,
+              27,
+              29,
+              29,
+              28
+            ]
+          },
+          {
+            "sample": 4,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              15,
+              31,
+              33,
+              33,
+              32
+            ]
+          },
+          {
+            "sample": 5,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              19,
+              34,
+              36,
+              36,
+              35
+            ]
+          },
+          {
+            "sample": 6,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              22,
+              37,
+              39,
+              39,
+              38
+            ]
+          },
+          {
+            "sample": 7,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              26,
+              1,
+              3,
+              3,
+              2
+            ]
+          }
+        ],
+        "temporalProgress": true
+      }
+    },
+    {
+      "phase": "program-before-take",
+      "schema": 1,
+      "captureFailed": false,
+      "captures": [
+        {
+          "role": "main-preview",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            459,
+            811,
+            1159,
+            1522,
+            1890,
+            2258,
+            2623,
+            2992
+          ]
+        },
+        {
+          "role": "program-projector",
+          "captureFailed": false,
+          "sampleCount": 8,
+          "sampleElapsedMs": [
+            444,
+            836,
+            1206,
+            1571,
+            1939,
+            2303,
+            2669,
+            3039
+          ]
+        }
+      ],
+      "processExitCode": 0,
+      "analysis": {
+        "passed": true,
+        "samples": [
+          {
+            "sample": 0,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              24,
+              39,
+              1,
+              1,
+              0
+            ]
+          },
+          {
+            "sample": 1,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              27,
+              3,
+              5,
+              5,
+              4
+            ]
+          },
+          {
+            "sample": 2,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              31,
+              6,
+              8,
+              8,
+              7
+            ]
+          },
+          {
+            "sample": 3,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              34,
+              10,
+              12,
+              12,
+              11
+            ]
+          },
+          {
+            "sample": 4,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              38,
+              14,
+              16,
+              16,
+              15
+            ]
+          },
+          {
+            "sample": 5,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              2,
+              17,
+              19,
+              19,
+              18
+            ]
+          },
+          {
+            "sample": 6,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              6,
+              21,
+              23,
+              23,
+              22
+            ]
+          },
+          {
+            "sample": 7,
+            "passed": true,
+            "width": 696,
+            "height": 683,
+            "counters": [
+              9,
+              25,
+              27,
+              27,
+              26
+            ]
+          }
+        ],
+        "temporalProgress": true
+      },
+      "projectorAnalysis": {
+        "program-projector": {
+          "passed": true,
+          "samples": [
+            {
+              "sample": 0,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                14,
+                29,
+                31,
+                31,
+                30
+              ]
+            },
+            {
+              "sample": 1,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                18,
+                33,
+                35,
+                35,
+                34
+              ]
+            },
+            {
+              "sample": 2,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                22,
+                37,
+                39,
+                39,
+                38
+              ]
+            },
+            {
+              "sample": 3,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                25,
+                1,
+                3,
+                3,
+                2
+              ]
+            },
+            {
+              "sample": 4,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                29,
+                4,
+                6,
+                6,
+                5
+              ]
+            },
+            {
+              "sample": 5,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                33,
+                8,
+                10,
+                10,
+                9
+              ]
+            },
+            {
+              "sample": 6,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                36,
+                12,
+                14,
+                14,
+                13
+              ]
+            },
+            {
+              "sample": 7,
+              "passed": true,
+              "width": 968,
+              "height": 689,
+              "counters": [
+                0,
+                15,
+                17,
+                17,
+                16
+              ]
+            }
+          ],
+          "temporalProgress": true
+        }
+      }
+    }
+  ],
+  "lastUiFailure": {
+    "stage": "video-progress",
+    "code": "verify-video-input-progress",
+    "exceptionType": "System.Management.Automation.RuntimeException"
+  },
+  "inputFault": {
+    "interruptedInputs": 1,
+    "stallObservedMs": 8844,
+    "recoveryAndPixelObservedMs": 11859,
+    "sameSourceUuids": true
+  },
+  "lastCheckpoint": "program-runtime-receipt",
+  "failurePhase": "native-program-take",
+  "entryExitCode": null,
+  "currentBootFailure": "",
+  "serviceExits": [
+    {
+      "name": "control",
+      "running": true,
+      "exitCode": null
+    },
+    {
+      "name": "frontend",
+      "running": true,
+      "exitCode": null
+    },
+    {
+      "name": "accounts-and-registry",
+      "running": true,
+      "exitCode": null
+    }
+  ],
+  "observedState": {
+    "phase": "graph-applied",
+    "mediaSources": 7,
+    "sessionBound": true,
+    "catalogItems": 5,
+    "selectionIndices": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "previewLocked": true,
+    "lastRetirementMs": 2,
+    "mainGeneration": 22,
+    "studioRevision": -1,
+    "renderer": {
+      "adapterLuid": "00000000:00007333",
+      "api": "d3d11",
+      "available": true,
+      "dedicatedVideoMemoryCapacityBytes": 0,
+      "deviceId": 140,
+      "hardwareDecodeVerified": false,
+      "software": false,
+      "vendorId": 5140
+    },
+    "program": {
+      "mediaSources": 1,
+      "monitorIsProgram": false,
+      "sceneUuid": "34791edf-376c-4d6e-8c3c-cb01b89c51dd",
+      "studioMode": true
+    },
+    "programSceneId": "fixture-alt",
+    "programSceneFingerprint": "be9d6ec32b36dd19f82bf3dd57c8c78a872b343a091650146b76d85c41d34fc4",
+    "programApplyState": "applied",
+    "startupStudioDeferred": true,
+    "watchingSavedScene": false,
+    "projectorCount": 0,
+    "windowRoles": [
+      "main-preview",
+      "program-projector"
+    ]
+  },
+  "currentBootObsLogPresent": true,
+  "currentBootObsMarkers": {
+    "Switched to Preview/Program mode": 1,
+    "Switched to regular Preview mode": 0,
+    "Failed to initialize": 1,
+    "Failed to create": 0,
+    "QWidget": 1,
+    "QObject": 0,
+    "QLayout": 0,
+    "Shutting down": 0,
+    "All scene data cleared": 1,
+    "Number of remaining allocations": 0
+  },
+  "privateLogMarkers": []
+}

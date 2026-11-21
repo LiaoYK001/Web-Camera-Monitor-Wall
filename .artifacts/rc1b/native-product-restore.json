@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "kind": "native-product-restore-isolation",
+  "sourceRevision": "419a72cbbdeeca4a458e69f6596bfc877b941ab1",
+  "passed": true,
+  "publicationForbidden": false,
+  "fullFeatureMigrationQualified": false,
+  "nativeMenuBypassesQualified": false,
+  "checks": [
+    "exact-unguarded-frontend-owned-by-job",
+    "unguarded-saved-collection-rtsp-request-observed",
+    "same-saved-collection-performs-rtsp-io-without-product-guard",
+    "actual-selected-collection-refused-before-load",
+    "zero-preauthentication-rtsp-requests",
+    "locked-ui-zero-media-and-no-session",
+    "refused-collection-preserved",
+    "normal-product-shutdown",
+    "external-obs-profile-unchanged"
+  ],
+  "fixtureSha256": "046d20a6657139a57adbdf784064069ce157def6e14bcc48d564df2412896470",
+  "controlCloseWindows": 1,
+  "unguardedRtspRequests": 2,
+  "productCloseWindows": 1
+}

@@ -78,6 +78,29 @@ def inspect(args, report):
     ]
     if "programTrackGain" in entry:
         report["programTrackGain"] = entry["programTrackGain"]
+    failed_rows = [row for row in reports.values() if row.get("passed") is False]
+    if failed_rows:
+        # A refused product control has three different meanings, and the receipts now
+        # carry the evidence that separates them: the handle verdict, whether this boot's
+        # own state observation was readable, and how long the product held its UI thread.
+        row = failed_rows[0]
+        attribution = {key: row.get(key) for key in
+                       ("lastUiFailure", "lastUiUnavailable", "lastStateObservation")
+                       if row.get(key) is not None}
+        waits = row.get("productControlWaits")
+        if isinstance(waits, list) and waits:
+            attribution["lastControlWait"] = waits[-1]
+        snapshot = row.get("observedState")
+        if isinstance(snapshot, dict):
+            output = snapshot.get("programOutput")
+            output = output if isinstance(output, dict) else {}
+            attribution["stateSnapshot"] = {key: snapshot.get(key) for key in
+                                            ("uiStallMs", "uiStallMaxMs", "uiStallAtMs", "publishedAtMs")
+                                            if snapshot.get(key) is not None}
+            if isinstance(output.get("teardown"), dict):
+                attribution["stateSnapshot"]["teardown"] = output["teardown"]
+        if attribution:
+            report["uiAttribution"] = attribution
     if run["conclusion"] != "success":
         return "inspect-first-failure" if run["conclusion"] == "failure" else "inspect-ci-conclusion", 3
 

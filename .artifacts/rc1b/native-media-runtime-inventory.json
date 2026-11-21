@@ -1,0 +1,574 @@
+{
+  "schema": 1,
+  "kind": "native-runtime-inventory",
+  "version": "5.0.0-rc.1",
+  "scope": "default portable prototype runtime (development-only)",
+  "measurementPhase": "staged-before-first-start",
+  "files": 1546,
+  "totalBytes": 99439738,
+  "maxRuntimeBytes": 104857600,
+  "withinBudget": true,
+  "groups": {
+    "bin": 57156608,
+    "qt": 25835008,
+    "plugins": 7632108,
+    "data": 423075,
+    "licenses": 30991,
+    "other": 50457
+  },
+  "locales": {
+    "files": 1169,
+    "bytes": 8311491,
+    "languages": [
+      "af-ZA.ini",
+      "an-ES.ini",
+      "ar-SA.ini",
+      "az-AZ.ini",
+      "ba-RU.ini",
+      "be-BY.ini",
+      "bem-ZM.ini",
+      "bg-BG.ini",
+      "bn-BD.ini",
+      "ca-ES.ini",
+      "cs-CZ.ini",
+      "da-DK.ini",
+      "de-DE.ini",
+      "el-GR.ini",
+      "en-GB.ini",
+      "en-US.ini",
+      "eo-UY.ini",
+      "es-ES.ini",
+      "et-EE.ini",
+      "eu-ES.ini",
+      "fa-IR.ini",
+      "fi-FI.ini",
+      "fil-PH.ini",
+      "fr-FR.ini",
+      "gd-GB.ini",
+      "gl-ES.ini",
+      "he-IL.ini",
+      "hi-IN.ini",
+      "hr-HR.ini",
+      "hu-HU.ini",
+      "hy-AM.ini",
+      "id-ID.ini",
+      "is-IS.ini",
+      "it-IT.ini",
+      "ja-JP.ini",
+      "ka-GE.ini",
+      "kaa.ini",
+      "kab-KAB.ini",
+      "kmr-TR.ini",
+      "ko-KR.ini",
+      "lo-LA.ini",
+      "lt-LT.ini",
+      "lv-LV.ini",
+      "mn-MN.ini",
+      "ms-MY.ini",
+      "nb-NO.ini",
+      "nl-NL.ini",
+      "nn-NO.ini",
+      "oc-FR.ini",
+      "pa-IN.ini",
+      "pl-PL.ini",
+      "pt-BR.ini",
+      "pt-PT.ini",
+      "ro-RO.ini",
+      "ru-RU.ini",
+      "si-LK.ini",
+      "sk-SK.ini",
+      "sl-SI.ini",
+      "sq-AL.ini",
+      "sr-CS.ini",
+      "sr-SP.ini",
+      "sv-SE.ini",
+      "szl-PL.ini",
+      "ta-IN.ini",
+      "te-IN.ini",
+      "th-TH.ini",
+      "tl-PH.ini",
+      "tr-TR.ini",
+      "tt-RU.ini",
+      "ug-CN.ini",
+      "uk-UA.ini",
+      "ur-PK.ini",
+      "vi-VN.ini",
+      "zh-CN.ini",
+      "zh-TW.ini"
+    ]
+  },
+  "binaries": 66,
+  "vendors": {
+    "FFmpeg": 7,
+    "Qt": 19,
+    "third-party": 5,
+    "OBS Studio": 34,
+    "x264": 1
+  },
+  "components": [
+    {
+      "path": "bin/64bit/avcodec-61.dll",
+      "bytes": 37852672,
+      "sha256": "b3b9125731fcfd0664e667175177a45cb6c5dce1c7f44cdfb45648211033eb5d",
+      "vendor": "FFmpeg",
+      "licenseHint": "LGPL-2.1-or-later (build may carry GPL parts)"
+    },
+    {
+      "path": "bin/64bit/avdevice-61.dll",
+      "bytes": 75264,
+      "sha256": "815a518d5628ef1ab6d5e0ba2b8f63fe2d1aa3b941f3866c84ef9864790452c8",
+      "vendor": "FFmpeg",
+      "licenseHint": "LGPL-2.1-or-later (build may carry GPL parts)"
+    },
+    {
+      "path": "bin/64bit/avfilter-10.dll",
+      "bytes": 4063232,
+      "sha256": "81cc66b18a249b148ecb893e283e2357aac0e962957d9a18f87747ed4bb895e3",
+      "vendor": "FFmpeg",
+      "licenseHint": "LGPL-2.1-or-later (build may carry GPL parts)"
+    },
+    {
+      "path": "bin/64bit/avformat-61.dll",
+      "bytes": 2371072,
+      "sha256": "1329e6ba816674c317459b6be520c6c8747246a15e745f45a7eb44ab8d0358e7",
+      "vendor": "FFmpeg",
+      "licenseHint": "LGPL-2.1-or-later (build may carry GPL parts)"
+    },
+    {
+      "path": "bin/64bit/avutil-59.dll",
+      "bytes": 902144,
+      "sha256": "b2267796afba97f08573b7c5d435f1b7c4f79c4d93130b9293851eb600aea84c",
+      "vendor": "FFmpeg",
+      "licenseHint": "LGPL-2.1-or-later (build may carry GPL parts)"
+    },
+    {
+      "path": "bin/64bit/iconengines/qsvgicon.dll",
+      "bytes": 64512,
+      "sha256": "dec27f9b32bcdb2f3bbc434d3c966c70e06bd238b710e0d0683e6a663ba9f484",
+      "vendor": "Qt",
+      "licenseHint": "LGPL-3.0-only"
+    },
+    {
+      "path": "bin/64bit/imageformats/qgif.dll",
+      "bytes": 35840,
+      "sha256": "67b472745e19a2c90d0b68f8e4533ef3a2428c4c93d0bd8f318d819f4280618f",
+      "vendor": "Qt",
+      "licenseHint": "LGPL-3.0-only"
+    },
+    {
+      "path": "bin/64bit/imageformats/qicns.dll",
+      "bytes": 43520,
+      "sha256": "436c0d9e702401298822febd5126407f32aea1d91a4115545f8b5acb6bd95123",
+      "vendor": "Qt",
+      "licenseHint": "LGPL-3.0-only"
+    },
+    {
+      "path": "bin/64bit/imageformats/qico.dll",
+      "bytes": 34304,
+      "sha256": "65f769250c3b25d653c1abb7c27d45aa7fe761cd468fb5b99eb33872417fe76b",
+      "vendor": "Qt",
+      "licenseHint": "LGPL-3.0-only"
+    },
+    {
+      "path": "bin/64bit/imageformats/qjpeg.dll",
+      "bytes": 567296,
+      "sha256": "b0c25545ff4f54bd3260006c8365672b6ffbdbf5dbba9ec916160a0b15273e81",
+      "vendor": "Qt",
+      "licenseHint": "LGPL-3.0-only"
+    },
+    {
+      "path": "bin/64bit/imageformats/qsvg.dll",
+      "bytes": 26624,
+      "sha256": "df1575c1e5caa08a4d9743a26b19897f4d70d8a90134517f0bf01955d8b36e67",
+      "vendor": "Qt",
+      "licenseHint": "LGPL-3.0-only"
+    },
+    {
+      "path": "bin/64bit/imageformats/qtga.dll",
+      "bytes": 26112,
+      "sha256": "384b0e05a00ad06ba5be0ca7f1ea2c8030623be230183f63fa4be5d9568ff4ac",
+      "vendor": "Qt",
+      "licenseHint": "LGPL-3.0-only"
+    },
+    {
+      "path": "bin/64bit/imageformats/qtiff.dll",
+      "bytes": 427008,
+      "sha256": "915ec47f2b66fa8054fb3e747e373e89b80b0a2096ce6dffd55bca71ea504dac",
+      "vendor": "Qt",
+      "licenseHint": "LGPL-3.0-only"
+    },
+    {
+      "path": "bin/64bit/imageformats/qwbmp.dll",
+      "bytes": 24576,
+      "sha256": "36237cf5ba7771dc276d1e6c50f57f086c968e1bdc9eab6e79c69e487e04a008",
+      "vendor": "Qt",
+      "licenseHint": "LGPL-3.0-only"
+    },
+    {
+      "path": "bin/64bit/imageformats/qwebp.dll",
+      "bytes": 541696,
+      "sha256": "b8b691a06eefe7f2ca61caf6111d47308cc68a1b93c8b1cf8fec30405e843895",
+      "vendor": "Qt",
+      "licenseHint": "LGPL-3.0-only"
+    },
+    {
+      "path": "bin/64bit/libcurl.dll",
+      "bytes": 610816,
+      "sha256": "843cebfe2e4313de348f0caa62ca41205e365ae228ab32c4fd4c0e92ab3f1b37",
+      "vendor": "third-party",
+      "licenseHint": "see licenses/"
+    },
+    {
+      "path": "bin/64bit/libobs-d3d11.dll",
+      "bytes": 187904,
+      "sha256": "3aa2d863ad5be09e4bd73ce8632781efc3c232480af70129d59dee48c1e73da4",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later"
+    },
+    {
+      "path": "bin/64bit/libobs-opengl.dll",
+      "bytes": 240128,
+      "sha256": "0d0c7fc7bf6874dcbeae9981aa002b6ff432260a4c9cc8a671d2760b393c2af3",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later"
+    },
+    {
+      "path": "bin/64bit/libobs-winrt.dll",
+      "bytes": 74752,
+      "sha256": "f809bf144d15bce428f400b3e8df9db590e2ba3b9afb8548093175724c9a36ce",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later"
+    },
+    {
+      "path": "bin/64bit/librist.dll",
+      "bytes": 211456,
+      "sha256": "03b61c4dea2954c7865fb5038f4ddeb9c3ce60f97c33f7c364979c6d086dad0d",
+      "vendor": "third-party",
+      "licenseHint": "see licenses/"
+    },
+    {
+      "path": "bin/64bit/libx264-164.dll",
+      "bytes": 2224640,
+      "sha256": "c021b729db548f5bff3cc272514cccaa6d515f36628d3dbccf6d0fdc9dc08448",
+      "vendor": "x264",
+      "licenseHint": "GPL-2.0-or-later"
+    },
+    {
+      "path": "bin/64bit/obs-amf-test.exe",
+      "bytes": 18944,
+      "sha256": "ff7bcdfd3b6f316519d5879f00fd44833ef23f61f602d4f247842d6a3eace397",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later"
+    },
+    {
+      "path": "bin/64bit/obs-ffmpeg-mux.exe",
+      "bytes": 26624,
+      "sha256": "fee8a9a18a764a263a12fa9fed54d088900be8fd5b7a72a8e243d85629656dd5",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later"
+    },
+    {
+      "path": "bin/64bit/obs-frontend-api.dll",
+      "bytes": 32256,
+      "sha256": "c0b7625c092d8097f92a1fdfcda72353aba9baca5a43416d06a1a96bde8652a8",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later"
+    },
+    {
+      "path": "bin/64bit/obs-nvenc-test.exe",
+      "bytes": 85504,
+      "sha256": "5e1e123ee59db6574d70e71e0adc8aec7c36c8c17d1cfd75ef3f71b75b6fa74d",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later"
+    },
+    {
+      "path": "bin/64bit/obs-qsv-test.exe",
+      "bytes": 289792,
+      "sha256": "0f9b3cc7372c40d9920985aa7e28d9ad4075a863d86ab2ae67b99294dcc65df4",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later"
+    },
+    {
+      "path": "bin/64bit/obs.dll",
+      "bytes": 1167872,
+      "sha256": "b8716c80f302913ccaf89b066eaf8f07a42c2dd5e7025c437879b59ad412fa69",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later"
+    },
+    {
+      "path": "bin/64bit/obs64.exe",
+      "bytes": 5095936,
+      "sha256": "f01e1d46ddd39ee81a01c2e935933c1b7da689ff085eb85534f2b35aa72ba7a4",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later"
+    },
+    {
+      "path": "bin/64bit/platforms/qminimal.dll",
+      "bytes": 46080,
+      "sha256": "d9511320a05b35b3f566fd7ed95a3f7fe42fc69255e3a90339a3f4f163e987a7",
+      "vendor": "Qt",
+      "licenseHint": "LGPL-3.0-only"
+    },
+    {
+      "path": "bin/64bit/platforms/qwindows.dll",
+      "bytes": 888320,
+      "sha256": "95247b1b4ce767c3cfb054ed1eb5b35328b546ef9a4ace98a9be9e8b019ea99f",
+      "vendor": "Qt",
+      "licenseHint": "LGPL-3.0-only"
+    },
+    {
+      "path": "bin/64bit/Qt6Core.dll",
+      "bytes": 6070784,
+      "sha256": "a809075aff6a018eed2076a95fc9f9215c0f129c49cb48f07f73938c3105af1b",
+      "vendor": "Qt",
+      "licenseHint": "LGPL-3.0-only"
+    },
+    {
+      "path": "bin/64bit/Qt6Gui.dll",
+      "bytes": 7989248,
+      "sha256": "7d952b6d6e704341cc5c113267257cffab419b5e662d7abb72ab6f2d25d165da",
+      "vendor": "Qt",
+      "licenseHint": "LGPL-3.0-only"
+    },
+    {
+      "path": "bin/64bit/Qt6Network.dll",
+      "bytes": 1730048,
+      "sha256": "a2b03152d764495cb0e616d19d8b1b673b770f3a7a36f9a1cb2d3b34291656c0",
+      "vendor": "Qt",
+      "licenseHint": "LGPL-3.0-only"
+    },
+    {
+      "path": "bin/64bit/Qt6Svg.dll",
+      "bytes": 510464,
+      "sha256": "9e2e9ae418f8547befbc813190e2e2d37163d8dfe0460657ae71b7a56742c406",
+      "vendor": "Qt",
+      "licenseHint": "LGPL-3.0-only"
+    },
+    {
+      "path": "bin/64bit/Qt6Widgets.dll",
+      "bytes": 6455808,
+      "sha256": "d1ec8184aa5b4f96bfe7c0c08d5632c6bdb74aa9abf6afdbd0a838ab38f5a82d",
+      "vendor": "Qt",
+      "licenseHint": "LGPL-3.0-only"
+    },
+    {
+      "path": "bin/64bit/Qt6Xml.dll",
+      "bytes": 142336,
+      "sha256": "3f98dd1fe0cb31d3b93b9a35a8d1dff944d15e8a580f2d36d40659576ce9d785",
+      "vendor": "Qt",
+      "licenseHint": "LGPL-3.0-only"
+    },
+    {
+      "path": "bin/64bit/srt.dll",
+      "bytes": 737792,
+      "sha256": "d6f7ac6ec72a85cef0b08721bf4eb39c946fa29ef393076a13fb0e65f878009e",
+      "vendor": "third-party",
+      "licenseHint": "see licenses/"
+    },
+    {
+      "path": "bin/64bit/styles/qmodernwindowsstyle.dll",
+      "bytes": 210432,
+      "sha256": "37096af126c3c93bbbba6cff3fd9431278ffa1f1ea19ea9d7f7477bf97654446",
+      "vendor": "Qt",
+      "licenseHint": "LGPL-3.0-only"
+    },
+    {
+      "path": "bin/64bit/swresample-5.dll",
+      "bytes": 124416,
+      "sha256": "1863b4f8f550c2f3fe9c6ddb4585d994a618a514a562bf18c00318a202d6e135",
+      "vendor": "FFmpeg",
+      "licenseHint": "LGPL-2.1-or-later (build may carry GPL parts)"
+    },
+    {
+      "path": "bin/64bit/swscale-8.dll",
+      "bytes": 622592,
+      "sha256": "25eebde4b974b12772904e2b891f06b6a14a08afc87e8d785a235ade1362968a",
+      "vendor": "FFmpeg",
+      "licenseHint": "LGPL-2.1-or-later (build may carry GPL parts)"
+    },
+    {
+      "path": "bin/64bit/w32-pthreads.dll",
+      "bytes": 55808,
+      "sha256": "ca055eb503fe82ece1bced7a3be08d1ae4c50f4e75f6910fc2bbbc7ffd14f752",
+      "vendor": "third-party",
+      "licenseHint": "see licenses/"
+    },
+    {
+      "path": "bin/64bit/zlib.dll",
+      "bytes": 84992,
+      "sha256": "2db56f04464750f9aa26d03bd4a77f767c5c7597e59a3e52179c6bb916c597a7",
+      "vendor": "third-party",
+      "licenseHint": "see licenses/"
+    },
+    {
+      "path": "data/obs-plugins/win-capture/get-graphics-offsets32.exe",
+      "bytes": 120320,
+      "sha256": "d64459d87fd179eebda530e102bf1eac9d18f1775827ebd0a64f5b0e3ece6a87",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later (plug-in-specific terms apply)"
+    },
+    {
+      "path": "data/obs-plugins/win-capture/get-graphics-offsets64.exe",
+      "bytes": 144896,
+      "sha256": "8c1647465a7f019df5a25fb51d41d928a894dafeffef46ec17de14b5ef417adf",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later (plug-in-specific terms apply)"
+    },
+    {
+      "path": "data/obs-plugins/win-capture/graphics-hook32.dll",
+      "bytes": 241152,
+      "sha256": "c562254a883d8ca3c6a159c5eb2ef4738391ab9d7198f335a83dd8e50453134c",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later (plug-in-specific terms apply)"
+    },
+    {
+      "path": "data/obs-plugins/win-capture/graphics-hook64.dll",
+      "bytes": 293888,
+      "sha256": "3f33e4d2e9a87103cb60b95e5afa5801f6e2ac60b596dbe0b92051b1a15401f7",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later (plug-in-specific terms apply)"
+    },
+    {
+      "path": "data/obs-plugins/win-capture/inject-helper32.exe",
+      "bytes": 94720,
+      "sha256": "e63d9d10a9f82fb0198ceddeced106f9db1b59a2206973c0236ab2339bb283d3",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later (plug-in-specific terms apply)"
+    },
+    {
+      "path": "data/obs-plugins/win-capture/inject-helper64.exe",
+      "bytes": 113664,
+      "sha256": "435a900995e7366f41d86c90089526262622d6bd20400d810f6598e8daddb3b1",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later (plug-in-specific terms apply)"
+    },
+    {
+      "path": "obs-plugins/64bit/coreaudio-encoder.dll",
+      "bytes": 57344,
+      "sha256": "f577b8ae44e55524202080ad3974fb62ffa0c5c62c4d4e6dc59696ef4dd90c8d",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later (plug-in-specific terms apply)"
+    },
+    {
+      "path": "obs-plugins/64bit/frontend-tools.dll",
+      "bytes": 321024,
+      "sha256": "6506103a46067ffdcfb0a9adcb9625cb01c1c1d147a6677de2d692dee1250170",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later (plug-in-specific terms apply)"
+    },
+    {
+      "path": "obs-plugins/64bit/image-source.dll",
+      "bytes": 51200,
+      "sha256": "0d05547f0ec67d9d0e6f20ab4c7f37121dd96aaa415c67454c9fae82f9d64007",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later (plug-in-specific terms apply)"
+    },
+    {
+      "path": "obs-plugins/64bit/nv-filters.dll",
+      "bytes": 60416,
+      "sha256": "26d0e3d44b55e996830907c08a993fe6281e04e561bc5ce02ba621b759979f9f",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later (plug-in-specific terms apply)"
+    },
+    {
+      "path": "obs-plugins/64bit/obs-ffmpeg.dll",
+      "bytes": 266240,
+      "sha256": "4d6a94b7e23a540ed2df52cee693ec5d96b8467071de8c3f1d1911b9688b1862",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later (plug-in-specific terms apply)"
+    },
+    {
+      "path": "obs-plugins/64bit/obs-filters.dll",
+      "bytes": 293888,
+      "sha256": "77d6d6a1b3e7e7fad0dc9777fe7360de6a62d6ab9ae1d8854781b2c212a805b3",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later (plug-in-specific terms apply)"
+    },
+    {
+      "path": "obs-plugins/64bit/obs-nvenc.dll",
+      "bytes": 67584,
+      "sha256": "1eceb4e907c60265ab99f27ca84aa05b51710d549e3d5ce01fa80708bade003c",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later (plug-in-specific terms apply)"
+    },
+    {
+      "path": "obs-plugins/64bit/obs-outputs.dll",
+      "bytes": 903168,
+      "sha256": "d3b90a82becc8c46e17e85b846d7390479f1c2079c4b9149763b853633cb7de2",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later (plug-in-specific terms apply)"
+    },
+    {
+      "path": "obs-plugins/64bit/obs-qsv11.dll",
+      "bytes": 333312,
+      "sha256": "4013b21d49f03ce8b6321d513af5d9bbb36e779b3ab092fb8879374c7f503f8a",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later (plug-in-specific terms apply)"
+    },
+    {
+      "path": "obs-plugins/64bit/obs-text.dll",
+      "bytes": 45056,
+      "sha256": "2f04b39b7cb8942f057390cc335a11e10fe1159bb79a467e783c67cfeb81027b",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later (plug-in-specific terms apply)"
+    },
+    {
+      "path": "obs-plugins/64bit/obs-transitions.dll",
+      "bytes": 39424,
+      "sha256": "f439610024aa6386ca0eef78f93965d5d63970ea22cfcf12fb8208b25ab8605f",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later (plug-in-specific terms apply)"
+    },
+    {
+      "path": "obs-plugins/64bit/obs-x264.dll",
+      "bytes": 27648,
+      "sha256": "842c2c99e287e0dfc9316f98156d755f53f616931eb35484a39a5f90dda90ef4",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later (plug-in-specific terms apply)"
+    },
+    {
+      "path": "obs-plugins/64bit/rtmp-services.dll",
+      "bytes": 81920,
+      "sha256": "c54db21aeea47a805993b11011cb2aa09417257b9129a6a46cea612ac744f9a5",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later (plug-in-specific terms apply)"
+    },
+    {
+      "path": "obs-plugins/64bit/text-freetype2.dll",
+      "bytes": 646656,
+      "sha256": "4056be9f24c2a6e2fd7fe640379d9e2955d76e5ea706442068d714999baa4c41",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later (plug-in-specific terms apply)"
+    },
+    {
+      "path": "obs-plugins/64bit/webobs-native-host.dll",
+      "bytes": 399872,
+      "sha256": "191bddbe00c17ef38362eeb0e01d8c02d4d58db1f00d1328e0ce9ffe87396954",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later (plug-in-specific terms apply)"
+    },
+    {
+      "path": "obs-plugins/64bit/win-capture.dll",
+      "bytes": 132608,
+      "sha256": "30ca12d8dc5da3fe8071fac2b62bff58b57eba95c19e4b8973202b5ebca64a06",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later (plug-in-specific terms apply)"
+    },
+    {
+      "path": "obs-plugins/64bit/win-dshow.dll",
+      "bytes": 197120,
+      "sha256": "846c9c9fa03bdaf9deacb00fe0cce26bf0a20ea626ceb0b4fc599a82fb59334c",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later (plug-in-specific terms apply)"
+    },
+    {
+      "path": "obs-plugins/64bit/win-wasapi.dll",
+      "bytes": 69632,
+      "sha256": "44d429dd6b2a1edee43463fe2077e093a22adc7bcda91e94b2fe4d74f6093919",
+      "vendor": "OBS Studio",
+      "licenseHint": "GPL-2.0-or-later (plug-in-specific terms apply)"
+    }
+  ],
+  "forbiddenArtifacts": [],
+  "note": "vendor/licence hints are for review only; licenses/ is authoritative"
+}
