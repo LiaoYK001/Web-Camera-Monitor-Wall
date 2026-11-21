@@ -55,15 +55,21 @@ if str(mode) == "interrupt":
         return result
     os.replace = guarded
 elif str(mode) == "interrupt-native":
-    def guarded(source, destination):
-        result = original(source, destination)
-        if pathlib.Path(source) == native:
-            # The previous OBS profile has just moved aside and the configuration
-            # half has not landed yet: this is the other half of the swap window.
-            sentinel.write_text("native-swapped-out", encoding="utf-8")
-            time.sleep(30)
-        return result
-    os.replace = guarded
+    write_journal = module._write_journal
+    def guarded_journal(path, value):
+        write_journal(path, value)
+        if value.get("nativeRollback") is None:
+            return
+        # The previous OBS profile has moved aside and the journal now records
+        # both previous halves, while neither live path stands and the
+        # configuration half has not landed yet: this is the other half of the
+        # swap window. The sentinel must follow the fsync'ed journal write -
+        # pausing inside os.replace stopped the child before nativeRollback was
+        # persisted, so rc.72's kill lost the native reference instead of
+        # proving the product's prepared-state recovery.
+        sentinel.write_text("native-recorded", encoding="utf-8")
+        time.sleep(30)
+    module._write_journal = guarded_journal
 native = None if str(mode) == "config-only" else profile / "native-profile"
 try:
     module.restore(config_root, archive, key, sodium, True, native_profile=native)
@@ -150,17 +156,21 @@ def exercise(runtime, profile_parent, report):
         sentinel = private / "swap-sentinel.txt"
         restore_process, log = run_restore(runtime_python, runtime, profile, archive, key_file,
             sentinel, "interrupt", private)
-        wait_for(lambda: sentinel.is_file(), "restore did not land the configuration half", timeout=40)
-        journal = profile / backup.JOURNAL_NAME
-        assert journal.is_file(), "the restore journal did not survive the swap window"
-        payload = json.loads(journal.read_text(encoding="utf-8"))
-        assert payload.get("state") == "prepared", "journal is not the prepared swap state"
-        staged = Path(payload["nativeActivated"])
-        assert staged.is_dir(), "the pending OBS profile half was not staged"
-        assert not (native / NATIVE_MARKER).is_file(), "the OBS profile half already landed; not a mid-swap kill"
-        restore_process.kill()
-        restore_process.wait(timeout=30)
-        log.close()
+        try:
+            wait_for(lambda: sentinel.is_file(), "restore did not land the configuration half", timeout=40)
+            journal = profile / backup.JOURNAL_NAME
+            assert journal.is_file(), "the restore journal did not survive the swap window"
+            payload = json.loads(journal.read_text(encoding="utf-8"))
+            assert payload.get("state") == "prepared", "journal is not the prepared swap state"
+            staged = Path(payload["nativeActivated"])
+            assert staged.is_dir(), "the pending OBS profile half was not staged"
+            assert not (native / NATIVE_MARKER).is_file(), "the OBS profile half already landed; not a mid-swap kill"
+        finally:
+            # rc.72 proved that an assertion failing while the sleeping child still
+            # holds its log turns cleanup into WinError 32 and hides the real reason.
+            restore_process.kill()
+            restore_process.wait(timeout=30)
+            log.close()
         assert restore_process.returncode != 0, "terminated restore reported success"
         evidence["interruptedRestoreExitCode"] = restore_process.returncode
         evidence["journalState"] = payload.get("state")
@@ -179,8 +189,19 @@ def exercise(runtime, profile_parent, report):
 
         environment = dict(os.environ)
         environment["WEBOBS_PRODUCT_TEST_ROOT"] = str(profile)
+        # native-status.json reaches ``phase=running`` the moment the supervisor has
+        # spawned the frontend (product_supervisor.py publishes right after the Popen);
+        # the host writes product-state.json only once libobs has loaded the product
+        # module and bound its session, carrying this boot's pid and bootId. The two
+        # writes are deliberately asynchronous, so both waits share the 120 s launch
+        # budget computed before the entry starts: the observation is awaited, never
+        # sampled at the instant the status file flipped.
+        launch_deadline = time.monotonic() + 120
+        launch_started = time.monotonic()
         launched = subprocess.Popen([str(entry)], env=environment, stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        def remaining():
+            return max(0.1, launch_deadline - time.monotonic())
         def first_running():
             assert launched.poll() is None, \
                 f"the installed entry refused to start over the interrupted restore ({launched.returncode})"
@@ -191,7 +212,7 @@ def exercise(runtime, profile_parent, report):
         owned = []
         try:
             started = wait_for(first_running,
-                "the installed entry did not converge the interrupted restore and start", timeout=120)
+                "the installed entry did not converge the interrupted restore and start", timeout=remaining())
             assert not journal.exists(), "the installed entry left the interrupted restore journal behind"
             assert not staged.exists(), "the installed entry never landed the pending OBS profile half"
             assert not (profile / "run/restore-recovery.json").exists(), \
@@ -200,8 +221,32 @@ def exercise(runtime, profile_parent, report):
                 "the installed entry started without the restored configuration"
             assert marker_value(native / NATIVE_MARKER) == "backup", \
                 "the installed entry started on a mismatched OBS profile half"
-            state_paths = list((profile / "native-profile").rglob("product-state.json"))
-            assert len(state_paths) == 1, "the running host did not publish one product state"
+            # rc.71 sampled this at the tick the status file flipped and saw zero files.
+            # Wait for exactly one readable observation that belongs to this boot, and
+            # record which outcome the wait saw: zero, several, unreadable or stale boot.
+            frontend_pid = next((service["pid"] for service in started.get("services", [])
+                if service.get("name") == "frontend"), 0)
+            assert frontend_pid, "native-status.json did not report the frontend child of this boot"
+            def one_host_state():
+                paths = list((profile / "native-profile").rglob("product-state.json"))
+                if len(paths) != 1:
+                    evidence["lastStateObservation"] = {"code": "state-file-count", "files": len(paths)}
+                    return None
+                try:
+                    value = read_json(paths[0])
+                except (OSError, ValueError):
+                    evidence["lastStateObservation"] = {"code": "state-file-unreadable"}
+                    return None
+                if value.get("pid") != str(frontend_pid) or value.get("bootId") != started["bootId"]:
+                    evidence["lastStateObservation"] = {"code": "state-from-other-boot",
+                        "pidMatched": value.get("pid") == str(frontend_pid),
+                        "bootIdMatched": value.get("bootId") == started["bootId"]}
+                    return None
+                evidence["lastStateObservation"] = {"code": "state-published", "phase": value.get("phase")}
+                return value
+            host_state = wait_for(one_host_state, lambda:
+                "the running host did not publish one product state for this boot: "
+                + json.dumps(evidence.get("lastStateObservation") or {}), timeout=remaining())
             rollback = Path(payload["configRollback"])
             rollback_native = Path(payload["nativeRollback"])
             assert marker_value(rollback / CONFIG_MARKER) == "live" \
@@ -211,6 +256,8 @@ def exercise(runtime, profile_parent, report):
                 "nativeProfile": marker_value(rollback_native / NATIVE_MARKER)}
             owned = [started["ownerPid"], *[service["pid"] for service in started.get("services", [])]]
             evidence["firstInstalledStart"] = {"bootId": started["bootId"], "phase": started["phase"],
+                "hostStatePhase": host_state.get("phase"),
+                "hostStateMsAfterLaunch": int((time.monotonic() - launch_started) * 1000),
                 "services": sorted(service["name"] for service in started.get("services", []))}
             evidence["checks"].append("first-installed-start-converges-the-pair-and-keeps-previous-data")
         finally:
@@ -237,22 +284,32 @@ def exercise(runtime, profile_parent, report):
         native_sentinel = private / "native-swap-sentinel.txt"
         native_process, native_log = run_restore(runtime_python, runtime, profile, archive, key_file,
             native_sentinel, "interrupt-native", private)
-        wait_for(lambda: native_sentinel.is_file(), "restore did not swap the OBS profile half out",
-            timeout=40)
-        assert journal.is_file(), "the restore journal did not survive the native swap window"
-        native_payload = json.loads(journal.read_text(encoding="utf-8"))
-        assert native_payload.get("configRollback") and native_payload.get("nativeRollback"), \
-            "journal does not record both previous halves"
-        assert not config.exists() and not native.exists(), \
-            "one half was still live while the journal claims both were swapped out"
-        native_process.kill()
-        native_process.wait(timeout=30)
-        native_log.close()
+        try:
+            wait_for(lambda: native_sentinel.is_file(), "restore did not swap the OBS profile half out",
+                timeout=40)
+            assert journal.is_file(), "the restore journal did not survive the native swap window"
+            native_payload = json.loads(journal.read_text(encoding="utf-8"))
+            assert native_payload.get("configRollback") and native_payload.get("nativeRollback"), \
+                "journal does not record both previous halves"
+            assert not config.exists() and not native.exists(), \
+                "one half was still live while the journal claims both were swapped out"
+        finally:
+            native_process.kill()
+            native_process.wait(timeout=30)
+            native_log.close()
         assert native_process.returncode != 0, "terminated native-swap restore reported success"
         evidence["nativeSwapExitCode"] = native_process.returncode
         evidence["checks"].append("restore-process-terminated-after-the-native-swap")
 
         phase = "second-installed-start"
+        # The instance killed after the first start left its own native-status.json
+        # behind: the supervisor never deletes that file when it is terminated. A wait
+        # that only requires phase=running with any 32-hex bootId accepts the previous
+        # boot's file on the first polling tick, so run 44718717601 reported "the
+        # installed entry left the native-swap journal behind" roughly 100 ms before
+        # this start could run its own recover_interrupted_restore(). Capture the boot
+        # id that stands before the entry launches and accept only this boot's status.
+        previous_boot = status().get("bootId")
         environment = dict(os.environ)
         environment["WEBOBS_PRODUCT_TEST_ROOT"] = str(profile)
         launched = subprocess.Popen([str(entry)], env=environment, stdin=subprocess.DEVNULL,
@@ -261,12 +318,26 @@ def exercise(runtime, profile_parent, report):
             assert launched.poll() is None, \
                 f"the installed entry refused to start over a native-half swap ({launched.returncode})"
             value = status()
-            return value if value.get("phase") == "running" and isinstance(value.get("bootId"), str) \
-                and re.fullmatch(r"[a-f0-9]{32}", value["bootId"]) else None
+            boot_id = value.get("bootId")
+            if value.get("phase") != "running" or not isinstance(boot_id, str) \
+                    or not re.fullmatch(r"[a-f0-9]{32}", boot_id):
+                evidence["lastStatusObservation"] = {"code": "status-not-running",
+                    "phase": value.get("phase")}
+                return None
+            if boot_id == previous_boot:
+                evidence["lastStatusObservation"] = {"code": "status-from-previous-boot",
+                    "bootId": boot_id}
+                return None
+            evidence["lastStatusObservation"] = {"code": "status-published",
+                "phase": value.get("phase")}
+            return value
         owned = []
         try:
-            started = wait_for(native_rolled_back,
-                "the installed entry did not return both halves of the previous pair", timeout=120)
+            started = wait_for(native_rolled_back, lambda:
+                "the installed entry did not return both halves of the previous pair: "
+                + json.dumps(evidence.get("lastStatusObservation") or {}), timeout=120)
+            evidence["nativeSwapRollbackStart"] = {"bootId": started["bootId"],
+                "previousBootId": previous_boot}
             assert not journal.exists(), "the installed entry left the native-swap journal behind"
             assert marker_value(config / CONFIG_MARKER) == "live-before-native-swap", \
                 "the installed entry did not restore the previous configuration half"
@@ -307,6 +378,22 @@ def exercise(runtime, profile_parent, report):
         set_marker(native / NATIVE_MARKER, "kept-native")
         # A paired archive must never be half-restored. The packaged service refuses it
         # when the caller does not name the OBS profile, so both halves stay as they are.
+        # The two restores killed mid-swap above exit through TerminateProcess, which
+        # skips TemporaryDirectory cleanup, so their plaintext .webobs-decrypt-*
+        # extraction staging is still on disk here: recover_interrupted() only removes
+        # the staging the journal names, never the untracked decrypt directory. The
+        # refusal raises BackupError inside its own staging context, so it cannot leak
+        # one - the Linux repro against backup/encrypted_backup.py shows the refusal
+        # cleaning its own directory while the killed restores' leftovers persist.
+        # Snapshot the staging standing before the refusal, charge only directories
+        # this refusal created, and disclose the stale plaintext leftovers in the
+        # receipt. Whether the product should sweep untracked decrypt staging after a
+        # hard kill is crash-recovery design and stays with the Codex main thread.
+        def staging_names():
+            return {p.name for pattern in (".webobs-restore-*", ".webobs-native-restore-*",
+                                           ".webobs-decrypt-*") for p in profile.glob(pattern)}
+        stale_staging = sorted(staging_names())
+        evidence["staleStagingFromKilledRestores"] = stale_staging
         refused, refused_log = run_restore(runtime_python, runtime, profile, archive, key_file,
             private / "unused-paired-sentinel.txt", "config-only", private)
         assert refused.wait(timeout=120) != 0, \
@@ -316,8 +403,8 @@ def exercise(runtime, profile_parent, report):
             and marker_value(native / NATIVE_MARKER) == "kept-native", \
             "the refused paired restore still changed one half of the pair"
         assert not journal.exists(), "the refused paired restore left a journal behind"
-        assert not any(list(profile.glob(".webobs-restore-*")) + list(profile.glob(".webobs-native-restore-*"))
-            + list(profile.glob(".webobs-decrypt-*"))), "the refused paired restore leaked staging directories"
+        leaked = sorted(staging_names() - set(stale_staging))
+        assert not leaked, "the refused paired restore leaked staging directories"
         evidence["checks"].append("paired-archive-refuses-a-half-restore")
 
         legacy_process, legacy_log = run_restore(runtime_python, runtime, profile, legacy_archive, key_file,
@@ -348,9 +435,21 @@ def exercise(runtime, profile_parent, report):
                 and re.fullmatch(r"[a-f0-9]{32}", value["bootId"]) and value["bootId"] != previous_boot else None
         value = wait_for(running, "installed entry did not start after the recovered pair", timeout=75)
         owned = [value["ownerPid"], *[service["pid"] for service in value.get("services", [])]]
+        # 配置专用恢复阶段把原生半区留在 kept-native（上面刚按产品契约断言过它未被替换），
+        # 无 journal 时普通启动不会改动任何半区。这里必须读取恢复出的配置半区并保留
+        # 用户当前的 OBS 档案；期望原生半区翻回归档值会与配置专用契约自相矛盾，
+        # 该断言从引入起因早前阶段先行失败而从未真正执行过（run 44835178571 首次到达）。
+        # The configuration-only restore above kept the user's current OBS profile
+        # (asserted against the product contract just before this phase), and ordinary
+        # startup without a journal changes neither half. The running product must read
+        # the recovered configuration half and leave that native profile untouched;
+        # expecting it to flip back to the archived value contradicts the
+        # configuration-only contract. This assertion never executed before run
+        # 44835178571 because earlier phases failed first, so the stale expectation
+        # was never exercised until the manifest fix let the sequence reach it.
         assert marker_value(config / CONFIG_MARKER) == "backup" \
-            and marker_value(native / NATIVE_MARKER) == "backup", \
-            "the running installed product did not read the recovered pair"
+            and marker_value(native / NATIVE_MARKER) == "kept-native", \
+            "the running installed product did not read the recovered configuration-only profile"
         assert not journal.exists(), "running product recreated the restore journal"
         launched.kill()
         launched.wait(timeout=30)

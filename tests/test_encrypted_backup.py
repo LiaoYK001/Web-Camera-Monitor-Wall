@@ -106,6 +106,53 @@ class BackupTests(unittest.TestCase):
             self.assertEqual((native / "user.ini").read_text(encoding="utf-8"),
                              "[BasicWindow]\nPreviewProgramMode=true\n")
 
+    def test_backup_taken_after_a_restore_is_still_restorable(self) -> None:
+        """恢复后再打的备份必须还能恢复 / a backup taken after a restore must restore.
+
+        Run 44800953316 (rc.79) failed at backup_restore_windows.py
+        "a configuration-only archive could not be restored". restore() lands
+        the archive's backup-manifest.json at the configuration root; the next
+        create() archived that artifact, so the regenerated manifest declared
+        the previous manifest's stale size and then overwrote those bytes, and
+        every restore of that archive failed integrity verification forever.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            config = root / "webobs"
+            config.mkdir()
+            (config / "scene.json").write_text('{"schemaVersion":5}\n', encoding="utf-8")
+            key = root / "key"
+            key.write_bytes(bytes(range(32)))
+            archive = backup.create(config, root / "backups", key, self.sodium)
+            backup.restore(config, archive, key, self.sodium, True)
+            self.assertTrue((config / "backup-manifest.json").is_file())
+            (config / "scene.json").write_text('{"schemaVersion":6}\n', encoding="utf-8")
+            second = backup.create(config, root / "backups", key, self.sodium)
+            backup.restore(config, second, key, self.sodium, True)
+            self.assertEqual((config / "scene.json").read_text(encoding="utf-8"),
+                             '{"schemaVersion":6}\n')
+
+    def test_legacy_self_referential_manifest_entry_still_verifies(self) -> None:
+        """历史污染清单仍可验收 / archives poisoned by the old create() still verify.
+
+        旧版 create() 已把残留清单当用户文件打包，其自指条目记录了上一份清单的
+        陈旧大小；这些已存在的用户备份必须重新可恢复，而不是永久搁置。
+        Archives already on disk carry that self-referential stale entry; they
+        must verify and restore again instead of stranding the user's data.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            candidate = pathlib.Path(directory) / "webobs"
+            candidate.mkdir()
+            scene = candidate / "scene.json"
+            scene.write_text('{"schemaVersion":5}\n', encoding="utf-8")
+            (candidate / "backup-manifest.json").write_text(json.dumps({
+                "format": 1, "createdAt": 0, "schema": "v2-M7",
+                "files": [{"path": "backup-manifest.json", "size": 999, "sha256": "0" * 64},
+                          {"path": "scene.json", "size": scene.stat().st_size,
+                           "sha256": backup.file_sha256(scene)}]}, sort_keys=True),
+                encoding="utf-8")
+            backup.verify_tree(candidate)
+
     def seed_pair(self, root: pathlib.Path) -> pathlib.Path:
         """Create a configuration directory plus a native profile and their key."""
         config = root / "webobs"

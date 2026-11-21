@@ -258,6 +258,13 @@ class BuildContractTests(unittest.TestCase):
         frames over more than two publish keyframe intervals on one connection,
         records when the first decodable frame arrived, and adds a packet probe
         that answers whether the relay hands a late consumer an IDR at all.
+        Since run 44735378274 the publishing gate re-reads a falling-short window
+        once on a fresh connection (shared decodable_window predicate, probeAttempts
+        in the receipt) so one input-side decode stall is not charged as "not
+        delivered"; sustained starvation still fails the same thresholds twice.
+        自 run 44735378274 起，发布门禁会用新连接把未达标的窗口重读一次（共享
+        decodable_window 谓词、回执含 probeAttempts），单次输入侧解码停滞不再被判为
+        "未交付"；持续饥饿仍会两次撞上相同阈值。
         """
         encoder = (ROOT / "native-host/src/product_output.cpp").read_text(encoding="utf-8")
         keyints = re.findall(r'obs_data_set_int\(video_settings\.get\(\), "keyint_sec", (\d+)\)', encoder)
@@ -276,7 +283,8 @@ class BuildContractTests(unittest.TestCase):
         self.assertEqual(gate.count("published_video_window(runtime / \"bin/ffprobe.exe\""), 2)
         self.assertEqual(gate.count("published_packet_window(runtime / \"bin/ffprobe.exe\""), 2)
         self.assertNotIn('"-read_intervals", "%+#20"', gate)
-        for assertion in ("len(stamps) >= 10", "monotonic and span >= float(encoder_keyint_seconds)",
+        for assertion in ('len(window["stamps"]) >= 10', "window[\"monotonicTimestamps\"]",
+                          'window["ptsSpanSeconds"] >= float(encoder_keyint_seconds)',
                           'replay_window["frames"] >= 10', "firstDecodableFrameMs", "packetProbe",
                           "unparsableStamps", "stamp = float(value)"):
             self.assertIn(assertion, gate)
@@ -1613,6 +1621,305 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("def ui_thread_snapshot", gate)
         self.assertEqual(gate.count('"uiThread": ui_thread_snapshot()'), 2,
             "both the refusal and a control that needed waits carry the product's own account")
+
+    def test_the_first_installed_start_waits_for_this_boot_host_state(self):
+        """Run 44609775780: the restored-pair first start sampled the host state too early.
+
+        The supervisor publishes native-status.json with ``phase=running`` right after it
+        spawns ``obs64.exe`` (product_supervisor.py calls ``status("running")`` immediately
+        after the frontend Popen), while the host writes product-state.json only once libobs
+        has loaded the product module and bound its session, carrying this boot's pid and
+        bootId. rc.71 passed the portable and installed gates 77 checks each and then failed
+        the interrupted-restore-pair-recovery phase with "the running host did not publish
+        one product state", because the gate sampled the observation on the same tick the
+        entry reported running - the file simply was not written yet. The gate has to wait
+        for exactly one readable state file owned by this boot inside the original 120 s
+        launch budget, and its receipt has to distinguish zero files, several files, an
+        unreadable file and an observation from an older boot. Convergence, dual-directory
+        consistency, rollback retention and process-cleanup assertions stay immediate: a
+        journal, a half pair or a surviving process is a product defect at that instant.
+        运行 44609775780：恢复成对档案后的首次启动采样宿主状态太早。supervisor 在 Popen
+        前端后立即写 native-status.json 的 running，宿主模块加载并绑定会话后才写带本次
+        PID/bootId 的 product-state.json；门禁必须在原 120 秒启动预算内等到恰好一份属于
+        本次启动的可读状态文件，并在回执区分零份、多份、不可读与旧启动文件。
+        """
+        source = (ROOT / "native-host/tests/backup_restore_windows.py").read_text(encoding="utf-8")
+        self.assertNotIn("assert len(state_paths) == 1", source,
+            "the host state must be awaited, not sampled at the instant the entry reported running")
+        for classification in ('"state-file-count"', '"state-file-unreadable"', '"state-from-other-boot"',
+                               '"pidMatched"', '"bootIdMatched"'):
+            self.assertIn(classification, source,
+                "the receipt must name which state-file outcome the bounded wait saw")
+        self.assertRegex(source, r"launch_deadline\s*=\s*time\.monotonic\(\)\s*\+\s*120",
+            "one 120 s launch budget computed before the entry starts governs this phase")
+        tree = ast.parse(source)
+        budgeted_waits = sum(1 for node in ast.walk(tree) if isinstance(node, ast.Call)
+            and getattr(node.func, "id", "") == "wait_for" and any(
+                kw.arg == "timeout" and getattr(kw.value.func, "id", "") == "remaining"
+                for kw in node.keywords if kw.arg == "timeout" and isinstance(kw.value, ast.Call))
+            )
+        self.assertGreaterEqual(budgeted_waits, 2,
+            "both the running-status wait and the host-state wait consume the same launch budget")
+        self.assertIn('service.get("name") == "frontend"', source,
+            "the state file must match the frontend child of this boot, not any obs process")
+        self.assertIn('value.get("bootId") != started["bootId"]', source,
+            "an observation left by a previous boot must be rejected as stale")
+        for preserved in ("the installed entry left the interrupted restore journal behind",
+                          "the installed entry never landed the pending OBS profile half",
+                          "the installed entry recorded a bounded recovery failure instead of converging",
+                          "the installed entry started without the restored configuration",
+                          "the installed entry started on a mismatched OBS profile half",
+                          "the installed entry deleted the previous pair instead of keeping it retryable",
+                          "the interrupted-restore first start left its own product processes alive"):
+            self.assertIn(preserved, source, "convergence, consistency, retention or cleanup lost its assert")
+
+    def test_the_native_swap_kill_follows_the_recorded_journal(self):
+        """Run 44711476489: the native-swap sentinel fired before nativeRollback was persisted.
+
+        rc.72 cleared the rc.71 host-state race and then failed "journal does not record
+        both previous halves": the interrupt-native hook paused inside ``os.replace`` after
+        the previous OBS profile had physically moved aside, but ``encrypted_backup.py``
+        records ``nativeRollback`` only once that call returns, so the kill happened in the
+        microsecond window between the swap and its fsync'ed journal write. A crash there
+        is a genuine loss of the native reference, not the prepared-state window the
+        recovery design promises; the sentinel must therefore follow the ``_write_journal``
+        call that persists both halves, while the configuration half still has not landed.
+        The same run also showed a failing assert leaving the sleeping child on its log:
+        cleanup then raised WinError 32 and hid the assertion, so both interruption phases
+        terminate their child and close the log in ``finally``. Product recovery stays
+        untouched - it rolls the pair back exactly as ``recover_interrupted`` documents.
+        运行 44711476489：原生半区哨兵在 journal 落盘前触发。rc.72 修好宿主状态竞态后停在
+        "journal does not record both previous halves"：interrupt-native 钩子在上一次 OBS
+        档案物理移开后、os.replace 尚未返回时暂停，而 encrypted_backup.py 要到调用返回才
+        fsync 记录 nativeRollback，杀进程落在交换与 journal 写入之间的微秒窗口，真正丢失
+        原生半区引用，并非产品承诺的可恢复 prepared 状态。哨兵必须跟在记录两份前像的
+        _write_journal 之后、配置半区落盘之前；两个中断阶段也都要在 finally 里终止子进程
+        并关闭日志，避免断言失败被 WinError 32 掩盖。产品恢复逻辑不改。
+        """
+        source = (ROOT / "native-host/tests/backup_restore_windows.py").read_text(encoding="utf-8")
+        self.assertIn("module._write_journal = guarded_journal", source,
+            "the native-swap window must be taken after the journal write, not inside os.replace")
+        self.assertIn('value.get("nativeRollback") is None', source,
+            "the guard must only stop the child once both previous halves are recorded")
+        self.assertNotIn('sentinel.write_text("native-swapped-out"', source,
+            "the sentinel fired while nativeRollback was still only in memory")
+        child = source.split('CHILD = """', 1)[1].split('"""', 1)[0]
+        self.assertLess(child.index("write_journal(path, value)"),
+            child.index('sentinel.write_text("native-recorded"'),
+            "the sentinel must follow the fsync'ed journal write")
+        tree = ast.parse(source)
+        guarded_children = 0
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Try) and node.finalbody and any(
+                isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                and call.func.attr == "kill" for call in ast.walk(ast.Module(body=node.finalbody, type_ignores=[]))):
+                guarded_children += 1
+        self.assertGreaterEqual(guarded_children, 2,
+            "both interruption phases must terminate their child in finally so cleanup cannot hide the assert")
+        for preserved in ("journal does not record both previous halves",
+                          "one half was still live while the journal claims both were swapped out",
+                          "the installed entry did not return both halves of the previous pair",
+                          "the installed entry left the previous OBS profile parked",
+                          "the previous OBS profile stayed parked instead of becoming live again"):
+            self.assertIn(preserved, source, "the native-swap rollback asserts must stay verbatim")
+
+    def test_the_second_installed_start_waits_for_its_own_boot_status(self):
+        """Run 44718717601: the second start accepted the killed first boot's status file.
+
+        rc.73 moved the native-swap sentinel after the journal write, so the paired
+        restore advanced to the second installed start. The first instance was killed
+        there and its native-status.json stayed on disk with phase=running and a valid
+        32-hex bootId: the supervisor never deletes that file when terminated, and it
+        publishes a fresh per-boot bootId only after prepare() has already run
+        recover_interrupted_restore(). wait_for polled after 100 ms, accepted the
+        previous boot's file, and the convergence assert reported that the installed
+        entry left the native-swap journal behind while this boot had not converged
+        anything yet - the journal really was still there, just not yet observed by
+        the right start. The wait must capture the boot id standing before the entry
+        launches and reject it, naming the outcome the bounded wait saw; the journal,
+        marker and staging asserts stay immediate. Product ordering is unchanged:
+        recovery still precedes directory creation and the first status publish.
+        运行 44718717601：第二次启动接受了被终止的第一次启动遗留的状态文件。rc.73 把原生
+        半区哨兵挪到 journal 落盘之后，成对恢复推进到第二次安装态启动：第一次实例在那里被
+        终止，它的 native-status.json 仍留在磁盘上（phase=running、bootId 是合法 32 位
+        十六进制），supervisor 被终止时不会删除该文件，而新 bootId 要到 prepare() 完成
+        recover_interrupted_restore() 之后才发布；wait_for 第一个 tick（100 ms）就接受了
+        旧启动的文件，收敛断言在第二次启动尚未收敛任何东西时报 "journal left behind"——
+        journal 确实还在，只是还没被正确的启动观察到。等待必须先记录启动前的 bootId 并拒绝
+        它，并记下有界等待看到的判定；journal、marker 与暂存断言保持即时。产品顺序不变：
+        恢复仍先于目录创建与状态发布。
+        """
+        source = (ROOT / "native-host/tests/backup_restore_windows.py").read_text(encoding="utf-8")
+        self.assertIn('previous_boot = status().get("bootId")', source,
+            "the second start must capture the previous boot before launching the entry")
+        self.assertIn("boot_id == previous_boot", source,
+            "the previous boot's running status must be rejected as stale")
+        for classification in ('"status-not-running"', '"status-from-previous-boot"',
+                               '"status-published"', '"previousBootId"'):
+            self.assertIn(classification, source,
+                "the receipt must name which status outcome the second-start wait saw")
+        self.assertEqual(len(source.split("subprocess.Popen([str(entry)")), 4,
+            "the gate launches the installed entry three times")
+        second_phase = source.index('phase = "second-installed-start"')
+        second_launch = source.index("subprocess.Popen([str(entry)", second_phase)
+        self.assertLess(source.index('previous_boot = status().get("bootId")', second_phase),
+            second_launch,
+            "the previous boot must be captured before the second entry launches")
+        self.assertIn("wait_for(native_rolled_back, lambda:", source,
+            "the stale-status attribution is assembled at timeout, not eagerly")
+        for preserved in ("the installed entry did not return both halves of the previous pair",
+                          "the installed entry left the native-swap journal behind",
+                          "the installed entry did not restore the previous configuration half",
+                          "the installed entry left the previous OBS profile parked"):
+            self.assertIn(preserved, source, "the native-swap rollback asserts must stay verbatim")
+
+    def test_the_refused_paired_restore_is_charged_only_for_its_own_staging(self):
+        """Run 44728029615: the refusal assert charged the staging left by the killed restores.
+
+        rc.74 advanced past the second installed start and failed at
+        "the refused paired restore leaked staging directories". restore() converges
+        any earlier interruption first and only then refuses a paired archive whose
+        caller omits the OBS profile, raising BackupError inside its own
+        .webobs-decrypt- TemporaryDirectory, so the refusal cannot leak a directory.
+        The two restores killed mid-swap earlier in this gate exit through
+        TerminateProcess, which skips context-manager cleanup, and recover_interrupted()
+        removes only the staging the journal names - the untracked plaintext decrypt
+        directory survives every recovery. The gate must snapshot the staging names
+        standing before the refusal, charge only directories the refusal created, and
+        disclose the stale leftovers in the receipt; whether the product should sweep
+        untracked decrypt staging after a hard kill is crash-recovery design and stays
+        with the Codex main thread. A Linux repro against backup/encrypted_backup.py
+        confirms the refusal creates no new staging while killed leftovers persist.
+        运行 44728029615：拒绝对账把被杀恢复遗留的暂存算到了拒绝本身。rc.74 越过第二次安装态
+        启动后在 "the refused paired restore leaked staging directories" 失败。restore()
+        先收敛此前的中断，之后才拒绝未指明 OBS 档案的成对档案，并在自己的 .webobs-decrypt-
+        TemporaryDirectory 内抛出 BackupError，因此拒绝本身不可能泄漏目录。门禁中此前两次被
+        硬终止的恢复经 TerminateProcess 退出，跳过上下文管理器清理，而 recover_interrupted()
+        只删除 journal 记录的暂存——未被记录的明文解密暂存会在每次恢复后留存。门禁必须先记录
+        拒绝前的暂存名单、只对拒绝新创建的目录记账，并在回执里披露遗留的明文暂存；产品是否
+        应在硬终止后清扫未记录的解密暂存属崩溃恢复算法设计，留给 Codex 主线程。对
+        backup/encrypted_backup.py 的 Linux 复现确认拒绝不产生新暂存、被杀恢复的遗留仍在。
+        """
+        source = (ROOT / "native-host/tests/backup_restore_windows.py").read_text(encoding="utf-8")
+        refusal_phase = source.index('phase = "legacy-config-only-archive"')
+        refusal_launch = source.index('private / "unused-paired-sentinel.txt"', refusal_phase)
+        self.assertLess(source.index("stale_staging = sorted(staging_names())", refusal_phase),
+            refusal_launch,
+            "the staging baseline must be captured before the refused restore runs")
+        self.assertIn("staging_names() - set(stale_staging)", source,
+            "only staging created by the refusal itself may be charged")
+        self.assertIn('evidence["staleStagingFromKilledRestores"]', source,
+            "the stale plaintext staging of the killed restores must be disclosed in the receipt")
+        for preserved in ("the refused paired restore leaked staging directories",
+                          "a paired archive was half-restored without naming the OBS profile",
+                          "the refused paired restore still changed one half of the pair",
+                          "the refused paired restore left a journal behind"):
+            self.assertIn(preserved, source, "the paired-refusal asserts must stay verbatim")
+
+    def test_the_program_video_window_retries_one_stalled_consumer_window(self):
+        """Run 44735378274: rc.75 charged one stalled consumer window as "not delivered".
+
+        The rc.75 gate advanced past the legacy-import phase and failed the Program
+        streaming video assert inside the freshly installed entry: the single 6-second
+        consumer decoded 26 frames over a 0.833 second span (first frame at 4015 ms)
+        while the host rendered 421 frames inside the same probe, the relay reported a
+        connected stream, and the packet connection saw two IDR keyframes 2.0 seconds
+        apart. The boot's OBS log recorded six "WebOBS async video backlog" drops of 30
+        undrawn frames (gaps 2.689-3.000 seconds) and one async timestamp jump around
+        fixture reconnects - the same delivery-versus-decode split the rc.62 keyframe
+        window documented, now caused by an input-side decode stall on the runner. One
+        bounded retry on a fresh connection tolerates the transient stall while
+        sustained starvation still fails the identical thresholds twice; every attempt
+        stays in the receipt via probeAttempts, the packet probe and host render
+        counters stay measured after the last attempt, and the decode starvation itself
+        remains disclosed through the boot markers rather than being declared healthy.
+        运行 44735378274：rc.75 把单个被暂存的消费窗口判成 "未交付"。门禁越过 legacy-import
+        阶段后在新安装入口的 Program 流媒体视频断言失败：单个 6 秒消费窗口只解出 0.833 秒
+        跨度的 26 帧（首帧 4015 ms），而同一探测期间宿主渲染了 421 帧、中继报告流已连接、
+        包连接看到间隔 2.0 秒的两个 IDR 关键帧；该启动的 OBS 日志记录了六次 "WebOBS async
+        video backlog" 丢弃 30 个未绘制帧（间隙 2.689-3.000 秒）与一次异步时间戳跳跃，发生在
+        fixture 重连附近——与 rc.62 关键帧窗口记录的"交付 vs 解码"分裂同类，本次由运行器
+        输入侧解码停滞引起。一次有界重试用新连接容忍瞬时停滞，持续饥饿仍会两次撞上相同阈值；
+        每次尝试经 probeAttempts 留在回执里，包探测与宿主渲染计数保持在最后一次尝试之后测量，
+        解码停滞本身继续经启动标记披露而非宣告健康。
+        """
+        source = (ROOT / "native-host/tests/product_windows.py").read_text(encoding="utf-8")
+        self.assertIn("def decodable_window(window):", source,
+            "the video-window acceptance test must be named once and reused by retry and assert")
+        self.assertIn("for attempt in range(2):", source,
+            "a falling-short video window must be re-read on a fresh connection once")
+        self.assertIn('"probeAttempts": attempts', source,
+            "every window attempt must stay visible in the receipt")
+        retry = source.index("for attempt in range(2):")
+        self.assertLess(retry, source.index("packet_summary = published_packet_window", retry),
+            "the packet probe and host counters must be taken after the final attempt")
+        self.assertIn('assert decodable_window(video_window)', source,
+            "the last attempt alone decides the assertion")
+        for preserved in ("len(window[\"stamps\"]) >= 10", "window[\"monotonicTimestamps\"]",
+                          "window[\"ptsSpanSeconds\"] >= float(encoder_keyint_seconds)"):
+            self.assertIn(preserved, source,
+                "the retry must keep the exact delivery thresholds")
+        self.assertIn("\"published Program did not deliver enough decodable video frames across \"",
+            source, "the window-failure assert message must stay verbatim")
+
+    def test_the_swap_transient_first_sample_needs_a_fully_settled_re_capture(self):
+        """Run 44751520752: rc.77 charged one mid-swap repaint frame as "final pixels wrong".
+
+        The rc.77 reproducibility round never reached the rc.76 crash point; it failed
+        earlier in native-program-take: main-preview sample 0 of eight showed a dark
+        stale frame ("Wrong channel 1 in tile 0: 62,30,30") while samples 1-7 carried
+        the correct channels with advancing counters, temporalProgress true, every
+        fixture publisher alive and no stalled path. That is the documented mid-swap
+        window (rc.47/48/50) racing the capture start, not a frozen tile. The retry
+        tolerates exactly one shape — first sample alone failing, all eight samples
+        present, temporal progress proven, Program-swap phase only — and only by
+        re-capturing the whole window with the same pid/executable/creation-time
+        identity, re-analyzing every role and requiring the settled window to pass
+        completely; a tile that really stays wrong still fails, and the transient
+        repaint stays disclosed in the receipt via pixelSwapTransientRetry.
+        运行 44751520752：rc.77 把一帧中途交换重绘判成 "最终像素错误"。复现轮没有走到
+        rc.76 的崩溃点，而是更早地失败于 native-program-take：main-preview 八个采样中的
+        第 0 个显示变暗的旧帧（"Wrong channel 1 in tile 0: 62,30,30"），而第 1-7 个采样
+        通道正确、计数器推进、temporalProgress 为真，所有 fixture publisher 存活且无停滞
+        路径——这是文档记录的中途交换窗口（rc.47/48/50）与捕获起点竞态，不是冻结的格子。
+        重试只容忍恰好一种形态——仅首个采样失败、八个采样齐备、时间进度已证实、且仅限
+        Program 交换阶段——且必须用相同的 pid/可执行文件/创建时间身份重捕获整个窗口、
+        重新分析每个角色并要求已收敛窗口完全通过；真正持续错误的格子仍会失败，瞬态重绘
+        经 pixelSwapTransientRetry 留在回执披露中。
+        """
+        source = (ROOT / "native-host/tests/product_windows.py").read_text(encoding="utf-8")
+        self.assertIn("fixture_retry=True, swap_transient_retry=True):", source,
+            "the swap retry must be its own one-shot budget")
+        self.assertIn("def run_capture(target_dir, state_file):", source,
+            "the retry must reuse the exact same identity-bound capture runner")
+        self.assertIn("result, capture = run_capture(target, metadata)", source)
+        self.assertIn("retry_result, retry_capture = run_capture(retry_target, metadata)", source)
+        transient = source.index("transient_swap = (swap_transient_retry and program_scene is not None")
+        for shape in ("result.get(\"temporalProgress\") is True",
+                      "len(result.get(\"samples\", [])) == 8",
+                      "len(failed_samples) == 1",
+                      "failed_samples[0].get(\"sample\") == 0"):
+            self.assertIn(shape, source[transient:transient + 700],
+                "the transient form must require exactly one first-sample failure "
+                "with proven temporal progress")
+        fixture_retry = source.index("return check_pixels(label, blank=blank")
+        self.assertLess(fixture_retry, source.index("if transient_swap:", fixture_retry),
+            "a faulty fixture must still be repaired first; the swap retry only runs "
+            "when the fixture is provably healthy")
+        self.assertLess(source.index("if transient_swap:"),
+            source.index('evidence["pixelFailureDiagnostics"]["probeOnWindow"]'),
+            "the settled re-capture must come before the diagnostic-only probe window")
+        self.assertIn('"pixelSwapTransientRetry"', source)
+        self.assertIn('retry_target = private / ("pixels-" + label + "-swap-retry")', source)
+        self.assertIn("for retry_role, retry_order in orders.items():", source,
+            "the settled window must be re-analyzed for every captured role")
+        self.assertIn("if retry_analysis.returncode != 0 or retry_view.get(\"passed\") is not True:",
+            source, "any failing role in the settled window must void the retry")
+        self.assertIn('"product view still failed its final-pixel state after one "', source,
+            "the exhausted-retry assert message must stay verbatim")
+        self.assertIn('"swap-settled re-capture: "', source)
+        self.assertIn('raise AssertionError("product windows changed during the "', source,
+            "the retry must re-verify window roles before re-capturing")
 
 
 if __name__ == "__main__":

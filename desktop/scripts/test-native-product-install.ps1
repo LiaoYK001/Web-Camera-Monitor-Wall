@@ -140,6 +140,43 @@ try {
     }
     $before = Get-ProfileFingerprint
     if ($complete) {
+        $phase = 'installed-legacy-import'
+        # A migration script inside the install folder is not an entry the user can find.
+        # The complete installer creates three Start Menu links; read their real targets
+        # with the same Unicode-safe IShellLinkW probe instead of trusting the file name.
+        $helperEntries = [ordered]@{
+            'WebOBS Wall - Import old data.lnk' = 'MIGRATE-LEGACY.cmd'
+            'WebOBS Wall - Check for updates.lnk' = 'CHECK-UPDATES.cmd'
+            'WebOBS Wall - Restore backup.lnk' = 'RESTORE-BACKUP.cmd'}
+        $programsRoot = [Environment]::GetFolderPath('Programs')
+        foreach ($entry in $helperEntries.GetEnumerator()) {
+            $linkPath = Join-Path $programsRoot $entry.Key
+            if (-not (Test-Path -LiteralPath $linkPath -PathType Leaf)) {
+                throw "Installed helper shortcut missing: $($entry.Key)"
+            }
+            $expectedHelper = [IO.Path]::GetFullPath((Join-Path $installed $entry.Value))
+            $observedHelper = & $probe $linkPath $expectedHelper | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0 -or -not $observedHelper.canonicalTargetMatches -or
+                -not $observedHelper.nativeTargetExists) {
+                throw "Installed helper shortcut does not target the shipped $($entry.Value): $($entry.Key)"
+            }
+        }
+        $report.helperEntryShortcutsQualified = $true
+        # The old-data import path the user actually has: MIGRATE-LEGACY.cmd ships the
+        # packaged importer, so this gate fills a disposable install through the real
+        # installed entry, imports it with that shipped importer, and proves the imported
+        # install signs in with the old account and keeps devices, events and the NVR
+        # policy. Only the config/database/backup-key path is qualified; recordings,
+        # archives and the Electron-era scene/studio documents are not, which is why
+        # fullFeatureMigrationQualified stays false.
+        & $python -B (Join-Path $repoRoot 'native-host/tests/legacy_import_windows.py') --runtime $installed --report (Join-Path $buildRoot 'native-product-legacy-import.json')
+        if ($LASTEXITCODE -ne 0) { throw 'Installed old-data import gate failed.' }
+        $legacyReceiptPath = Join-Path $buildRoot 'native-product-legacy-import.json'
+        if (-not (Test-Path -LiteralPath $legacyReceiptPath)) { throw 'Old-data import receipt is missing.' }
+        $legacyReceipt = Get-Content -LiteralPath $legacyReceiptPath -Raw | ConvertFrom-Json
+        if ($legacyReceipt.passed -ne $true) { throw 'Old-data import receipt did not pass.' }
+        $report.legacyConfigImportQualified = [bool]$legacyReceipt.legacyConfigImportQualified
+        $report.legacyImportedFiles = [int]$legacyReceipt.importedFiles
         $phase = 'installed-lan-entry'
         & $python -B (Join-Path $repoRoot 'native-host/tests/lan_entry_windows.py') --runtime $installed --report (Join-Path $buildRoot 'native-product-lan.json')
         if ($LASTEXITCODE -ne 0) { throw 'Installed LAN/Web HTTPS entry gate failed.' }
