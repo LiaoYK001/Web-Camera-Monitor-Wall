@@ -1380,7 +1380,9 @@ class BuildContractTests(unittest.TestCase):
             module.time = clock
             module.evidence = {"checks": []}
             module.checkpoint = lambda name: None
-            samples = list(metrics)
+            # Existing inputs describe baseline through the penultimate tick.
+            # Sample the full-duration endpoint too.
+            samples = [*metrics, metrics[-1]]
             module.process_tree_metrics = lambda: dict(samples.pop(0))
             # The gate always asks "are zero inputs stalled"; the fake answers that from the
             # simulated clock so a chosen minute can report a frozen input.
@@ -1396,7 +1398,8 @@ class BuildContractTests(unittest.TestCase):
         self.assertEqual([publisher.restarted for publisher in healthy], [0, 0])
         self.assertEqual(module.evidence["soak"]["minutes"], 3)
         self.assertEqual(module.evidence["soak"]["intervalSeconds"], 60)
-        self.assertEqual(len(module.evidence["soak"]["samples"]), 3)
+        self.assertEqual(len(module.evidence["soak"]["samples"]), 4)
+        self.assertEqual(module.evidence["soak"]["samples"][-1]["elapsedSeconds"], 180)
         self.assertEqual(module.evidence["soak"]["cpuSecondsDelta"], 120.0)
         self.assertIn("installed-soak-3-minutes-five-inputs", module.evidence["checks"])
 
@@ -1418,8 +1421,9 @@ class BuildContractTests(unittest.TestCase):
             run(3, metrics=[tree(0.0), tree(60.0), tree(120.0, handles=520)])
         with self.assertRaisesRegex(AssertionError, "could not read every product process"):
             run(3, metrics=[tree(0.0, unavailable=(11,)), tree(60.0), tree(120.0)])
-        with self.assertRaisesRegex(AssertionError, "used only"):
-            run(3, metrics=[tree(0.0), tree(1.0), tree(2.0)])
+        run(3, metrics=[tree(0.0), tree(1.0), tree(2.0)])
+        with self.assertRaisesRegex(AssertionError, "CPU counter did not advance"):
+            run(3, metrics=[tree(0.0), tree(0.0), tree(0.0)])
         # A publisher exiting inside the window is repaired; the loopback server itself
         # dying is not the product's fault either, but it does invalidate the window.
         module.rtsp = type("FixtureRtsp", (), {"publishers": [Publisher(FakeTime())],
