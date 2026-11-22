@@ -103,6 +103,15 @@ try {
     foreach ($file in @('config/cluster.sqlite3','config/cameras.db')) {
         if (-not (Test-Path -LiteralPath (Join-Path $profile $file))) { throw 'Installed account/camera data missing.' }
     }
+    $phase = 'interrupted-restore-pair-recovery'
+    # The installed runtime's own backup service and supervisor: a restore killed
+    # between its two directory swaps must converge on the next product start.
+    $restoreParent = Join-Path $env:RUNNER_TEMP 'native-restore-pair'
+    if (Test-Path -LiteralPath $restoreParent) { Remove-Item -Recurse -Force -LiteralPath $restoreParent }
+    New-Item -ItemType Directory -Path $restoreParent | Out-Null
+    & $python -B (Join-Path $repoRoot 'native-host/tests/backup_restore_windows.py') --runtime $installed --profile-parent $restoreParent --report (Join-Path $buildRoot 'native-product-restore-pair.json')
+    if ($LASTEXITCODE -ne 0) { throw 'Installed restore-pair recovery gate failed.' }
+    $report.restorePairRecoveryQualified = $true
     function Get-ProfileFingerprint {
         # Hash only durable user data. Update metadata, generated backups,
         # logs/crash dumps, per-run sentinels and SQLite WAL sidecars are

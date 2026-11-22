@@ -344,6 +344,8 @@ def backup_config(config_root: Path, data_root: Path, *, runtime_root: Path | No
 def _backup_error_code(stderr: str, fallback: str) -> str:
     text = (stderr or "").lower()
     for marker, code in (
+        ("restore journal", "backup-restore-journal-invalid"),
+        ("native profile", "backup-native-profile-required"),
         ("absolute", "backup-path-not-absolute"),
         ("confirmation", "backup-confirmation-invalid"),
         ("backup key", "backup-key-invalid"),

@@ -253,7 +253,24 @@ def exercise_restore_environment():
     print("PASS restore supplies an absolute backup root to the packaged CLI")
 
 
+def exercise_backup_error_codes():
+    updater = load()
+    cases = (
+        ("Traceback: BackupError: restore journal is unreadable", "backup-restore-journal-invalid"),
+        ("BackupError: restore journal is invalid", "backup-restore-journal-invalid"),
+        ("BackupError: restore must name the native profile of this archive",
+         "backup-native-profile-required"),
+        ("BackupError: backup archive authentication failed", "backup-authentication-failed"),
+        ("sqlite3.OperationalError: database is locked", "backup-database-error"),
+        ("unexpected detail with a private path", "backup-create-failed"),
+    )
+    for stderr, expected in cases:
+        assert updater._backup_error_code(stderr, "backup-create-failed") == expected, stderr
+    print("PASS backup failures map to bounded codes without leaking paths")
+
+
 if __name__ == "__main__":
     exercise()
     exercise_maintenance()
     exercise_restore_environment()
+    exercise_backup_error_codes()
