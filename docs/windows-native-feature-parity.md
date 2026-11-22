@@ -63,6 +63,10 @@ One pinned OBS frontend owns local media. Reuse the existing Direct-only core fo
 | LIFE | `main.mjs`、`supervisor.mjs`、`job_host.cpp`、`product_supervisor.py` | 原生单实例/托盘/supervisor | Job、任务消费者、正常退出和崩溃收束 | Qt、Win32、按需服务 | 安装态关闭/托盘/后台任务/故意崩溃零遗留 | v5.0-rc.1 便携/安装各52项通过正常关闭、重启、origin 冲突、撤权和 launcher 崩溃清理；完整 NSIS 覆盖升级/卸载保留通过；活动 Program 输出关闭主窗口时保留托盘宿主 | 托盘菜单自动化和睡眠唤醒/目标机长任务仍待验证 |
 | UPDATE | desktop updater/NSIS、native updater | 安装后“检查更新”入口、原生下载/确认/安装 | SHA-512/size、版本、备份、用户确认 | 原生 updater、NSIS | 旧稳定升级、新原生后续升级、截断/断网/失败恢复 | v5.0-rc.1 `latest.yml` 与安装字节绑定，同机 rc.1→rc.2 覆盖升级和更新前备份通过；候选为固定 prerelease feed | 稳定 feed、旧稳定→v5 实机、截断/断网/签名和目标机恢复仍待 |
 
+rc.100（[Windows CI](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/45045849743)，`066252efe10688137f1718d3af7054a09c7f1378`）更新上表的自动验收证据。AUDIO 与 OUTPUT 覆盖 Program 逐轨增益、录像、回环发布与恢复。PTZ 覆盖安装态合成 ONVIF 操作。BACKUP 与 UPDATE 覆盖成对交换中断后的普通启动收敛、旧档案导入及同源码升级。LIFE 覆盖 120 分钟安装态长稳。OPS 支持包保留脱敏边界。REMOTE 的 HTTPS 和第二台设备因无私有 IPv4 跳过。真实设备、历史崩溃及恢复披露仍开放。
+
+The rc.100 automated receipts cover Program audio and output, synthetic ONVIF, interrupted paired restore, legacy import, updater, and a 120-minute installed soak. LAN HTTPS and second-device testing remain open because the runner had no private IPv4 interface. Physical device qualification and historical crash and restore disclosures remain open.
+
 ## 进程和体积口径 / Process and size accounting
 
 旧 `Supervisor.start` 默认启动 MediaMTX、go2rtc wrapper、camera、cluster、clients、events、NVR、backup 与 core，archive 和 Caddy 依据配置启动。原生核心拟默认启动 OBS host、control-only core、账号和设备目录服务，其他消费者由真实功能需求启停。Python 业务实现保留并计入实际组件成本，组件名称不能用于推断是否转码。
