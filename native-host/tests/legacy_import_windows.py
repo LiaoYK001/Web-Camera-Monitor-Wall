@@ -297,8 +297,9 @@ def exercise(runtime, report):
                 "topic": "legacy.qa", "severity": "info", "occurredAt": int(time.time() * 1000),
                 "properties": {"durationMs": 0}, "dedupeKey": "legacy-import-event"},
                 cookie=client.cookie)
-            assert code == 201 and stored.get("id"), f"the old installation could not store an event: {code}"
-            event_id = stored["id"]
+            assert code == 201, f"the old installation could not store an event: {code}"
+            event_id = json.loads(stored).get("id")
+            assert event_id, "the stored legacy event did not report its identity"
             nvr_configuration = {"schemaVersion": 1, "segmentSeconds": 30, "maxAgeHours": 24,
                 "maxBytes": 0, "minFreeBytes": 0, "cameras": [{
                     "id": "legacy-policy", "name": "Legacy policy", "policy": "event",
