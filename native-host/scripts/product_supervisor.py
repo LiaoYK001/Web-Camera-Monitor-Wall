@@ -558,6 +558,9 @@ class ProductSupervisor:
     def stop(self):
         self.stop_requested.set()
         try:
+            if self.lan_thread is not None and self.lan_thread.is_alive():
+                self.lan_server.shutdown()
+                self.lan_thread.join()
             self.stop_lan()
             self.close_frontend()
             deadline = time.monotonic() + 25
