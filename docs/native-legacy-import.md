@@ -93,3 +93,21 @@ English: the implemented subset creates a **new private offline candidate**, nev
 禁止直接用真实 Media Source 做“离线验证”：当前候选 [close_when_inactive=False](../native-host/scripts/legacy_stage_document.py#L126-L135) 会进入固定上游的 [未激活也可能打开媒体路径](../obs/obs-studio/plugins/obs-ffmpeg/obs-ffmpeg-source.c#L488-L489)。当前工具从不加载候选，因此没有该 I/O；未来 loader 测试必须保持此边界。显式静音仅证明没有音频输出/监听；原 audioTrack 留在私密 original 中，不能据此宣称未来启音后的总线路由等价。
 
 English: the standalone real-libobs development gate is implemented with a fixed-size inert source and synthetic-only bounded stdin, never real media modules, frontend, rendering or audio/video reset. It exercises actual load/query/save/destruction/reload and item allocation; original/mapping-derived expectations are separate from live collection queries, while the pure decoder retains responsibility for deterministic identities and the complete manifest. Exact nonzero callback counts and object disappearance are checked on each load. Unsafe numeric layout is rejected before loading, and failure/timeout diagnostics do not echo captured output. `AbsoluteCoordinates=true` is explicitly set/restored; no nonzero global video canvas exists, so different nonzero base-versus-scene sizes and default relative-coordinate behavior remain unproved. Custom dimensions/CPU transforms are not pixels, runtime version is not binary provenance, and harmless ignored item-name/scale_ref storage is not universally tamper-proofed. Consult actual platform receipts before claiming Windows execution. Real FFmpeg can open while inactive with the current candidate settings; absence of activation is not an I/O safety barrier. Explicit silence does not qualify enabled-audio bus routing, product authorization or reversible live apply.
+
+## 安装包内的数据迁移入口与安装态门禁 / Shipped data-import entry and installed gate
+
+本页前半部分是**场景 JSON 的只读预检与离线暂存**，不是用户实际使用的数据搬迁。用户入口是安装包根目录的 `MIGRATE-LEGACY.cmd`：它显式选择来源（旧 WebOBS 4.x 的 `%LOCALAPPDATA%\WebOBS\config`，或 v4.5 原生预览的 `NativePreview\config`），要求先退出旧程序并二次确认，然后调用包内 `services/product/migrate_legacy.py`，目标固定为 `%LOCALAPPDATA%\WebOBS\Native\config`，并带 `--confirm-stopped --include-backup-key`。
+
+The first half of this page is read-only scene-JSON planning and offline staging; it is not the data move a user performs. The shipped entry is `MIGRATE-LEGACY.cmd` at the installed runtime root: it asks for an explicit source (old WebOBS 4.x `%LOCALAPPDATA%\WebOBS\config`, or the v4.5 native preview profile), requires the old product to be stopped and a second confirmation, then runs the packaged `services/product/migrate_legacy.py` into `%LOCALAPPDATA%\WebOBS\Native\config` with `--confirm-stopped --include-backup-key`.
+
+搬迁范围 / what moves: `cluster.sqlite3`（账号与权限）、`cameras.db`（设备与流 profile）、`events.db`、`v2-clients.db`、`scene.json`/`studio.json`/`nvr.json`/`archive.json`/`desktop.json`、`keys/`、`camera-secrets/`、`notification-secrets/`、`secrets/`、`go2rtc/`，以及可选的 v4.5 账号工作区与旧 DPAPI 备份密钥。数据库通过 SQLite backup API 复制并通过 `integrity_check`；目标必须是空的新档案，绝不合并或覆盖；源目录只读保留；会话库 `auth-sessions.db` 故意不搬迁。
+Recordings, archives and the Electron-era scene/studio semantics are not re-applied by this path, so `fullFeatureMigrationQualified` stays false even when the config import passes.
+
+安装态门禁 / installed gate: [legacy_import_windows.py](../native-host/tests/legacy_import_windows.py) 由 `desktop/scripts/test-native-product-install.ps1` 的 `installed-legacy-import` 阶段对已安装的完整产品运行，回执写入 `build/obs-native-ci/native-product-legacy-import.json` 并随内部回执上传。它依次证明：
+
+- 安装包内的 importer 与仓库中受审的 `native-host/scripts/migrate_legacy.py` 字节一致，`MIGRATE-LEGACY.cmd` 指向产品自己的数据根并保留停止确认与备份密钥步骤。
+- 一次性旧安装由真实已安装入口填充：首次建档的 owner、Camera Registry 设备与流 profile、一条事件、一条录像策略（写入 `nvr.json`），随后正常退出。
+- 用运行时的嵌入式 Python 调用包内 importer 完成导入；DPAPI 备份密钥解密为目标档案的明文密钥；第二次导入被拒绝且不改动任何文件；旧安装逐文件 SHA-256 不变。
+- 导入后的安装再次从真实入口启动：不再开放首次建档、陌生人无法夺取账号库、旧账号可登录并取得自己的会话；设备/adapter/endpoint/profile、事件与录像策略都可经认证 API 读取；旧安装遗留的会话 cookie 返回 401；结束后由该运行时派生的进程全部退出。
+
+The gate qualifies the shipped config/database/backup-key import path on a disposable profile produced and consumed by the actual installed entry. It is not the user's own profile, not recordings/archive contents, and not the Electron scene/studio semantics; `legacyConfigImportQualified` and `fullFeatureMigrationQualified` are deliberately different fields, and the target-machine migration of the user's data stays open (R7-001).

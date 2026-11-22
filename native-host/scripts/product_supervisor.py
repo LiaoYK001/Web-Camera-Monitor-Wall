@@ -22,7 +22,7 @@ import tempfile
 import time
 import traceback
 import urllib.request
-from http.server import ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 def clean_environment(environment):
@@ -68,6 +68,92 @@ class AuthorityServer(ThreadingHTTPServer):
         return connection, address
 
 
+def lan_contract():
+    """Load the LAN entry contract that ships beside the supervisor."""
+    for name in ("lan.py", "product_lan.py"):
+        path = Path(__file__).with_name(name)
+        if path.is_file() and not path.is_symlink():
+            specification = importlib.util.spec_from_file_location("native_product_lan", path)
+            module = importlib.util.module_from_spec(specification)
+            specification.loader.exec_module(module)
+            return module
+    raise ValueError("the LAN entry contract must ship beside the supervisor")
+
+
+class LanControlServer(ThreadingHTTPServer):
+    """Loopback-only LAN switch for the native product window.
+
+    The single product host owns the user-facing controls; the switch persists
+    the setting and the main supervisor loop re-applies it, because the control
+    server reads its allowed origins when it starts.
+    """
+    daemon_threads = True
+    allow_reuse_address = False
+
+    def __init__(self, supervisor):
+        super().__init__(("127.0.0.1", 0), LanControlHandler)
+        self.supervisor = supervisor
+
+    def get_request(self):
+        connection, address = super().get_request()
+        connection.settimeout(5)
+        return connection, address
+
+
+class LanControlHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    server: LanControlServer
+
+    def _reply(self, code, payload):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _authorized(self) -> bool:
+        supplied = self.headers.get("X-WebOBS-Native-Token", "")
+        expected = self.server.supervisor.token
+        return bool(expected) and secrets.compare_digest(supplied, expected)
+
+    def do_GET(self):  # noqa: N802 - http.server naming
+        if self.path != "/lan":
+            return self._reply(404, {"error": "not-found"})
+        if not self._authorized():
+            return self._reply(401, {"error": "unauthorized"})
+        return self._reply(200, self.server.supervisor.lan_status())
+
+    def do_POST(self):  # noqa: N802 - http.server naming
+        if self.path != "/lan":
+            return self._reply(404, {"error": "not-found"})
+        if not self._authorized():
+            return self._reply(401, {"error": "unauthorized"})
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            return self._reply(400, {"error": "bad-request"})
+        if length <= 0 or length > 4096:
+            return self._reply(400, {"error": "bad-request"})
+        try:
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return self._reply(400, {"error": "bad-request"})
+        if not isinstance(body, dict) or set(body) != {"enabled", "port"}:
+            return self._reply(400, {"error": "bad-request"})
+        try:
+            result = self.server.supervisor.request_lan(body["enabled"], body["port"])
+        except ValueError:
+            return self._reply(400, {"error": "invalid-setting"})
+        return self._reply(200, result)
+
+    def log_message(self, *_args):
+        # The private supervisor log already carries lifecycle events; a LAN
+        # switch request carries no useful access line and must not echo tokens.
+        return
+
+
 class ProductSupervisor:
     def __init__(self, runtime, root):
         self.runtime = Path(runtime).resolve(strict=True)
@@ -83,25 +169,80 @@ class ProductSupervisor:
         self.authority_servers = []
         self.authority_threads = []
         self.authority_store = None
+        self.lan = lan_contract()
+        self.lan_value = self.lan.plan({"enabled": False, "port": self.lan.DEFAULT_PORT}, [], 0, self.root)
+        self.lan_server = None
+        self.lan_thread = None
+        self.token = ""
+        self.phase = "startup"
+        self.status_lock = threading.Lock()
+        self.lan_lock = threading.Lock()
+        self.lan_dirty = threading.Event()
+        self.lan_process = None
+        self.lan_lease = None
+        self.lan_config = None
+        self.lan_control_port = 0
+        self.token = secrets.token_hex(32)
         self.complete = False
         self.recordings = None
         self.backup_key = None
+        self.frontend_render_probe = False
 
     def status(self, phase):
+        self.phase = phase
         value = {"schema": 1, "phase": phase, "origin": self.origin, "bootId": self.boot_id,
                  "failureReason": self.failure_reason,
                  "ownerPid": os.getpid(), "services": [
                      {"name": name, "pid": process.pid, "running": (code := process.poll()) is None,
                       "exitCode": code}
-                     for name, process in self.children]}
+                     for name, process in self.children],
+                 "lan": self.lan_status(),
+                 "lanSwitchPort": self.lan_server.server_port if self.lan_server else 0}
         if self.authority_store is not None:
             value["services"].append({"name": "accounts-and-registry", "pid": os.getpid(),
                                        "running": all(thread.is_alive() for thread in self.authority_threads)})
         target = self.root / "run/native-status.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
         temporary = target.with_suffix(".new")
-        with temporary.open("w", encoding="utf-8") as output:
-            json.dump(value, output)
-        temporary.replace(target)
+        # A LAN toggle is answered on the switch thread while the supervisor loop
+        # keeps publishing phases, so the publish must stay serialized.
+        with self.status_lock:
+            with temporary.open("w", encoding="utf-8") as output:
+                json.dump(value, output)
+            temporary.replace(target)
+
+    def recover_interrupted_restore(self):
+        """Converge a half restore while still holding the exclusive data lock.
+
+        A restore swaps ``config`` and ``native-profile`` as one pair. If that
+        process was killed between the two swaps, this ordinary product start is
+        the first place that can finish or undo the pair, so it must run before
+        any directory is created and before the configuration or OBS profile is
+        read; otherwise the control server and OBS would start on mismatched
+        halves. Previous data is never deleted here, and an unreadable journal
+        fails closed with a bounded reason instead of silently continuing.
+        """
+        backup = self.runtime / "services/backup/encrypted_backup.py"
+        if not backup.is_file() or backup.is_symlink():
+            return None
+        specification = importlib.util.spec_from_file_location("interrupted_restore_recovery", backup)
+        module = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(module)
+        journal = self.root / module.JOURNAL_NAME
+        marker = self.root / "run/restore-recovery.json"
+        try:
+            outcome = module.recover_interrupted(journal)
+        except Exception as error:
+            reason = str(error)[:200]
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(json.dumps({"schema": 1, "state": "unresolved", "reason": reason},
+                indent=2) + "\n", encoding="utf-8")
+            raise ValueError(f"interrupted restore needs repair: run the product backup "
+                f"recover action before starting ({reason})") from error
+        if outcome:
+            marker.unlink(missing_ok=True)
+            print(f"converged the interrupted restore as {outcome}", flush=True)
+        return outcome
 
     def prepare(self):
         manifest = self.runtime / "webobs-native-prototype.json"
@@ -137,6 +278,7 @@ class ProductSupervisor:
             return False
         self.owns_profile = True
         protect(self.root, self.runtime)
+        self.recover_interrupted_restore()
         directories = ["config", "logs", "native-profile/obs-studio"]
         if self.complete:
             directories += ["recordings", "backups", "snapshots", "config/go2rtc", "config/keys",
@@ -203,7 +345,7 @@ class ProductSupervisor:
             "WEBOBS_OBS_PREFIX": str(self.runtime),
             "WEBOBS_LIBSODIUM_LIBRARY": str(self.runtime / "bin/libsodium.dll"),
             "WEBOBS_CLUSTER_INTERNAL_TOKEN": secrets.token_hex(32),
-            "WEBOBS_NATIVE_HOST_TOKEN": secrets.token_hex(32),
+            "WEBOBS_NATIVE_HOST_TOKEN": self.token,
             "WEBOBS_NATIVE_PREVIEW": "true" if self.preview else "false",
             "WEBOBS_NATIVE_BOOT_ID": self.boot_id,
             "WEBOBS_WEBRTC_ENABLED": "true", "WEBOBS_COMPOSITE_ENABLED": "false",
@@ -229,6 +371,8 @@ class ProductSupervisor:
                 self.recordings = migrated_recording or (
                     Path(os.environ.get("USERPROFILE", str(self.root))) / "Videos" / "WebOBS")
             self.recordings.mkdir(parents=True, exist_ok=True)
+            self.program_recordings = self.recordings / "program"
+            self.program_recordings.mkdir(parents=True, exist_ok=True)
             detector_model = self.runtime / "web/models/ssd_mobilenet_v1_12.onnx"
             self.environment.update({
                 "WEBOBS_EVENT_DATABASE": str(config / "events.db"),
@@ -248,6 +392,7 @@ class ProductSupervisor:
                 "WEBOBS_ARCHIVE_QUEUE": str(config / "archive-queue.sqlite3"),
                 "WEBOBS_ARCHIVE_PYTHON_MODULE": str(self.runtime / "services/archive/s3_archive.py"),
                 "WEBOBS_BACKUP_CONFIG_ROOT": str(config),
+                "WEBOBS_BACKUP_NATIVE_PROFILE": str(self.root / "native-profile"),
                 "WEBOBS_BACKUP_ROOT": str(self.root / "backups"),
                 "WEBOBS_BACKUP_KEY_FILE": str(self.root / "run/backup.key"),
                 "WEBOBS_BACKUP_S3_CONFIG": str(config / "archive.json"),
@@ -264,6 +409,12 @@ class ProductSupervisor:
                 "WEBOBS_DETECTOR_PYTHON_MODULE": str(self.runtime / "services/analytics/detector_worker.py"),
                 "WEBOBS_CAMERA_BACKGROUND_PROBES": "true",
                 "WEBOBS_NVR_ENABLED": "true", "WEBOBS_GO2RTC_ENABLED": "true",
+                # Direct-only stays authoritative in webobsd: composite_enabled
+                # would switch the control server into the full OBS engine path
+                # (obs_startup, x264/WHIP outputs) and it exits during native
+                # startup. The native host owns Program recording/WHIP with a
+                # private MediaMTX on demand, so the core keeps advertising
+                # composite as disabled until its proxy can read that real state.
                 "WEBOBS_COMPOSITE_ENABLED": "false",
             })
             if detector_model.is_file():
@@ -272,6 +423,9 @@ class ProductSupervisor:
                 self.environment["WEBOBS_GO2RTC_BINARY"] = str(self.runtime / "bin/go2rtc.exe")
         if os.environ.get("WEBOBS_PRODUCT_ALLOW_TEST_ENDPOINTS") == "true":
             self.environment["WEBOBS_CAMERA_ALLOW_TEST_ENDPOINTS"] = "true"
+            # The in-process authority replaces os.environ before OBS starts.
+            # Keep the probe opt-in separate from the shared service environment.
+            self.frontend_render_probe = os.environ.get("WEBOBS_PRODUCT_RENDER_PROBE") == "1"
         return True
 
     def port(self, preferred=0):
@@ -404,6 +558,10 @@ class ProductSupervisor:
     def stop(self):
         self.stop_requested.set()
         try:
+            if self.lan_thread is not None and self.lan_thread.is_alive():
+                self.lan_server.shutdown()
+                self.lan_thread.join()
+            self.stop_lan()
             self.close_frontend()
             deadline = time.monotonic() + 25
             for name, process in reversed(self.children):
@@ -431,6 +589,158 @@ class ProductSupervisor:
         finally:
             self.owns_profile = False
             self.resources.close()
+
+    def lan_status(self):
+        """Bounded view of the entry for the native window and the status file."""
+        with self.lan_lock:
+            value = self.lan_value
+        receipt = self.lan.status(value)
+        receipt["running"] = bool(self.lan_process and self.lan_process.poll() is None)
+        receipt["pendingRestart"] = self.lan_dirty.is_set()
+        receipt["switchPort"] = self.lan_server.server_port if self.lan_server else 0
+        return receipt
+
+    def request_lan(self, enabled, port):
+        """Persist the switch; the entry applies on the next product start.
+
+        ``webobsd`` reads its allowed origins when it starts, so toggling the
+        entry must not silently reopen a listener inside a live session. The
+        setting survives restarts, and the receipt tells the window whether a
+        restart is still required.
+        """
+        with self.lan_lock:
+            self.lan.write_setting(self.root, enabled, port)
+            setting = self.lan.read_setting(self.root)
+            addresses = self.lan.discover_addresses() if setting["enabled"] else []
+            self.lan_value = self.lan.plan(setting, addresses, self.lan_control_port, self.root)
+            self.lan_dirty.set()
+        # The status file is what the installed gates and the support bundle
+        # observe, so a toggle must publish the same receipt the switch returns.
+        self.status(self.phase)
+        return self.lan_status()
+
+    def reserve_lan_port(self, address, port):
+        lease = self.resources.enter_context(socket.socket())
+        if os.name == "nt":
+            lease.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
+            lease.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        lease.bind((address, port))
+        return lease
+
+    def prepare_lan(self, control_port):
+        """Read the persisted switch and give the control server its LAN origins.
+
+        Only private IPv4 addresses are published, the HTTPS listener belongs to
+        Caddy, and the reverse proxy dial target stays loopback. A malformed
+        setting or a busy LAN port fails closed: the product never falls back to
+        serving an enabled LAN entry over plain HTTP.
+        """
+        self.lan_control_port = control_port
+        setting = self.lan.read_setting(self.root)
+        addresses = self.lan.discover_addresses() if setting["enabled"] else []
+        value = self.lan.plan(setting, addresses, control_port, self.root)
+        with self.lan_lock:
+            self.lan_value = value
+        self.environment["WEBOBS_CONTROL_ALLOWED_ORIGINS"] = ",".join(
+            self.lan.control_origins(self.origin, value))
+        if not value["urls"]:
+            return
+        # Reserve the HTTPS port before widening any origin or WebRTC bind. A busy
+        # port stops this entry only: local loopback monitoring is what users already
+        # depend on, so a conflicting port must not refuse every product launch. The
+        # receipt keeps enabled=true with a bounded reason and no URL, and nothing is
+        # exposed beyond loopback while the entry is refused.
+        try:
+            self.lan_lease = self.reserve_lan_port(value["serving"][0], value["port"])
+        except OSError:
+            value = dict(value, serving=[], urls=[], certificate="", configuration=None,
+                         firewallCommands=[], reason="lan-port-unavailable")
+            with self.lan_lock:
+                self.lan_value = value
+            self.environment["WEBOBS_CONTROL_ALLOWED_ORIGINS"] = ",".join(
+                self.lan.control_origins(self.origin, value))
+            print("LAN sharing is enabled but the HTTPS port is already in use; "
+                  "the entry stays closed and local monitoring continues", flush=True)
+            return
+        self.environment["WEBOBS_PWA_MEDIA_ALLOWED_ORIGINS"] = ",".join(self.lan.media_origins(value))
+        # Composite playback from another machine needs candidates a remote
+        # browser can reach; Direct RTSP monitoring keeps its loopback-only binds.
+        self.environment["WEBOBS_GO2RTC_WEBRTC_BIND"] = "0.0.0.0"
+        self.environment["WEBOBS_GO2RTC_WEBRTC_HOSTS"] = ",".join(value["serving"])
+        self.lan_config = self.root / "run/lan-caddy.json"
+        self.lan_config.parent.mkdir(parents=True, exist_ok=True)
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", prefix="lan-caddy-",
+                    suffix=".new", dir=self.lan_config.parent, delete=False) as output:
+                temporary = Path(output.name)
+                json.dump(value["configuration"], output)
+                output.flush()
+                os.fsync(output.fileno())
+            temporary.replace(self.lan_config)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+
+    def start_lan(self):
+        """Start the HTTPS reverse proxy and prove a local client can connect.
+
+        The proxy is not part of the required-service set: a Caddy failure stops
+        the LAN entry with a bounded reason instead of tearing down local
+        monitoring that users already rely on.
+        """
+        with self.lan_lock:
+            value = self.lan_value
+        if not value["urls"]:
+            return
+        caddy = self.runtime / "bin/caddy.exe"
+        if not caddy.is_file() or caddy.is_symlink():
+            self.failure_reason = "lan-runtime-missing"
+            print("LAN sharing is enabled but this runtime has no Caddy component", flush=True)
+            return
+        if self.lan_lease is not None:
+            self.lan_lease.close()
+            self.lan_lease = None
+        log = self.resources.enter_context((self.root / "logs/native-lan.log").open("ab"))
+        process = subprocess.Popen([str(caddy), "run", "--config", str(self.lan_config)],
+            cwd=str(self.runtime / "bin"), env=self.environment, stdin=subprocess.DEVNULL,
+            stdout=log, stderr=log,
+            **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}))
+        self.lan_process = process
+        deadline = time.monotonic() + 15
+        reachable = False
+        while time.monotonic() < deadline and not self.stop_requested.is_set():
+            if process.poll() is not None:
+                break
+            try:
+                with socket.create_connection((value["serving"][0], value["port"]), timeout=2):
+                    reachable = True
+                    break
+            except OSError:
+                self.stop_requested.wait(0.2)
+        if not reachable:
+            self.stop_lan()
+            self.failure_reason = "lan-proxy-unreachable"
+            print("the LAN HTTPS entry did not become reachable", flush=True)
+
+    def stop_lan(self):
+        process, self.lan_process = self.lan_process, None
+        if process is None or process.poll() is not None:
+            return
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+
+    def start_lan_switch(self):
+        """Loopback-only switch the native window drives with the host token."""
+        self.lan_server = self.resources.enter_context(LanControlServer(self))
+        self.lan_thread = threading.Thread(target=self.lan_server.serve_forever,
+            name="product-lan-switch", daemon=True)
+        self.lan_thread.start()
 
     def start_python(self, name, relative, health, args=()):
         script = self.runtime / "services" / relative
@@ -463,6 +773,7 @@ class ProductSupervisor:
                     WEBOBS_GO2RTC_WEBRTC_PORT=str(leases["go2rtcWebrtc"][1]))
             self.origin = f"http://127.0.0.1:{control_port}"
             self.environment["WEBOBS_CONTROL_ALLOWED_ORIGINS"] = self.origin
+            self.prepare_lan(control_port)
             self.start_authority(leases)
             if self.complete:
                 for name in extra:
@@ -480,6 +791,8 @@ class ProductSupervisor:
                 self.start_python("backup", "backup/encrypted_backup.py", "", ["schedule"])
             self.start("control", [str(self.runtime / "bin/webobsd.exe")],
                        health=self.origin + "/api/v1/health", lease=leases["control"][0])
+            self.start_lan()
+            self.start_lan_switch()
             frontend_environment = clean_environment(os.environ)
             frontend_environment.update(PATH=self.environment["PATH"],
                 WEBOBS_NATIVE_CONTROL_ORIGIN=self.origin,
@@ -487,7 +800,15 @@ class ProductSupervisor:
                 WEBOBS_NATIVE_BOOT_ID=self.boot_id,
                 WEBOBS_NATIVE_PRODUCT_VERSION=self.version,
                 WEBOBS_NATIVE_PREVIEW="true" if self.preview else "false",
-                WEBOBS_NATIVE_PROFILE_ROOT=str(self.root / "native-profile"))
+                WEBOBS_NATIVE_PROFILE_ROOT=str(self.root / "native-profile"),
+                WEBOBS_NATIVE_LAN_SWITCH=(f"http://127.0.0.1:{self.lan_server.server_port}/lan"
+                    if self.lan_server else ""))
+            if self.frontend_render_probe:
+                frontend_environment["WEBOBS_PRODUCT_RENDER_PROBE"] = "1"
+            if self.complete and getattr(self, "program_recordings", None) is not None:
+                frontend_environment["WEBOBS_PROGRAM_RECORDINGS"] = str(self.program_recordings)
+                frontend_environment["WEBOBS_SUPPORT_BUNDLE_ROOT"] = str(self.root / "support")
+                (self.root / "support").mkdir(parents=True, exist_ok=True)
             frontend = self.start("frontend", [str(self.runtime / "bin/64bit/obs64.exe"),
                 "--portable", "--disable-updater"], environment=frontend_environment)
             self.status("running")

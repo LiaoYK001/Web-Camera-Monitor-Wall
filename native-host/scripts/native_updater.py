@@ -332,6 +332,7 @@ def backup_config(config_root: Path, data_root: Path, *, runtime_root: Path | No
     # The packaged service uses the same private key and verifies its own output.
     result = subprocess.run([str(runtime / "python/python.exe"), "-B", str(module), "create"],
                             env={**os.environ, "WEBOBS_BACKUP_CONFIG_ROOT": str(config_root),
+                                 "WEBOBS_BACKUP_NATIVE_PROFILE": str(data_root / "native-profile"),
                                  "WEBOBS_BACKUP_ROOT": str(data_root / "backups"),
                                  "WEBOBS_BACKUP_KEY_FILE": str(key),
                                  "WEBOBS_LIBSODIUM_LIBRARY": str(runtime / "bin/libsodium.dll")},
@@ -343,6 +344,8 @@ def backup_config(config_root: Path, data_root: Path, *, runtime_root: Path | No
 def _backup_error_code(stderr: str, fallback: str) -> str:
     text = (stderr or "").lower()
     for marker, code in (
+        ("restore journal", "backup-restore-journal-invalid"),
+        ("native profile", "backup-native-profile-required"),
         ("absolute", "backup-path-not-absolute"),
         ("confirmation", "backup-confirmation-invalid"),
         ("backup key", "backup-key-invalid"),
@@ -391,6 +394,7 @@ def restore_backup(archive: Path, data_root: Path, *, confirm: bool,
         raise UpdateError("backup archive, original key or restore component is unavailable")
     result = subprocess.run([str(runtime / "python/python.exe"), "-B", str(module), "restore", str(archive.resolve()),
                              "--config-root", str((data_root / "config").resolve()),
+                             "--native-profile-root", str((data_root / "native-profile").resolve()),
                              "--key-file", str(key.resolve())], timeout=300,
                             env={**os.environ, "WEBOBS_RESTORE_CONFIRM": "replace-config",
                                  "WEBOBS_BACKUP_ROOT": str((data_root / "backups").resolve()),

@@ -1,7 +1,8 @@
 #requires -Version 7.2
 # Build and qualify a fresh internal integrated installation. No legacy upgrade,
 # stable feed, existing installation/profile or public binary publication.
-param([Parameter(Mandatory=$true)][string]$BuildDirectory)
+param([Parameter(Mandatory=$true)][string]$BuildDirectory,
+    [Parameter()][ValidateRange(0, 240)][int]$SoakMinutes = 0)
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $buildRoot = [IO.Path]::GetFullPath($BuildDirectory)
@@ -97,12 +98,24 @@ try {
         throw 'Installed shortcut does not target the unified native entry.'
     }
     $phase = 'installed-entry-ui-and-media'
+    if ($SoakMinutes -gt 0) { $env:WEBOBS_PRODUCT_SOAK_MINUTES = [string]$SoakMinutes }
     & $python -B (Join-Path $repoRoot 'native-host/tests/product_windows.py') --runtime $installed --with-media --retained-profile $profile --report (Join-Path $buildRoot 'native-product-installed-ui.json')
+    $env:WEBOBS_PRODUCT_SOAK_MINUTES = $null
+    $report.soakMinutes = $SoakMinutes
     if ($LASTEXITCODE -ne 0) { throw 'Actual installed product entry/UI/media gate failed.' }
     $report.freshInstalledEntryQualified = $true
     foreach ($file in @('config/cluster.sqlite3','config/cameras.db')) {
         if (-not (Test-Path -LiteralPath (Join-Path $profile $file))) { throw 'Installed account/camera data missing.' }
     }
+    $phase = 'interrupted-restore-pair-recovery'
+    # The installed runtime's own backup service and supervisor: a restore killed
+    # between its two directory swaps must converge on the next product start.
+    $restoreParent = Join-Path $env:RUNNER_TEMP 'native-restore-pair'
+    if (Test-Path -LiteralPath $restoreParent) { Remove-Item -Recurse -Force -LiteralPath $restoreParent }
+    New-Item -ItemType Directory -Path $restoreParent | Out-Null
+    & $python -B (Join-Path $repoRoot 'native-host/tests/backup_restore_windows.py') --runtime $installed --profile-parent $restoreParent --report (Join-Path $buildRoot 'native-product-restore-pair.json')
+    if ($LASTEXITCODE -ne 0) { throw 'Installed restore-pair recovery gate failed.' }
+    $report.restorePairRecoveryQualified = $true
     function Get-ProfileFingerprint {
         # Hash only durable user data. Update metadata, generated backups,
         # logs/crash dumps, per-run sentinels and SQLite WAL sidecars are
@@ -127,6 +140,55 @@ try {
     }
     $before = Get-ProfileFingerprint
     if ($complete) {
+        $phase = 'installed-legacy-import'
+        # A migration script inside the install folder is not an entry the user can find.
+        # The complete installer creates three Start Menu links; read their real targets
+        # with the same Unicode-safe IShellLinkW probe instead of trusting the file name.
+        $helperEntries = [ordered]@{
+            'WebOBS Wall - Import old data.lnk' = 'MIGRATE-LEGACY.cmd'
+            'WebOBS Wall - Check for updates.lnk' = 'CHECK-UPDATES.cmd'
+            'WebOBS Wall - Restore backup.lnk' = 'RESTORE-BACKUP.cmd'}
+        $programsRoot = [Environment]::GetFolderPath('Programs')
+        foreach ($entry in $helperEntries.GetEnumerator()) {
+            $linkPath = Join-Path $programsRoot $entry.Key
+            if (-not (Test-Path -LiteralPath $linkPath -PathType Leaf)) {
+                throw "Installed helper shortcut missing: $($entry.Key)"
+            }
+            $expectedHelper = [IO.Path]::GetFullPath((Join-Path $installed $entry.Value))
+            $observedHelper = & $probe $linkPath $expectedHelper | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0 -or -not $observedHelper.canonicalTargetMatches -or
+                -not $observedHelper.nativeTargetExists) {
+                throw "Installed helper shortcut does not target the shipped $($entry.Value): $($entry.Key)"
+            }
+        }
+        $report.helperEntryShortcutsQualified = $true
+        # The old-data import path the user actually has: MIGRATE-LEGACY.cmd ships the
+        # packaged importer, so this gate fills a disposable install through the real
+        # installed entry, imports it with that shipped importer, and proves the imported
+        # install signs in with the old account and keeps devices, events and the NVR
+        # policy. Only the config/database/backup-key path is qualified; recordings,
+        # archives and the Electron-era scene/studio documents are not, which is why
+        # fullFeatureMigrationQualified stays false.
+        & $python -B (Join-Path $repoRoot 'native-host/tests/legacy_import_windows.py') --runtime $installed --report (Join-Path $buildRoot 'native-product-legacy-import.json')
+        if ($LASTEXITCODE -ne 0) { throw 'Installed old-data import gate failed.' }
+        $legacyReceiptPath = Join-Path $buildRoot 'native-product-legacy-import.json'
+        if (-not (Test-Path -LiteralPath $legacyReceiptPath)) { throw 'Old-data import receipt is missing.' }
+        $legacyReceipt = Get-Content -LiteralPath $legacyReceiptPath -Raw | ConvertFrom-Json
+        if ($legacyReceipt.passed -ne $true) { throw 'Old-data import receipt did not pass.' }
+        $report.legacyConfigImportQualified = [bool]$legacyReceipt.legacyConfigImportQualified
+        $report.legacyImportedFiles = [int]$legacyReceipt.importedFiles
+        $phase = 'installed-lan-entry'
+        & $python -B (Join-Path $repoRoot 'native-host/tests/lan_entry_windows.py') --runtime $installed --report (Join-Path $buildRoot 'native-product-lan.json')
+        if ($LASTEXITCODE -ne 0) { throw 'Installed LAN/Web HTTPS entry gate failed.' }
+        # The receipt states whether a private LAN HTTPS interface actually existed on this
+        # machine. Copy its real value; a runner without a private IPv4 must not be recorded
+        # as qualified LAN delivery.
+        $lanReceiptPath = Join-Path $buildRoot 'native-product-lan.json'
+        if (-not (Test-Path -LiteralPath $lanReceiptPath)) { throw 'LAN entry receipt is missing.' }
+        $lanReceipt = Get-Content -LiteralPath $lanReceiptPath -Raw | ConvertFrom-Json
+        if ($lanReceipt.passed -ne $true) { throw 'LAN entry receipt did not pass.' }
+        $report.lanEntryQualified = [bool]$lanReceipt.lanHttpsQualified
+        $report.lanEntrySkipReason = [string]$lanReceipt.lanHttpsSkipReason
         $phase = 'same-machine-upgrade'
         $match = [regex]::Match($version, '^(5\.[01]\.0-rc\.)([0-9]+)$')
         if (-not $match.Success) { throw 'Complete candidate version is not rc.N.' }

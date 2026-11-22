@@ -13,7 +13,24 @@ struct ProductVideoProgress {
 	std::string uuid;
 	bool available = false;
 	std::int64_t serial = 0; // Opaque delivered-video callback serial, never a rendering/hardware claim.
+	// Delivered-frame identity from the same media callback (schema 2). -1 means the
+	// source exposes no frame telemetry, never "no frame arrived"; it lets a frozen tile
+	// separate "the feed repeats this frame" from "frames arrive but nothing repaints".
+	// frame_ms is libobs's monotonic clock in milliseconds, not wall-clock time.
+	std::int64_t frame_timestamp = -1;
+	std::int64_t frame_ms = -1;
+	std::int64_t frame_hash = -1;
 };
+struct ProductAudioInputProgress {
+	int track = 0;
+	double gain = 1.0;
+	bool muted = false;
+	int sync_offset_ms = 0;
+	// The leading silence the owned FFmpeg mixer actually applies to this track
+	// after the mix-wide negative-offset normalization.
+	int applied_delay_ms = 0;
+};
+
 struct ProductAudioProgress {
 	std::string source_id;
 	bool available = false;
@@ -26,7 +43,12 @@ struct ProductAudioProgress {
 	bool muted = false;
 	unsigned int mixers = 0;
 	std::int64_t sync_offset = 0;
+	std::vector<ProductAudioInputProgress> inputs;
 	std::string mixer_log;
+	// The loopback port this owned FFmpeg mixer listens on. A receipt can only prove
+	// which helper disappeared if the process and the mix source can be tied together:
+	// run 44548882087 lost one of two mixers while the host still claimed the mix.
+	int mixer_port = 0;
 };
 
 // Main-thread only. Entries are owned by graphs, never by a global OBS name.
@@ -59,6 +81,10 @@ public:
 	~ProductSceneGraph();
 	std::vector<ProductVideoProgress> video_progress() const;
 	std::vector<ProductAudioProgress> audio_progress();
+	// Bitmask of the OBS output audio tracks that currently carry audio for this
+	// graph. Silent sources contribute nothing, so an audio-free Program records
+	// video only instead of encoding a silent track.
+	std::uint32_t audio_output_tracks();
 	friend std::unique_ptr<ProductSceneGraph> create_product_scene(
 		ProductSourcePool &, const std::string &, const SceneDocument &,
 		const std::vector<ProductCamera> &, std::string &);

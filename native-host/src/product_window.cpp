@@ -1,6 +1,8 @@
 #include "product_window.hpp"
 #include "product_bootstrap.hpp"
 #include "product_http_client.hpp"
+#include "product_lan.hpp"
+#include "product_output.hpp"
 #include "product_scene.hpp"
 #include "renderer_device_qt.hpp"
 #include "layout.hpp"
@@ -9,11 +11,13 @@
 
 #include <obs-frontend-api.h>
 #include <obs-module.h>
+#include <util/platform.h>
 #include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDesktopServices>
 #include <QElapsedTimer>
 #include <QEvent>
@@ -28,6 +32,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QKeyEvent>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPointer>
 #include <QPushButton>
@@ -38,6 +43,8 @@
 #include <QSpinBox>
 #include <QStandardItemModel>
 #include <QScrollArea>
+#include <QStringList>
+#include <QSystemTrayIcon>
 #include <QThread>
 #include <QTimer>
 #include <QUrl>
@@ -47,9 +54,12 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <map>
+#include <mutex>
 #include <set>
 #include <tuple>
 #include <vector>
@@ -82,6 +92,41 @@ class ProductWindow final : public QWidget {
 	QElapsedTimer health_clock_;
 	struct InputHealth { std::int64_t serial = 0; qint64 changed_ms = 0; bool sampled = false, advanced = false; };
 	std::map<std::string, InputHealth> input_health_;
+	// Test-only (WEBOBS_PRODUCT_RENDER_PROBE=1): the product draws the preview Scene and
+	// the Program channel into its own textures and reports per-cell content digests.
+	// A frozen tile then has a cause: the Scene render stayed identical, or it changed
+	// while the captured window pixels stayed identical. Nothing here changes the Scene
+	// graph, and the probe stays off unless the environment explicitly asks for it.
+	struct RenderProbeSlot {
+		gs_texrender_t *target = nullptr;
+		gs_stagesurf_t *stage = nullptr;
+		uint32_t width = 0, height = 0;
+		bool staged = false;
+		qint64 staged_frames = -1;
+		qint64 staged_ms = 0;
+		qint64 next_draw_ms = 0;
+		QString scene;
+	};
+	struct RenderProbeSample {
+		qint64 ms = 0;
+		qint64 render_frames = -1;
+		QString scene;
+		QJsonArray cells;
+	};
+	bool render_probe_enabled_ = qEnvironmentVariable("WEBOBS_PRODUCT_RENDER_PROBE") == "1";
+	bool render_probe_attached_ = false;
+	int render_probe_ticks_ = 0;
+	// The probe only draws inside a window the harness opens in a control file beside
+	// product-state.json. Without an open window nothing is drawn, no source is marked
+	// showing and no readback blocks the graphics thread, so the probe cannot revive a
+	// feed, take async frames out of the queue or slow the Program encoder.
+	std::atomic<qint64> render_probe_until_ms_{0};
+	qint64 render_probe_control_checked_ms_ = 0;
+	QString render_probe_control_path_;
+	RenderProbeSlot render_probe_slots_[2];
+	std::vector<RenderProbeSample> render_preview_samples_;
+	std::vector<RenderProbeSample> render_program_samples_;
+	std::mutex render_probe_mutex_;
 	QPushButton *login_, *create_account_, *watch_, *save_, *logout_, *refresh_, *scene_watch_;
 	QComboBox *scenes_ = nullptr;
 	QSpinBox *slot_count_ = nullptr;
@@ -99,6 +144,9 @@ class ProductWindow final : public QWidget {
 	QString program_target_scene_id_;
 	QString program_target_fingerprint_;
 	QString program_apply_state_ = "idle";
+	QString program_apply_error_;
+	bool program_apply_transient_ = false;
+	int program_apply_attempts_ = 0;
 	bool program_sync_pending_ = false;
 	quint64 program_generation_ = 0;
 	obs_scene_t *blank_scene_ = nullptr;
@@ -120,6 +168,21 @@ class ProductWindow final : public QWidget {
 	QPushButton *close_projectors_ = nullptr;
 	QPushButton *program_projector_button_ = nullptr;
 	QPointer<QWidget> program_projector_;
+	std::unique_ptr<ProductProgramOutput> program_output_;
+	QPushButton *record_program_ = nullptr;
+	QPushButton *stream_program_ = nullptr;
+	QLabel *output_health_ = nullptr;
+	QPushButton *support_bundle_ = nullptr;
+	QString last_support_bundle_;
+	QString support_bundle_error_;
+	std::unique_ptr<ProductLanSwitch> lan_switch_;
+	QPushButton *lan_share_ = nullptr;
+	QLabel *lan_health_ = nullptr;
+	QJsonObject lan_state_;
+	int lan_request_code_ = 0;
+	bool lan_busy_ = false;
+	QSystemTrayIcon *tray_ = nullptr;
+	bool quitting_ = false;
 	QPushButton *stats_button_ = nullptr;
 	QPointer<QWidget> stats_window_;
 	std::array<bool, 2> projector_pending_{};
@@ -132,7 +195,19 @@ class ProductWindow final : public QWidget {
 	QString user_id_;
 	quint64 main_generation_ = 0;
 	bool heartbeat_pending_ = false;
+	// A heartbeat tick that arrives late means the UI thread was held somewhere else.
+	// That is what makes a product control refuse UI Automation, so the observation has
+	// to carry the real stall duration and when it ended instead of leaving the receipt
+	// with only "the window was not addressable".
+	static constexpr qint64 heartbeat_interval_ms = 2000;
+	qint64 heartbeat_last_ms_ = 0;
+	qint64 ui_stall_last_ms_ = 0;
+	qint64 ui_stall_max_ms_ = 0;
+	qint64 ui_stall_at_ms_ = 0;
 	bool applying_ = false;
+	int transient_renewals_ = 0;
+	QString last_lock_ = QStringLiteral("none");
+	int last_lock_code_ = 0;
 	qint64 last_retirement_ms_ = 0;
 
 	using Reply = std::function<void(int, const QJsonObject &)>;
@@ -199,6 +274,277 @@ class ProductWindow final : public QWidget {
 		if (has_audio && !tearing_down_ && !user_id_.isEmpty())
 			observe_current_media();
 	}
+	void refresh_output_health()
+	{
+		if (!output_health_ || !program_output_) return;
+		const auto value = program_output_->status();
+		QStringList parts;
+		if (value.recording)
+			parts << tr("Program 录制中 %1 秒 · %2 MB")
+				.arg(value.recording_seconds)
+				.arg(QString::number(double(value.recording_bytes) / (1024.0 * 1024.0), 'f', 1));
+		else if (value.recording_ready)
+			parts << tr("最近 Program 录像已保存");
+		if (value.streaming)
+			parts << (value.stream_connected ? tr("Program 推流中") : tr("Program 推流连接中"));
+		if (!value.recording_error.isEmpty())
+			parts << tr("录像错误：%1").arg(value.recording_error);
+		if (!value.stream_error.isEmpty())
+			parts << tr("推流错误：%1").arg(value.stream_error);
+		if (value.recording || value.streaming)
+			parts << (value.audio_tracks ? tr("节目音轨掩码 %1").arg(QString::number(value.audio_tracks))
+				: tr("节目无音轨"));
+		output_health_->setText(parts.isEmpty() ? tr("Program 输出：空闲") : parts.join(" · "));
+		if (record_program_)
+			record_program_->setText(value.recording ? tr("停止 Program 录制") : tr("录制 Program"));
+		if (stream_program_)
+			stream_program_->setText(value.streaming ? tr("停止 Program 推流") : tr("推流 Program"));
+	}
+	void toggle_recording()
+	{
+		if (!program_output_ || user_id_.isEmpty()) return;
+		QString error;
+		const auto before = program_output_->status();
+		if (before.recording) {
+			if (!program_output_->stop_recording(error))
+				status_->setText(tr("Program 录像停止失败：%1").arg(error));
+			else
+				status_->setText(tr("Program 录像已保存：%1").arg(program_output_->status().recording_path));
+		} else {
+			if (!program_ || program_apply_state_ != "applied") {
+				status_->setText(tr("请先应用并确认 Program 场景，再开始录制。"));
+				return;
+			}
+			// The recording must encode the tracks the applied Program actually
+			// uses; a fixed track 0 would save a silent file while the product
+			// meter still reports a peak.
+			if (!program_output_->start_recording(error, program_->audio_output_tracks()))
+				status_->setText(tr("Program 录像启动失败：%1").arg(error));
+			else
+				status_->setText(tr("Program 录制中，使用同一原生宿主输出。"));
+		}
+		refresh_output_health();
+	}
+	void toggle_streaming()
+	{
+		if (!program_output_ || user_id_.isEmpty()) return;
+		QString error;
+		const auto before = program_output_->status();
+		if (before.streaming) {
+			if (!program_output_->stop_streaming(error))
+				status_->setText(tr("Program 推流停止失败：%1").arg(error));
+			else
+				status_->setText(tr("Program 推流已停止，本机推流进程已释放。"));
+		} else {
+			if (!program_ || program_apply_state_ != "applied") {
+				status_->setText(tr("请先应用并确认 Program 场景，再开始推流。"));
+				return;
+			}
+			if (!program_output_->start_streaming(error, program_->audio_output_tracks()))
+				status_->setText(tr("Program 推流启动失败：%1").arg(error));
+			else
+				status_->setText(tr("Program 正在通过本机 MediaMTX 以 RTSP/WHEP 发布。"));
+		}
+		refresh_output_health();
+	}
+	void generate_support_bundle()
+	{
+		if (user_id_.isEmpty()) return;
+		support_bundle_error_.clear();
+		QJsonArray audio_sources;
+		std::set<std::string> audio_seen;
+		int video_sources = 0, video_received = 0, video_stalled = 0, video_unknown = 0;
+		std::set<std::string> video_seen;
+		const auto collect = [&](const std::shared_ptr<ProductSceneGraph> &graph) {
+			if (!graph) return;
+			for (const auto &audio : graph->audio_progress()) {
+				if (!audio_seen.insert(audio.source_id).second) continue;
+				audio_sources.append(QJsonObject{{"sourceId", QString::fromStdString(audio.source_id)},
+					{"available", audio.available}, {"active", audio.source_active},
+					{"peakDbfs", double(audio.peak_dbfs)}});
+			}
+			for (const auto &video : graph->video_progress()) {
+				if (!video_seen.insert(video.uuid).second) continue;
+				++video_sources;
+				if (!video.available) ++video_unknown;
+				else if (video.serial > 0) ++video_received;
+				else ++video_stalled;
+			}
+		};
+		collect(wall_);
+		collect(program_);
+		for (const auto &view : projectors_)
+			if (view && view->window) collect(view->graph);
+		QJsonArray windows;
+		if (preview_)
+			windows.append(QJsonObject{{"role", "main-preview"},
+				{"qtClass", QString::fromLatin1(preview_->metaObject()->className())}});
+		if (program_projector_)
+			windows.append(QJsonObject{{"role", program_projector_->isFullScreen() ?
+					"program-fullscreen" : "program-projector"},
+				{"qtClass", QString::fromLatin1(program_projector_->metaObject()->className())}});
+		for (std::size_t i = 0; i < projectors_.size(); ++i)
+			if (projectors_[i] && projectors_[i]->window)
+				windows.append(QJsonObject{{"role", QString("fixed-scene-%1").arg(i + 1)},
+					{"qtClass", QString::fromLatin1(projectors_[i]->window->metaObject()->className())}});
+		QJsonObject output = program_output_state();
+		output.remove("recordingPath");
+		output.remove("recordingError");
+		output.remove("streamPublishUrl");
+		output.remove("streamPlaybackUrl");
+		output.remove("streamPlaybackWhep");
+		output.remove("streamError");
+		const QStringList markers{"Switched to Preview/Program mode", "Switched to regular Preview mode",
+			"Failed to initialize", "Failed to create", "QWidget", "QObject", "QLayout",
+			"Shutting down", "All scene data cleared", "Number of remaining allocations"};
+		QJsonObject marker_counts;
+		const QString log_dir = QDir(qEnvironmentVariable("WEBOBS_NATIVE_PROFILE_ROOT"))
+			.absoluteFilePath("obs-studio/logs");
+		const auto logs = QDir(log_dir).entryInfoList({"*.txt"}, QDir::Files, QDir::Time);
+		if (!logs.isEmpty()) {
+			QFile log(logs.first().absoluteFilePath());
+			if (log.size() <= 4 * 1024 * 1024 && log.open(QIODevice::ReadOnly)) {
+				log.seek((std::max)(qint64(0), log.size() - 2 * 1024 * 1024));
+				const QString tail = QString::fromUtf8(log.read(2 * 1024 * 1024));
+				for (const auto &marker : markers)
+					marker_counts.insert(marker, (std::min)(1000, int(tail.count(marker))));
+			}
+		}
+		const QJsonObject bundle{{"schema", 1},
+			{"kind", "native-product-support-bundle"},
+			{"generatedAt", QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
+			{"productVersion", qEnvironmentVariable("WEBOBS_NATIVE_PRODUCT_VERSION")},
+			{"bootId", qEnvironmentVariable("WEBOBS_NATIVE_BOOT_ID")},
+			{"phase", watching_.isEmpty() ? "authenticated" : "graph-applied"},
+			{"programApplyState", program_apply_state_},
+			{"mediaSources", media_source_count()},
+			{"renderer", renderer_device_json(renderer_device_)},
+			{"videoInputs", QJsonObject{{"sources", video_sources}, {"received", video_received},
+				{"stalled", video_stalled}, {"unknown", video_unknown}}},
+			{"audioSources", audio_sources},
+			{"programOutput", output},
+			{"programApply", QJsonObject{{"state", program_apply_state_},
+				{"error", program_apply_error_},
+				{"transient", program_apply_transient_},
+				{"attempts", program_apply_attempts_},
+				{"sceneId", program_scene_id_},
+				{"targetSceneId", program_target_scene_id_}}},
+			{"lan", QJsonObject{{"available", lan_switch_ ? true : false},
+				{"requestCode", lan_request_code_},
+				{"enabled", lan_state_.value("enabled").toBool()},
+				{"running", lan_state_.value("running").toBool()},
+				{"pendingRestart", lan_state_.value("pendingRestart").toBool()},
+				{"port", lan_state_.value("port").toInt()},
+				{"urlCount", lan_state_.value("urls").toArray().size()},
+				{"reason", lan_state_.value("reason").toString()}}},
+			{"windows", windows},
+			{"obsLogMarkers", marker_counts}};
+		const QByteArray payload = QJsonDocument(bundle).toJson(QJsonDocument::Compact) + '\n';
+		if (payload.size() > 262144) {
+			support_bundle_error_ = "support-bundle-too-large";
+			status_->setText(tr("支持包超过大小上限，未保存。"));
+			return;
+		}
+		QString root = qEnvironmentVariable("WEBOBS_SUPPORT_BUNDLE_ROOT");
+		if (root.isEmpty())
+			root = QDir(qEnvironmentVariable("WEBOBS_NATIVE_PROFILE_ROOT")).absoluteFilePath("../support");
+		if (!QDir().mkpath(root)) {
+			support_bundle_error_ = "support-bundle-directory-failed";
+			status_->setText(tr("无法创建支持包目录。"));
+			return;
+		}
+		const QString path = QDir(root).absoluteFilePath(
+			"WebOBS-support-" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + ".json");
+		QSaveFile file(path);
+		if (!file.open(QIODevice::WriteOnly) || file.write(payload) != payload.size() || !file.commit()) {
+			support_bundle_error_ = "support-bundle-write-failed";
+			status_->setText(tr("支持包写入失败。"));
+			return;
+		}
+		last_support_bundle_ = path;
+		status_->setText(tr("支持包已保存：%1").arg(path));
+	}
+	[[nodiscard]] static QString lan_summary_text(const QJsonObject &value)
+	{
+		const bool enabled = value.value("enabled").toBool();
+		const bool running = value.value("running").toBool();
+		const bool pending = value.value("pendingRestart").toBool();
+		QStringList urls;
+		for (const auto &entry : value.value("urls").toArray())
+			urls << entry.toString();
+		const QString reason = value.value("reason").toString();
+		if (!enabled)
+			return tr("局域网共享：关闭（只有这台电脑可以访问）。");
+		if (reason == "lan-address-unavailable")
+			return tr("局域网共享：已开启，但本机没有私有 IPv4 地址，暂时没有可用地址。");
+		if (reason == "lan-port-unavailable" || reason == "lan-proxy-unreachable")
+			return tr("局域网共享：已开启，但 HTTPS 入口未能启动（%1）。本机监看不受影响。").arg(reason);
+		if (running && !urls.isEmpty())
+			return pending ? tr("局域网共享：运行中，本次改动需重启后同步：%1").arg(urls.join(", "))
+			       : tr("局域网共享：运行中：%1。其他设备用同一账号通过 HTTPS 登录。").arg(urls.join(", "));
+		return tr("局域网共享：已开启，重启 WebOBS Wall 后生效（端口 %1）。").arg(value.value("port").toInt());
+	}
+
+	void apply_lan_state(int code, const QJsonObject &value)
+	{
+		if (code >= 200 && code < 300) {
+			lan_request_code_ = code;
+			lan_state_ = value;
+		} else {
+			lan_request_code_ = code;
+		}
+		if (!lan_health_ || !lan_share_)
+			return;
+		if (code == 0 || code >= 400) {
+			lan_health_->setText(tr("局域网共享：状态暂不可用，可重新读取。"));
+			lan_share_->setText(lan_state_.value("enabled").toBool() ? tr("关闭局域网共享")
+				: tr("开启局域网共享"));
+			return;
+		}
+		lan_health_->setText(lan_summary_text(lan_state_));
+		lan_share_->setText(lan_state_.value("enabled").toBool() ? tr("关闭局域网共享") : tr("开启局域网共享"));
+	}
+
+	void read_lan_state()
+	{
+		if (!lan_switch_ || lan_busy_)
+			return;
+		lan_busy_ = true;
+		if (lan_share_)
+			lan_share_->setEnabled(false);
+		lan_switch_->request("GET", {}, [this](int code, const QJsonObject &value) {
+			lan_busy_ = false;
+			apply_lan_state(code, value);
+			if (lan_share_)
+				lan_share_->setEnabled(true);
+		});
+	}
+
+	void toggle_lan_sharing()
+	{
+		if (!lan_switch_ || lan_busy_)
+			return;
+		const bool next = !lan_state_.value("enabled").toBool();
+		int port = lan_state_.value("port").toInt();
+		if (port < 1024 || port > 65535)
+			port = 18443;
+		// The supervisor accepts exactly this pair; the saved HTTPS port survives
+		// a toggle instead of silently resetting to the default.
+		const QJsonObject body{{"enabled", next}, {"port", port}};
+		lan_busy_ = true;
+		lan_share_->setEnabled(false);
+		lan_health_->setText(tr("正在更新局域网共享…"));
+		lan_switch_->request("POST", body, [this](int code, const QJsonObject &value) {
+			lan_busy_ = false;
+			apply_lan_state(code, value);
+			lan_share_->setEnabled(true);
+			if (code == 0 || code >= 400)
+				status_->setText(tr("局域网共享设置失败，已保留原设置，可重试。"));
+			else
+				status_->setText(tr("局域网共享设置已保存。"));
+		});
+	}
+
 	int media_source_count() const
 	{
 		int media_sources = 0;
@@ -239,6 +585,37 @@ class ProductWindow final : public QWidget {
 		obs_source_release(source);
 		return result;
 	}
+	QJsonObject program_output_state() const
+	{
+		if (!program_output_) return {};
+		const auto value = program_output_->status();
+		return QJsonObject{{"recording", value.recording},
+			{"recordingReady", value.recording_ready},
+			{"recordingPath", value.recording_path},
+			{"recordingError", value.recording_error},
+			{"recordingBytes", double(value.recording_bytes)},
+			{"recordingSeconds", double(value.recording_seconds)},
+			{"streaming", value.streaming},
+			{"streamConnected", value.stream_connected},
+			{"mediaMtxRunning", value.media_mtx_running},
+			{"streamPublishUrl", value.stream_publish_url},
+			{"streamPlaybackUrl", value.stream_playback_url},
+			{"streamPlaybackWhep", value.stream_playback_whep},
+			{"streamTransport", value.stream_transport},
+			{"streamError", value.stream_error},
+			// Duration of the Program teardowns the calling thread actually waited for.
+			{"teardown", QJsonObject{{"relayStopMs", double(value.relay_stop_last_ms)},
+				{"relayStopMaxMs", double(value.relay_stop_max_ms)},
+				{"publishReleaseMs", double(value.publish_release_last_ms)},
+				{"publishReleaseMaxMs", double(value.publish_release_max_ms)},
+				{"publishStopWaitMs", double(value.publish_stop_wait_last_ms)},
+				{"publishStopWaitMaxMs", double(value.publish_stop_wait_max_ms)}}},
+			// audioTracks is what the running output encodes; selectedAudioTracks is
+			// the mask the applied Program Scene actually routes right now, so an
+			// idle receipt still proves which bus the next recording will encode.
+			{"audioTracks", double(value.audio_tracks)},
+			{"selectedAudioTracks", double(program_ ? program_->audio_output_tracks() : 0u)}};
+	}
 	bool select_monitor(obs_scene_t *scene)
 	{
 		// A local view must NEVER fall back to changing global output when
@@ -249,6 +626,222 @@ class ProductWindow final : public QWidget {
 		const bool matched = selected == obs_scene_get_source(scene);
 		obs_source_release(selected);
 		return matched;
+	}
+	// fnv1a over sampled BGRA bytes of one canvas cell; the same 3x2 grid the pixel
+	// analysis applies to the captured window, so the two timelines can be compared.
+	static uint32_t render_probe_digest(const uint8_t *pixels, uint32_t linesize, uint32_t height, uint32_t x,
+		uint32_t y, uint32_t cell_width, uint32_t cell_height)
+	{
+		uint32_t hash = 2166136261u;
+		const uint32_t step_x = (std::max)(1u, cell_width / 20u), step_y = (std::max)(1u, cell_height / 15u);
+		for (uint32_t row = 0; row < cell_height; ++row) {
+			if (row % step_y)
+				continue;
+			if (y + row >= height)
+				break;
+			const uint8_t *line = pixels + size_t(y + row) * size_t(linesize);
+			for (uint32_t column = 0; column < cell_width; ++column) {
+				if (column % step_x)
+					continue;
+				const size_t at = size_t(x + column) * 4u;
+				if (at + 2u >= size_t(linesize))
+					break;
+				hash = (hash ^ line[at]) * 16777619u;
+				hash = (hash ^ line[at + 1u]) * 16777619u;
+				hash = (hash ^ line[at + 2u]) * 16777619u;
+			}
+		}
+		return hash;
+	}
+	static void render_probe_tick(void *param, float)
+	{
+		auto *self = static_cast<ProductWindow *>(param);
+		// libobs synchronizes callback removal with the video thread.
+		// Reading a few bytes at most four times per second keeps the window request
+		// responsive without putting file I/O on the graphics thread every tick.
+		const qint64 now = QDateTime::currentMSecsSinceEpoch();
+		if (now - self->render_probe_control_checked_ms_ >= 250)
+			self->render_probe_read_control(now);
+		if (now >= self->render_probe_until_ms_.load())
+			return;
+		obs_enter_graphics();
+		const int index = self->render_probe_ticks_ % 2;
+		if (self->render_probe_slots_[index].staged)
+			self->render_probe_collect(index);
+		else
+			self->render_probe_draw(index);
+		++self->render_probe_ticks_;
+		obs_leave_graphics();
+	}
+	// Harness window request: {"schema":1,"untilMs":<unix ms>}. A missing or unreadable
+	// file keeps the previous window, so a concurrent writer cannot silently close an
+	// open window mid-capture; the harness closes it explicitly with untilMs 0.
+	void render_probe_read_control(qint64 now)
+	{
+		render_probe_control_checked_ms_ = now;
+		if (render_probe_control_path_.isEmpty()) {
+			char *base = obs_module_config_path("product-render-probe.control");
+			render_probe_control_path_ = QString::fromUtf8(base ? base : "");
+			bfree(base);
+			if (render_probe_control_path_.isEmpty())
+				return;
+		}
+		QFile file(render_probe_control_path_);
+		if (!file.open(QIODevice::ReadOnly))
+			return;
+		const auto parsed = QJsonDocument::fromJson(file.read(256)).object();
+		if (!parsed.contains("untilMs"))
+			return;
+		const qint64 until = parsed.value("untilMs").toVariant().toLongLong();
+		render_probe_until_ms_.store(until > 0 ? until : 0);
+	}
+
+	// Runs inside obs_enter_graphics on the graphics thread (the same pattern OBS's own
+	// screenshot helper uses): draw the Scene copy, then stage it for the next tick.
+	void render_probe_draw(int index)
+	{
+		auto &slot = render_probe_slots_[index];
+		// Bounded readback: at most ~6 draws per second per slot and never larger than
+		// 960x540, so the probe cannot distort a CPU/GPU measurement window.
+		const qint64 now = QDateTime::currentMSecsSinceEpoch();
+		if (slot.next_draw_ms > now)
+			return;
+		slot.next_draw_ms = now + 160;
+		obs_source_t *scene = index == 0 ? obs_frontend_get_current_preview_scene() : obs_get_output_source(0);
+		if (!scene)
+			return;
+		obs_video_info info{};
+		if (!obs_get_video_info(&info)) {
+			obs_source_release(scene);
+			return;
+		}
+		uint32_t width = info.base_width, height = info.base_height;
+		if (width > 960u) {
+			height = uint32_t((uint64_t(height) * 960u) / uint64_t(width));
+			width = 960u;
+		}
+		if (!width || !height) {
+			obs_source_release(scene);
+			return;
+		}
+		if (!slot.target || !slot.stage || slot.width != width || slot.height != height) {
+			if (slot.target)
+				gs_texrender_destroy(slot.target);
+			if (slot.stage)
+				gs_stagesurface_destroy(slot.stage);
+			slot.target = gs_texrender_create(GS_BGRA_UNORM, GS_ZS_NONE);
+			slot.stage = gs_stagesurface_create(width, height, GS_BGRA_UNORM);
+			slot.width = width;
+			slot.height = height;
+		}
+		if (!slot.target || !slot.stage) {
+			obs_source_release(scene);
+			return;
+		}
+		gs_texrender_reset(slot.target);
+		if (!gs_texrender_begin(slot.target, slot.width, slot.height)) {
+			obs_source_release(scene);
+			return;
+		}
+		vec4 zero;
+		vec4_zero(&zero);
+		gs_clear(GS_CLEAR_COLOR, &zero, 0.0f, 0);
+		gs_ortho(0.0f, float(info.base_width), 0.0f, float(info.base_height), -100.0f, 100.0f);
+		gs_blend_state_push();
+		gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
+		obs_source_inc_showing(scene);
+		obs_source_video_render(scene);
+		obs_source_dec_showing(scene);
+		gs_blend_state_pop();
+		gs_texrender_end(slot.target);
+		gs_stage_texture(slot.stage, gs_texrender_get_texture(slot.target));
+		slot.staged = true;
+		slot.staged_frames = qint64(obs_get_total_frames());
+		slot.staged_ms = QDateTime::currentMSecsSinceEpoch();
+		slot.scene = QString::fromUtf8(obs_source_get_name(scene));
+		obs_source_release(scene);
+	}
+	// Map the frame staged on the previous tick, exactly as OBS's screenshot helper does.
+	void render_probe_collect(int index)
+	{
+		auto &slot = render_probe_slots_[index];
+		if (!slot.staged || !slot.stage)
+			return;
+		slot.staged = false;
+		uint8_t *pixels = nullptr;
+		uint32_t linesize = 0;
+		if (!gs_stagesurface_map(slot.stage, &pixels, &linesize) || !pixels) {
+			if (pixels)
+				gs_stagesurface_unmap(slot.stage);
+			return;
+		}
+		const uint32_t width = gs_stagesurface_get_width(slot.stage);
+		const uint32_t height = gs_stagesurface_get_height(slot.stage);
+		const uint32_t cell_width = width / 3u, cell_height = height / 2u;
+		QJsonArray cells;
+		for (uint32_t row = 0; row < 2u; ++row)
+			for (uint32_t column = 0; column < 3u; ++column)
+				cells.append(int(render_probe_digest(pixels, linesize, height, column * cell_width,
+					row * cell_height, cell_width, cell_height)));
+		gs_stagesurface_unmap(slot.stage);
+		RenderProbeSample sample;
+		sample.ms = slot.staged_ms;
+		sample.render_frames = slot.staged_frames;
+		sample.scene = slot.scene;
+		sample.cells = cells;
+		std::lock_guard<std::mutex> guard(render_probe_mutex_);
+		auto &target = index == 0 ? render_preview_samples_ : render_program_samples_;
+		target.push_back(std::move(sample));
+		if (target.size() > 32)
+			target.erase(target.begin(), target.begin() + (target.size() - 32));
+	}
+	void render_probe_attach()
+	{
+		if (!render_probe_enabled_ || render_probe_attached_ || !obs_initialized())
+			return;
+		obs_add_tick_callback(render_probe_tick, this);
+		render_probe_attached_ = true;
+	}
+	void render_probe_detach()
+	{
+		if (!render_probe_attached_)
+			return;
+		render_probe_attached_ = false;
+		obs_remove_tick_callback(render_probe_tick, this);
+		if (obs_initialized()) {
+			obs_enter_graphics();
+			for (auto &slot : render_probe_slots_) {
+				if (slot.target)
+					gs_texrender_destroy(slot.target);
+				if (slot.stage)
+					gs_stagesurface_destroy(slot.stage);
+				slot.target = nullptr;
+				slot.stage = nullptr;
+				slot.width = slot.height = 0;
+				slot.staged = false;
+			}
+			obs_leave_graphics();
+		}
+	}
+	QJsonArray render_probe_samples_json(const std::vector<RenderProbeSample> &samples)
+	{
+		QJsonArray out;
+		for (const auto &sample : samples)
+			out.append(QJsonObject{{"atMs", sample.ms}, {"renderFrames", sample.render_frames},
+				{"scene", sample.scene}, {"cells", sample.cells}});
+		return out;
+	}
+	void publish_render_probe(QJsonObject &state)
+	{
+		if (!render_probe_enabled_)
+			return;
+		std::lock_guard<std::mutex> guard(render_probe_mutex_);
+		const qint64 until = render_probe_until_ms_.load();
+		state.insert("renderProbe", QJsonObject{{"enabled", true},
+			{"windowUntilMs", until},
+			{"windowOpen", until > QDateTime::currentMSecsSinceEpoch()},
+			{"preview", render_probe_samples_json(render_preview_samples_)},
+			{"program", render_probe_samples_json(render_program_samples_)}});
 	}
 	void observe_state(const char *phase)
 	{
@@ -280,14 +873,137 @@ class ProductWindow final : public QWidget {
 			{"studioChoices", studio_choices},
 			{"mainGeneration", qint64(main_generation_)},
 			{"sessionBound", !user_id_.isEmpty()}, {"mediaSources", media_sources}, {"bindings", bindings},
+			{"lastLock", last_lock_}, {"lockCode", last_lock_code_}, {"renewTransient", transient_renewals_},
 			{"videoAvailable", video_available}, {"hardwareDecodeVerified", false}};
 		state.insert("previewLocked", preview_ && preview_->property("webobsPreviewLocked").toBool());
+	if (render_probe_enabled_ && preview_) {
+		const QVariant draws = preview_->property("webobsPreviewDrawFrames");
+		if (draws.isValid())
+			state.insert("previewDrawFrames", qint64(draws.toULongLong()));
+	}
+		// Bounded per-input progress and scene item counts. A frozen preview can mean a
+		// decoder stopped feeding frames or that this Scene no longer renders the item,
+		// and the two need different fixes; only uuid prefixes, counters and counts
+		// leave this snapshot.
+		// Which layer stalled: the graphics thread (renderFrames), the media side of
+		// a source (serial) or a Scene item that still receives frames but is no longer
+		// showing. Together these separate the three causes of a frozen tile.
+		state.insert("renderFrames", qint64(obs_get_total_frames()));
+		state.insert("laggedFrames", qint64(obs_get_lagged_frames()));
+		// When this observation was written. A reader must know that its own polling
+		// rate cannot exceed this publish rate, otherwise a 2 s observation gap looks
+		// like an input that stopped delivering frames.
+		state.insert("publishedAtMs", QDateTime::currentMSecsSinceEpoch());
+		// UI-thread stall evidence and the Program teardown durations behind it. These
+		// exist so a control refusal can be attributed without guessing.
+		state.insert("uiStallMs", double(ui_stall_last_ms_));
+		state.insert("uiStallMaxMs", double(ui_stall_max_ms_));
+		state.insert("uiStallAtMs", double(ui_stall_at_ms_));
+		struct MediaHealth {
+			bool showing;
+			bool active;
+			bool removed;
+			int media_state;
+			QString name;
+		};
+		std::map<std::string, MediaHealth> media_showing;
+		obs_enum_all_sources([](void *context, obs_source_t *source) {
+			const char *uuid = obs_source_get_uuid(source);
+			const char *id = obs_source_get_unversioned_id(source);
+			if (uuid && id && std::string_view(id) == "ffmpeg_source") {
+				const char *name = obs_source_get_name(source);
+				static_cast<std::map<std::string, MediaHealth> *>(context)->emplace(
+					uuid, MediaHealth{obs_source_showing(source), obs_source_active(source),
+						obs_source_removed(source), int(obs_source_media_get_state(source)),
+						name ? QString::fromUtf8(name).left(48) : QString()});
+			}
+			return true;
+		}, &media_showing);
+		// Read the decoder's own counter at snapshot time instead of trusting the heartbeat
+		// cache. That cache refreshes only every two seconds and stops refreshing whenever the
+		// main thread is busy (a Program apply or a UI Automation capture), which made run
+		// 44356064395 report five wall inputs as frozen for 30 s while the captured fixture
+		// counters kept advancing every ~330 ms. A missing entry means "this owned source
+		// exposes no video callback counter yet (or is already removed)"; the gate must read
+		// that as "no frame delivered", never as a frozen tile.
+		std::map<std::string, ProductVideoProgress> raw_counter;
+		auto collect_raw = [&](const std::shared_ptr<ProductSceneGraph> &graph) {
+			if (!graph) return;
+			for (const auto &input : graph->video_progress()) raw_counter.emplace(input.uuid, input);
+		};
+		collect_raw(wall_);
+		collect_raw(program_);
+		for (const auto &view : projectors_)
+			if (view && view->window)
+				collect_raw(view->graph);
+		std::set<std::string> owned_video_uuids;
+		if (wall_) owned_video_uuids.insert(wall_->uuids.begin(), wall_->uuids.end());
+		if (program_) owned_video_uuids.insert(program_->uuids.begin(), program_->uuids.end());
+		for (const auto &view : projectors_)
+			if (view && view->window)
+				owned_video_uuids.insert(view->graph->uuids.begin(), view->graph->uuids.end());
+		QJsonArray video_inputs;
+		const auto health_now = health_clock_.elapsed();
+		for (const auto &uuid : owned_video_uuids) {
+			if (video_inputs.size() >= 16)
+				break;
+			const auto found = media_showing.find(uuid);
+			const auto health = input_health_.find(uuid);
+			const auto counter = raw_counter.find(uuid);
+			video_inputs.append(QJsonObject{{"uuid", QString::fromStdString(uuid).left(8)},
+				{"serial", counter != raw_counter.end() && counter->second.available
+					 ? qint64(counter->second.serial) : qint64(-1)},
+				// Kept for the window's own health label only; a receipt must never treat
+				// this tick-cached value as proof that a decoder stopped.
+				{"healthSerial", health != input_health_.end() ? qint64(health->second.serial) : qint64(-1)},
+				{"stalledMs", health != input_health_.end() && health->second.sampled
+					 ? qint64(health_now - health->second.changed_ms) : qint64(-1)},
+				{"showing", found != media_showing.end() ? found->second.showing : false},
+				{"active", found != media_showing.end() ? found->second.active : false},
+				{"mediaState", found != media_showing.end() ? found->second.media_state : 0},
+				// Which owned Media Source this counter belongs to and whether OBS has
+				// already marked it removed: an input that reports PLAYING but never
+				// delivers a frame is only decidable once the receipt says which source
+				// it is. Product-generated names only (never a camera URL).
+				{"name", found != media_showing.end() ? found->second.name : QString()},
+				{"removed", found != media_showing.end() ? found->second.removed : false},
+				// Identity of the frame the media callback last handed to this source:
+				// its own timestamp, a content digest and how long ago it arrived.
+				// Advancing digests prove changing content reached the input even when
+				// the counter alone could also be a repeated frame. -1 means the
+				// running OBS exposes no such telemetry, never "no frame".
+				{"frameTs", counter != raw_counter.end() ? qint64(counter->second.frame_timestamp) : qint64(-1)},
+				{"frameHash", counter != raw_counter.end() ? qint64(counter->second.frame_hash) : qint64(-1)},
+				// Both sides use libobs's monotonic clock, so this age is a real
+				// elapsed value rather than a comparison of two different time bases.
+				{"frameAgeMs", counter != raw_counter.end() && counter->second.frame_ms >= 0
+					   ? qint64(qint64(os_gettime_ns() / 1000000ULL) - counter->second.frame_ms) : qint64(-1)}});
+		}
+		state.insert("videoInputs", video_inputs);
+		publish_render_probe(state);
+		const auto count_items = [](obs_scene_t *scene) {
+			int items = 0;
+			if (scene)
+				obs_scene_enum_items(scene, [](obs_scene_t *, obs_sceneitem_t *item, void *count) {
+					if (obs_sceneitem_visible(item))
+						++*static_cast<int *>(count);
+					return true;
+				}, &items);
+			return items;
+		};
+		state.insert("wallItems", count_items(wall_ ? wall_->scene : nullptr));
+		state.insert("programItems", count_items(program_ ? program_->scene : nullptr));
 		state.insert("programSceneId", program_scene_id_);
 		state.insert("programSceneFingerprint", program_fingerprint_);
 		state.insert("programStudioRevision", program_studio_revision_);
 		state.insert("programApplyState", program_apply_state_);
+		state.insert("programApplyError", program_apply_error_);
+		state.insert("programApplyTransient", program_apply_transient_);
+		state.insert("programApplyAttempts", program_apply_attempts_);
+		state.insert("programTargetSceneId", program_target_scene_id_);
 		state.insert("programSyncPending", program_sync_pending_);
 		state.insert("program", program_state());
+		state.insert("programOutput", program_output_state());
 		QJsonArray audio_sources;
 		std::set<std::string> audio_seen;
 		const auto collect_audio = [&](const std::shared_ptr<ProductSceneGraph> &graph) {
@@ -296,6 +1012,11 @@ class ProductWindow final : public QWidget {
 			for (const auto &audio : graph->audio_progress()) {
 				if (!audio_seen.insert(audio.source_id).second)
 					continue;
+				QJsonArray audio_inputs;
+				for (const auto &input : audio.inputs)
+					audio_inputs.append(QJsonObject{{"track", input.track}, {"gain", input.gain},
+						{"muted", input.muted}, {"syncOffsetMs", input.sync_offset_ms},
+						{"appliedDelayMs", input.applied_delay_ms}});
 				audio_sources.append(QJsonObject{{"sourceId", QString::fromStdString(audio.source_id)},
 					{"available", audio.available}, {"active", audio.source_active},
 					{"showing", audio.source_showing}, {"processExitCode", audio.process_exit_code},
@@ -303,6 +1024,8 @@ class ProductWindow final : public QWidget {
 					{"mediaState", audio.media_state}, {"volume", audio.volume},
 					{"muted", audio.muted}, {"mixers", double(audio.mixers)},
 					{"syncOffset", double(audio.sync_offset)},
+					{"audioInputs", audio_inputs},
+					{"mixerPort", audio.mixer_port},
 					{"mixerLog", QString::fromStdString(audio.mixer_log)}});
 			}
 		};
@@ -312,6 +1035,8 @@ class ProductWindow final : public QWidget {
 			if (view && view->window)
 				collect_audio(view->graph);
 		state.insert("audioSources", audio_sources);
+		state.insert("supportBundle", QJsonObject{{"path", last_support_bundle_},
+			{"error", support_bundle_error_}});
 		state.insert("startupStudioDeferred", frontend_->property("webobsStudioDeferredToProduct").toBool());
 		state.insert("restoreGuardHits", frontend_->property("webobsRestoreGuardHits").toInt());
 		state.insert("refusedCollection", frontend_->property("webobsRefusedCollection").toString());
@@ -474,6 +1199,9 @@ class ProductWindow final : public QWidget {
 		++program_generation_;
 		program_sync_pending_ = false;
 		program_apply_state_ = "idle";
+		program_apply_error_.clear();
+		program_apply_transient_ = false;
+		program_apply_attempts_ = 0;
 		program_scene_id_.clear();
 		program_fingerprint_.clear();
 		program_studio_revision_ = -1;
@@ -502,13 +1230,35 @@ class ProductWindow final : public QWidget {
 		update_projector_controls();
 	}
 
+	// A Program TAKE must never latch permanently on a refusal that OBS itself can
+	// settle out of (an in-flight fade, a canvas that is still busy, a graph that has
+	// to be rebuilt). Those are retried a bounded number of times by the sync timer.
+	// Structural refusals stay permanent so a real defect is not hidden behind retries.
+	static constexpr int program_apply_attempt_limit = 4;
+	static bool program_apply_is_transient(const QString &error)
+	{
+		static const char *const prefixes[] = {"program-canvas-busy", "program-transition-not-observed",
+			"program-graph-create-failed", "program-apply-failed", "scene-canvas-not-applied",
+			"scene-source-modified", "scene-create-failed", "scene-item-create-failed",
+			"scene-audio-item-create-failed", "scene-audio-mixer", "scene-audio-meter-unavailable"};
+		return std::any_of(std::begin(prefixes), std::end(prefixes),
+			[&error](const char *prefix) { return error.startsWith(QLatin1String(prefix)); });
+	}
+
 	void fail_program(qint64 revision, const QString &scene_id, const QString &fingerprint,
 		const QString &error)
 	{
+		const bool same_target = program_apply_state_ == "failed" &&
+			program_target_scene_id_ == scene_id && program_target_fingerprint_ == fingerprint;
+		program_apply_attempts_ = same_target ? program_apply_attempts_ + 1 : 1;
+		program_apply_transient_ = program_apply_is_transient(error);
 		program_target_revision_ = revision;
 		program_target_scene_id_ = scene_id;
 		program_target_fingerprint_ = fingerprint;
 		program_apply_state_ = "failed";
+		// Gates and the support bundle can only read this state file, so the
+		// concrete bounded reason has to live here as well.
+		program_apply_error_ = error.isEmpty() ? QStringLiteral("program-apply-failed") : error.left(96);
 		report_program("failed", revision, scene_id, fingerprint, error);
 		observe_current_media();
 	}
@@ -562,6 +1312,9 @@ class ProductWindow final : public QWidget {
 		program_ = std::move(candidate);
 		program_scene_id_ = scene_id;
 		program_fingerprint_ = fingerprint;
+		program_apply_error_.clear();
+		program_apply_transient_ = false;
+		program_apply_attempts_ = 0;
 		program_studio_revision_ = studio_revision;
 		program_target_revision_ = studio_revision;
 		program_target_scene_id_ = scene_id;
@@ -620,7 +1373,7 @@ class ProductWindow final : public QWidget {
 			program_sync_pending_ = false;
 			if (generation != program_generation_ || user_id_.isEmpty() || tearing_down_) return;
 			if (code == 401 || code == 403) {
-				locked(tr("会话或场景权限已失效，Program 已锁定。"));
+				locked(tr("会话或场景权限已失效，Program 已锁定。"), "program-session-refused", code);
 				return;
 			}
 			if (code != 200) return;
@@ -644,7 +1397,8 @@ class ProductWindow final : public QWidget {
 				return;
 			}
 			if (scene_id == program_target_scene_id_ && fingerprint == program_target_fingerprint_ &&
-				program_apply_state_ == "failed")
+				program_apply_state_ == "failed" &&
+				(!program_apply_transient_ || program_apply_attempts_ >= program_apply_attempt_limit))
 				return;
 			if (!program_scene_id_.isEmpty() && scene_id == program_scene_id_ &&
 				fingerprint == program_fingerprint_ && program_apply_state_ == "applied") {
@@ -763,7 +1517,11 @@ class ProductWindow final : public QWidget {
 		if (user_id_.isEmpty()) return;
 		request("/api/v1/native/auth/session", "GET", {}, [this](int code, const QJsonObject &) {
 			if (code != 200) {
-				locked(tr("会话已失效，请重新登录。"));
+				if (renewal_transient(code)) {
+					status_->setText(tr("本机会话核验暂不可用，请稍后重试。"));
+					return;
+				}
+				locked(tr("会话已失效，请重新登录。"), code == 401 ? "session-rejected" : "session-check-refused", code);
 				return;
 			}
 			if (!QMetaObject::invokeMethod(frontend_, "on_stats_triggered", Qt::DirectConnection)) {
@@ -937,10 +1695,23 @@ class ProductWindow final : public QWidget {
 			update_projector_controls();
 			const auto graph = graph_reference.lock();
 			if (!graph || main_generation != main_generation_ || wall_ != graph || applying_) return;
-			if (code != 200 || body.value("cameraVersions").toObject() != versions ||
+			if (code != 200) {
+				// A busy authority declines this projector opening only; the already
+				// authorized wall keeps its current authorization.
+				if (renewal_transient(code)) {
+					++transient_renewals_;
+					last_lock_code_ = code;
+					status_->setText(tr("本机授权服务繁忙，投影暂未打开，请稍后重试。"));
+					return;
+				}
+				locked(tr("投影观看权限或配置已失效，请重新登录。"),
+					code == 401 ? "projector-session-rejected" : "projector-refused", code);
+				return;
+			}
+			if (body.value("cameraVersions").toObject() != versions ||
 			    (scene && (body.value("sceneFingerprint").toString() != fingerprint ||
 				body.value("studioRevision").toInteger(-1) < 0))) {
-				locked(tr("投影观看权限或配置已失效，请重新登录。"));
+				locked(tr("投影观看权限或配置已失效，请重新登录。"), "projector-precondition-changed", code);
 				return;
 			}
 			std::set<QWidget *> previous;
@@ -1006,20 +1777,55 @@ class ProductWindow final : public QWidget {
 				if (!projectors_[i] || projectors_[i]->id != id) return;
 				auto &current = *projectors_[i];
 				current.heartbeat_pending = false;
-				if (code != 200 || body.value("cameraVersions").toObject() != current.versions ||
+				if (code != 200) {
+					if (tolerate_transient_renewal(code))
+						return;
+					locked(tr("投影会话、摄像机权限或配置已失效，请重新登录。"),
+						code == 401 ? "projector-session-rejected" : "projector-renew-refused", code);
+					return;
+				}
+				transient_renewals_ = 0;
+				if (body.value("cameraVersions").toObject() != current.versions ||
 				    (scene && (body.value("sceneFingerprint").toString() != current.scene_fingerprint ||
 					body.value("studioRevision").toInteger(-1) < 0)))
-					locked(tr("投影会话、摄像机权限或配置已失效，请重新登录。"));
+					locked(tr("投影会话、摄像机权限或配置已失效，请重新登录。"), "projector-precondition-changed", code);
 				else if (scene && body.value("studioRevision").toInteger(-1) != current.studio_revision) {
 					current.studio_revision = body.value("studioRevision").toInteger(-1);
 					observe_current_media();
 				}
-			});
+			}, 6000);
 		}
 	}
 
-	void locked(const QString &message)
+	// A renewal the local authority did not answer, because it is busy or briefly
+	// unavailable, is not a revoked session. Two consecutive retries keep the wall
+	// playing; a third unanswered renewal fails closed. An explicit refusal, a
+	// changed device version or a changed Scene fingerprint still locks at once.
+	static bool renewal_transient(int code)
 	{
+		return code == 0 || code == 408 || code == 429 || code == 500 || code == 502 || code == 503;
+	}
+
+	bool tolerate_transient_renewal(int code)
+	{
+		if (!renewal_transient(code))
+			return false;
+		++transient_renewals_;
+		last_lock_code_ = code;
+		if (transient_renewals_ < 3) {
+			last_lock_ = QStringLiteral("renew-retrying");
+			status_->setText(tr("本机授权服务繁忙，正在重试续期。"));
+			return true;
+		}
+		last_lock_ = QStringLiteral("renew-unavailable");
+		return false;
+	}
+
+	void locked(const QString &message, const char *category = "unspecified", int code = 0)
+	{
+		last_lock_ = QString::fromLatin1(category);
+		last_lock_code_ = code;
+		transient_renewals_ = 0;
 		// Save only this account's window preferences before protected views
 		// retire. Geometry never authorizes media or reopens a projector.
 		for (std::size_t i = 0; i < projectors_.size(); ++i)
@@ -1037,9 +1843,11 @@ class ProductWindow final : public QWidget {
 		heartbeat_pending_ = false;
 		applying_ = false;
 		user_id_.clear();
+		if (program_output_) program_output_->shutdown();
 		clear_media();
 		login_->setEnabled(true);
-		for (auto *button : {watch_, save_, logout_, refresh_, scene_watch_, stats_button_, program_projector_button_})
+		for (auto *button : {watch_, save_, logout_, refresh_, scene_watch_, stats_button_, program_projector_button_,
+			     record_program_, stream_program_, support_bundle_})
 			if (button) button->setEnabled(false);
 		slot_count_->setEnabled(false);
 		camera_choices_->clear();
@@ -1121,6 +1929,9 @@ class ProductWindow final : public QWidget {
 				return;
 			}
 			user_id_ = id;
+			transient_renewals_ = 0;
+			last_lock_ = QStringLiteral("none");
+			last_lock_code_ = 0;
 			QFile workspace_file(workspace_path());
 			if (workspace_file.size() <= 16384 && workspace_file.open(QIODevice::ReadOnly)) {
 				const auto saved = QJsonDocument::fromJson(workspace_file.readAll()).object()
@@ -1129,10 +1940,12 @@ class ProductWindow final : public QWidget {
 					if (saved.value(role).isObject()) projector_placements_[role] = saved.value(role);
 			}
 			observe_state("authenticated");
-			for (auto *button : {watch_, logout_, refresh_, scene_watch_, stats_button_})
+			for (auto *button : {watch_, logout_, refresh_, scene_watch_, stats_button_, record_program_, stream_program_,
+				     support_bundle_})
 				button->setEnabled(true);
 			status_->setText(tr("已登录，正在读取授权设备目录…"));
-			heartbeat_.start(2000);
+			heartbeat_last_ms_ = 0;
+			heartbeat_.start(int(heartbeat_interval_ms));
 			program_sync_.start(1000);
 			sync_program();
 			refresh_catalog(true);
@@ -1474,6 +2287,17 @@ class ProductWindow final : public QWidget {
 
 	void closeEvent(QCloseEvent *event) override
 	{
+		if (!quitting_ && tray_ && program_output_) {
+			const auto value = program_output_->status();
+			if (value.recording || value.streaming) {
+				hide();
+				tray_->showMessage(tr("WebOBS Wall"),
+					tr("Program 录像或推流仍在运行。使用托盘图标恢复窗口或停止输出后退出。"),
+					QSystemTrayIcon::Information, 5000);
+				event->ignore();
+				return;
+			}
+		}
 		locked(tr("正在退出…"));
 		frontend_->close();
 		event->accept();
@@ -1684,6 +2508,72 @@ public:
 		program_projector_button_->setToolTip(tr("显示 OBS 真实 Program 输出；TAKE 确认后才可用。"));
 		layout->addWidget(program_projector_button_);
 		connect(program_projector_button_, &QPushButton::clicked, this, [this] { open_program_projector(); });
+		if (!preview_delivery) {
+			program_output_ = std::make_unique<ProductProgramOutput>(
+				qEnvironmentVariable("WEBOBS_NATIVE_PROFILE_ROOT"));
+			record_program_ = new QPushButton(tr("录制 Program"), this);
+			record_program_->setObjectName("webobsRecordProgram");
+			record_program_->setToolTip(tr("由同一个 OBS 宿主把实际 Program 画面和混音录制为 MP4；无任务时不启动编码器。"));
+			layout->addWidget(record_program_);
+			connect(record_program_, &QPushButton::clicked, this, [this] { toggle_recording(); });
+			stream_program_ = new QPushButton(tr("推流 Program"), this);
+			stream_program_->setObjectName("webobsStreamProgram");
+			stream_program_->setToolTip(tr("按需启动本机 MediaMTX，以 RTMP 接收 Program 并对外提供 RTSP/WHEP；停止后释放推流进程。"));
+			layout->addWidget(stream_program_);
+			connect(stream_program_, &QPushButton::clicked, this, [this] { toggle_streaming(); });
+			output_health_ = new QLabel(tr("Program 输出：空闲"), this);
+			output_health_->setObjectName("webobsOutputHealth");
+			output_health_->setWordWrap(true);
+			layout->addWidget(output_health_);
+			support_bundle_ = new QPushButton(tr("生成支持包"), this);
+			support_bundle_->setObjectName("webobsSupportBundle");
+			support_bundle_->setToolTip(tr("导出有界脱敏状态、计数和 OBS 标记统计；不包含摄像机地址、令牌、日志正文或媒体。"));
+			layout->addWidget(support_bundle_);
+			connect(support_bundle_, &QPushButton::clicked, this, [this] { generate_support_bundle(); });
+			lan_share_ = new QPushButton(tr("开启局域网共享"), this);
+			lan_share_->setObjectName("webobsLanShare");
+			lan_share_->setToolTip(tr(
+				"让同一私有网络里的其他设备用 HTTPS 打开本产品的 Web 界面；账号登录与权限不变。"));
+			layout->addWidget(lan_share_);
+			lan_health_ = new QLabel(tr("局域网共享：正在读取状态…"), this);
+			lan_health_->setObjectName("webobsLanHealth");
+			lan_health_->setWordWrap(true);
+			layout->addWidget(lan_health_);
+			// The switch address and this boot's host token only exist after the
+			// supervisor launched this host, so the client is bound below where
+			// those values are read. The button stays visible and disabled until
+			// then instead of pretending sharing is available.
+			lan_share_->setEnabled(false);
+			lan_health_->setText(tr("局域网共享：正在等待本机开关…"));
+			if (QSystemTrayIcon::isSystemTrayAvailable()) {
+				tray_ = new QSystemTrayIcon(windowIcon(), this);
+				auto *menu = new QMenu(this);
+				auto *show = menu->addAction(tr("显示 WebOBS Wall"));
+				connect(show, &QAction::triggered, this, [this] {
+					showNormal();
+					raise();
+					activateWindow();
+				});
+				auto *quit = menu->addAction(tr("停止 Program 输出并退出"));
+				connect(quit, &QAction::triggered, this, [this] {
+					quitting_ = true;
+					if (program_output_) program_output_->shutdown();
+					locked(tr("正在退出…"));
+					frontend_->close();
+				});
+				tray_->setContextMenu(menu);
+				tray_->setToolTip(tr("WebOBS Wall：Program 输出在后台运行"));
+				connect(tray_, &QSystemTrayIcon::activated, this,
+					[this](QSystemTrayIcon::ActivationReason reason) {
+						if (reason == QSystemTrayIcon::Trigger) {
+							showNormal();
+							raise();
+							activateWindow();
+						}
+					});
+				tray_->show();
+			}
+		}
 		auto *manage = new QPushButton(tr("设备与来源管理"), this);
 		manage->setObjectName("webobsManageDevices");
 		layout->addWidget(manage);
@@ -1764,6 +2654,20 @@ public:
 			return;
 		}
 		client_ = std::make_unique<ProductHttpClient>(origin_, host_secret_, this);
+		if (lan_share_ && lan_health_) {
+			// The receipt needs no account session: the owner can open or close
+			// sharing before logging in, and the token is this boot's host secret.
+			lan_switch_ = std::make_unique<ProductLanSwitch>(
+				QUrl(qEnvironmentVariable("WEBOBS_NATIVE_LAN_SWITCH")), host_secret_, this);
+			if (lan_switch_->usable()) {
+				connect(lan_share_, &QPushButton::clicked, this, [this] { toggle_lan_sharing(); });
+				read_lan_state();
+			} else {
+				lan_switch_.reset();
+				lan_share_->setEnabled(false);
+				lan_health_->setText(tr("局域网共享：本次启动没有提供本机开关，请从 WebOBS Wall 启动入口启动。"));
+			}
+		}
 		connect(login_, &QPushButton::clicked, this, [this] {
 			const QJsonObject credentials{{"username", username_->text()}, {"password", password_->text()}};
 			password_->clear();
@@ -1817,8 +2721,22 @@ public:
 			observe_current_media();
 		});
 		connect(&heartbeat_, &QTimer::timeout, this, [this] {
+			const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
+			if (heartbeat_last_ms_ > 0) {
+				const qint64 lag = now_ms - heartbeat_last_ms_ - heartbeat_interval_ms;
+				// Only a late tick of a continuously running timer says something about the
+				// UI thread; a gap across a logout or a stopped timer does not.
+				if (lag > 250 && lag < 60000) {
+					ui_stall_last_ms_ = lag;
+					ui_stall_at_ms_ = now_ms;
+					if (lag > ui_stall_max_ms_)
+						ui_stall_max_ms_ = lag;
+				}
+			}
+			heartbeat_last_ms_ = now_ms;
 			remember_open_projector_placements();
 			refresh_video_health();
+			refresh_output_health();
 			renew_projectors(); // Remains active while the main view resolves another scene.
 			if (heartbeat_pending_ || user_id_.isEmpty())
 				return;
@@ -1831,33 +2749,51 @@ public:
 			const QJsonObject renewal = scene_active ?
 				QJsonObject{{"sceneId", watching_scene_id_}, {"fingerprint", watching_scene_fingerprint_}} :
 				QJsonObject{{"cameras", watching_}};
+			// The authority answers this through the account/registry services, which can
+			// be busy while Program output runs; the server enforces its own budget.
 			request(path, active ? "POST" : "GET", renewal, [this, active, scene_active, renewed_graph](int code, const QJsonObject &body) {
 				heartbeat_pending_ = false;
 				// A finished renewal of the old graph cannot revoke a newer graph.
 				// A graph retained during preparation MUST still enforce its result.
 				if ((active && renewed_graph.expired()) || renewed_graph.lock() != wall_) return;
-				if (code != 200)
-					locked(tr("会话或摄像机权限已失效，请重新登录。"));
-				else if (active && body.value("cameraVersions").toObject() != watching_versions_)
-					locked(tr("设备配置已变更，请重新登录后连接。"));
+				if (code != 200) {
+					if (tolerate_transient_renewal(code))
+						return;
+					locked(tr("会话或摄像机权限已失效，请重新登录。"),
+						code == 401 ? "session-rejected" : "renew-refused", code);
+					return;
+				}
+				transient_renewals_ = 0;
+				if (active && body.value("cameraVersions").toObject() != watching_versions_)
+					locked(tr("设备配置已变更，请重新登录后连接。"), "camera-versions-changed", code);
 				else if (scene_active && (body.value("sceneFingerprint").toString() != watching_scene_fingerprint_ ||
 					body.value("studioRevision").toInteger(-1) < 0))
-					locked(tr("场景已变更，请重新登录后连接。"));
+					locked(tr("场景已变更，请重新登录后连接。"), "scene-changed", code);
 				else if (scene_active && body.value("studioRevision").toInteger(-1) != watching_studio_revision_) {
 					watching_studio_revision_ = body.value("studioRevision").toInteger(-1);
 					observe_current_media();
 				}
-			});
+			}, 6000);
 		});
+		render_probe_attach();
 	}
 	~ProductWindow() override
 	{
 		tearing_down_ = true;
+		render_probe_detach();
 		heartbeat_.stop();
 		program_sync_.stop();
 		settlement_.stop();
 		retirement_.stop();
 		client_.reset();
+		if (tray_) {
+			tray_->hide();
+			tray_ = nullptr;
+		}
+		if (program_output_) {
+			program_output_->shutdown();
+			program_output_.reset();
+		}
 		clear_media();
 		if (blank_scene_ && obs_initialized()) {
 			obs_source_remove(obs_scene_get_source(blank_scene_));

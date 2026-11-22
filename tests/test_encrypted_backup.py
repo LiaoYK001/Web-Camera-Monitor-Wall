@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import json
 import os
 import pathlib
 import sqlite3
@@ -68,6 +69,307 @@ class BackupTests(unittest.TestCase):
             key.write_bytes(b"k" * 32)
             with self.assertRaisesRegex(backup.BackupError, "confirmation"):
                 backup.restore(root / "webobs", archive, key, self.sodium, False)
+
+    def test_native_profile_is_restored_with_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            config = root / "webobs"
+            config.mkdir()
+            (config / "scene.json").write_text('{"schemaVersion":5}\n', encoding="utf-8")
+            native = root / "native-profile"
+            workspace = native / ("obs-studio/plugin_config/webobs-native-host/workspace-" + "a" * 32 + ".json")
+            workspace.parent.mkdir(parents=True)
+            workspace.write_text('{"schema":2,"sceneId":"fixture"}\n', encoding="utf-8")
+            key = root / "key"
+            key.write_bytes(bytes(range(32)))
+            archive = backup.create(config, root / "backups", key, self.sodium, native)
+            workspace.write_text('{"schema":2,"sceneId":"mutated"}\n', encoding="utf-8")
+            (config / "scene.json").write_text('{"schemaVersion":4}\n', encoding="utf-8")
+            rollback = backup.restore(config, archive, key, self.sodium, True, native)
+            self.assertTrue(rollback.is_dir())
+            self.assertEqual(workspace.read_text(encoding="utf-8"), '{"schema":2,"sceneId":"fixture"}\n')
+            self.assertEqual((config / "scene.json").read_text(encoding="utf-8"), '{"schemaVersion":5}\n')
+
+    def test_config_only_archive_keeps_existing_native_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            config = root / "webobs"
+            config.mkdir()
+            (config / "scene.json").write_text('{"schemaVersion":5}\n', encoding="utf-8")
+            key = root / "key"
+            key.write_bytes(bytes(range(32)))
+            archive = backup.create(config, root / "backups", key, self.sodium)
+            native = root / "native-profile"
+            native.mkdir()
+            (native / "user.ini").write_text("[BasicWindow]\nPreviewProgramMode=true\n", encoding="utf-8")
+            backup.restore(config, archive, key, self.sodium, True, native)
+            self.assertEqual((native / "user.ini").read_text(encoding="utf-8"),
+                             "[BasicWindow]\nPreviewProgramMode=true\n")
+
+    def test_backup_taken_after_a_restore_is_still_restorable(self) -> None:
+        """恢复后再打的备份必须还能恢复 / a backup taken after a restore must restore.
+
+        Run 44800953316 (rc.79) failed at backup_restore_windows.py
+        "a configuration-only archive could not be restored". restore() lands
+        the archive's backup-manifest.json at the configuration root; the next
+        create() archived that artifact, so the regenerated manifest declared
+        the previous manifest's stale size and then overwrote those bytes, and
+        every restore of that archive failed integrity verification forever.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            config = root / "webobs"
+            config.mkdir()
+            (config / "scene.json").write_text('{"schemaVersion":5}\n', encoding="utf-8")
+            key = root / "key"
+            key.write_bytes(bytes(range(32)))
+            archive = backup.create(config, root / "backups", key, self.sodium)
+            backup.restore(config, archive, key, self.sodium, True)
+            self.assertTrue((config / "backup-manifest.json").is_file())
+            (config / "scene.json").write_text('{"schemaVersion":6}\n', encoding="utf-8")
+            second = backup.create(config, root / "backups", key, self.sodium)
+            backup.restore(config, second, key, self.sodium, True)
+            self.assertEqual((config / "scene.json").read_text(encoding="utf-8"),
+                             '{"schemaVersion":6}\n')
+
+    def test_legacy_self_referential_manifest_entry_still_verifies(self) -> None:
+        """历史污染清单仍可验收 / archives poisoned by the old create() still verify.
+
+        旧版 create() 已把残留清单当用户文件打包，其自指条目记录了上一份清单的
+        陈旧大小；这些已存在的用户备份必须重新可恢复，而不是永久搁置。
+        Archives already on disk carry that self-referential stale entry; they
+        must verify and restore again instead of stranding the user's data.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            candidate = pathlib.Path(directory) / "webobs"
+            candidate.mkdir()
+            scene = candidate / "scene.json"
+            scene.write_text('{"schemaVersion":5}\n', encoding="utf-8")
+            (candidate / "backup-manifest.json").write_text(json.dumps({
+                "format": 1, "createdAt": 0, "schema": "v2-M7",
+                "files": [{"path": "backup-manifest.json", "size": 999, "sha256": "0" * 64},
+                          {"path": "scene.json", "size": scene.stat().st_size,
+                           "sha256": backup.file_sha256(scene)}]}, sort_keys=True),
+                encoding="utf-8")
+            backup.verify_tree(candidate)
+
+    def seed_pair(self, root: pathlib.Path) -> pathlib.Path:
+        """Create a configuration directory plus a native profile and their key."""
+        config = root / "webobs"
+        config.mkdir()
+        (config / "scene.json").write_text('{"schemaVersion":5}\n', encoding="utf-8")
+        native = root / "native-profile"
+        native.mkdir()
+        (native / "product-state.json").write_text('{"sceneId":"original"}\n', encoding="utf-8")
+        key = root / "key"
+        key.write_bytes(bytes(range(32)))
+        return key
+
+    def mutate_pair(self, root: pathlib.Path) -> None:
+        (root / "webobs" / "scene.json").write_text('{"schemaVersion":4}\n', encoding="utf-8")
+        (root / "native-profile" / "product-state.json").write_text('{"sceneId":"current"}\n', encoding="utf-8")
+
+    def read_pair(self, root: pathlib.Path) -> tuple[str, str]:
+        return (root / "webobs" / "scene.json").read_text(encoding="utf-8"), \
+            (root / "native-profile" / "product-state.json").read_text(encoding="utf-8")
+
+    def test_native_archive_refuses_a_restore_without_a_named_native_root(self) -> None:
+        # Restoring one half of a paired archive would leave configuration and
+        # native profile from different generations.
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            key = self.seed_pair(root)
+            archive = backup.create(root / "webobs", root / "backups", key, self.sodium,
+                                    root / "native-profile")
+            self.mutate_pair(root)
+            with self.assertRaisesRegex(backup.BackupError, "must name the native profile"):
+                backup.restore(root / "webobs", archive, key, self.sodium, True)
+            self.assertEqual(self.read_pair(root), ('{"schemaVersion":4}\n', '{"sceneId":"current"}\n'))
+            self.assertFalse(list(root.glob(".webobs-restore-*")))
+            self.assertFalse((root / backup.JOURNAL_NAME).exists())
+
+    def test_failed_swap_restores_the_previous_pair_and_leaves_no_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            key = self.seed_pair(root)
+            archive = backup.create(root / "webobs", root / "backups", key, self.sodium,
+                                    root / "native-profile")
+            self.mutate_pair(root)
+            real_replace = os.replace
+
+            def refuse_landing(source, destination):
+                if pathlib.Path(source).name.startswith(".webobs-restore-"):
+                    raise OSError("simulated failure while landing the configuration directory")
+                return real_replace(source, destination)
+
+            with mock.patch("os.replace", side_effect=refuse_landing):
+                with self.assertRaises(OSError):
+                    backup.restore(root / "webobs", archive, key, self.sodium, True,
+                                   root / "native-profile")
+            self.assertEqual(self.read_pair(root), ('{"schemaVersion":4}\n', '{"sceneId":"current"}\n'))
+            self.assertFalse((root / backup.JOURNAL_NAME).exists())
+            for prefix in (".webobs-restore-", ".webobs-native-restore-", ".webobs-decrypt-"):
+                self.assertFalse(list(root.glob(f"{prefix}*")), f"{prefix} staging survived")
+
+    def test_crash_before_the_configuration_lands_rolls_back_to_the_old_pair(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            key = self.seed_pair(root)
+            archive = backup.create(root / "webobs", root / "backups", key, self.sodium,
+                                    root / "native-profile")
+            self.mutate_pair(root)
+            real_replace = os.replace
+
+            def crash(source, destination):
+                if pathlib.Path(destination).name.startswith(".webobs-rollback-"):
+                    raise KeyboardInterrupt("simulated process loss")
+                return real_replace(source, destination)
+
+            with mock.patch("os.replace", side_effect=crash):
+                with self.assertRaises(KeyboardInterrupt):
+                    backup.restore(root / "webobs", archive, key, self.sodium, True,
+                                   root / "native-profile")
+            self.assertTrue((root / backup.JOURNAL_NAME).is_file())
+            self.assertEqual(backup.recover_interrupted(root / backup.JOURNAL_NAME), "rolled-back")
+            self.assertFalse((root / backup.JOURNAL_NAME).exists())
+            self.assertEqual(self.read_pair(root), ('{"schemaVersion":4}\n', '{"sceneId":"current"}\n'))
+            self.assertFalse(list(root.glob(".webobs-restore-*")))
+            self.assertFalse(list(root.glob(".webobs-native-restore-*")))
+
+    def test_crash_after_both_swaps_returns_both_halves_as_a_pair(self) -> None:
+        # Killing the restore between the native swap-out and the configuration
+        # landing used to put the configuration back while the OBS profile stayed
+        # parked, which is exactly the mismatched pair this journal exists to stop.
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            key = self.seed_pair(root)
+            archive = backup.create(root / "webobs", root / "backups", key, self.sodium,
+                                    root / "native-profile")
+            self.mutate_pair(root)
+            real_replace = os.replace
+
+            def crash(source, destination):
+                if pathlib.Path(source).name.startswith(".webobs-restore-"):
+                    raise KeyboardInterrupt("simulated process loss")
+                return real_replace(source, destination)
+
+            with mock.patch("os.replace", side_effect=crash):
+                with self.assertRaises(KeyboardInterrupt):
+                    backup.restore(root / "webobs", archive, key, self.sodium, True,
+                                   root / "native-profile")
+            self.assertFalse((root / "webobs").exists())
+            self.assertFalse((root / "native-profile").exists())
+            self.assertTrue((root / backup.JOURNAL_NAME).is_file())
+            self.assertEqual(backup.recover_interrupted(root / backup.JOURNAL_NAME), "rolled-back")
+            self.assertFalse((root / backup.JOURNAL_NAME).exists())
+            self.assertEqual(self.read_pair(root), ('{"schemaVersion":4}\n', '{"sceneId":"current"}\n'))
+            for prefix in (".webobs-restore-", ".webobs-native-restore-",
+                           ".webobs-rollback-", ".webobs-native-rollback-"):
+                self.assertFalse(list(root.glob(f"{prefix}*")), f"{prefix} survived the pair recovery")
+
+    def test_recovery_parks_a_later_profile_and_lands_the_matching_pair(self) -> None:
+        # A crash after the configuration landed leaves the archive's staged
+        # profile to land. If a start without recovery already created a profile,
+        # its bytes are kept parked instead of overwritten or deleted.
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            key = self.seed_pair(root)
+            archive = backup.create(root / "webobs", root / "backups", key, self.sodium,
+                                    root / "native-profile")
+            self.mutate_pair(root)
+            real_replace = os.replace
+
+            def crash(source, destination):
+                if pathlib.Path(source).name.startswith(".webobs-native-restore-"):
+                    raise KeyboardInterrupt("simulated process loss")
+                return real_replace(source, destination)
+
+            with mock.patch("os.replace", side_effect=crash):
+                with self.assertRaises(KeyboardInterrupt):
+                    backup.restore(root / "webobs", archive, key, self.sodium, True,
+                                   root / "native-profile")
+            later = root / "native-profile"
+            later.mkdir()
+            (later / "product-state.json").write_text('{"sceneId":"recreated"}\n', encoding="utf-8")
+            self.assertEqual(backup.recover_interrupted(root / backup.JOURNAL_NAME), "completed")
+            self.assertFalse((root / backup.JOURNAL_NAME).exists())
+            self.assertEqual((root / "webobs" / "scene.json").read_text(encoding="utf-8"),
+                             '{"schemaVersion":5}\n')
+            self.assertEqual((later / "product-state.json").read_text(encoding="utf-8"),
+                             '{"sceneId":"original"}\n')
+            parked = sorted(root.glob(".webobs-native-parked-*"))
+            self.assertEqual(len(parked), 1, "the later profile must stay parked")
+            self.assertEqual((parked[0] / "product-state.json").read_text(encoding="utf-8"),
+                             '{"sceneId":"recreated"}\n')
+            self.assertFalse(list(root.glob(".webobs-native-restore-*")))
+
+    def test_crash_after_the_configuration_lands_completes_the_pair(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            key = self.seed_pair(root)
+            archive = backup.create(root / "webobs", root / "backups", key, self.sodium,
+                                    root / "native-profile")
+            self.mutate_pair(root)
+            real_replace = os.replace
+
+            def crash(source, destination):
+                if pathlib.Path(source).name.startswith(".webobs-native-restore-"):
+                    raise KeyboardInterrupt("simulated process loss")
+                return real_replace(source, destination)
+
+            with mock.patch("os.replace", side_effect=crash):
+                with self.assertRaises(KeyboardInterrupt):
+                    backup.restore(root / "webobs", archive, key, self.sodium, True,
+                                   root / "native-profile")
+            self.assertEqual((root / "webobs" / "scene.json").read_text(encoding="utf-8"),
+                             '{"schemaVersion":5}\n')
+            self.assertFalse((root / "native-profile").exists())
+            self.assertTrue((root / backup.JOURNAL_NAME).is_file())
+            self.assertEqual(backup.recover_interrupted(root / backup.JOURNAL_NAME), "completed")
+            self.assertEqual(self.read_pair(root), ('{"schemaVersion":5}\n', '{"sceneId":"original"}\n'))
+            self.assertFalse(list(root.glob(".webobs-native-restore-*")))
+
+    def test_stale_journal_recovers_and_a_broken_journal_blocks_restore(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            key = self.seed_pair(root)
+            archive = backup.create(root / "webobs", root / "backups", key, self.sodium,
+                                    root / "native-profile")
+            self.mutate_pair(root)
+            self.assertIsNone(backup.recover_interrupted(root / backup.JOURNAL_NAME))
+            (root / backup.JOURNAL_NAME).write_text('{"schema":1,"state":"prepared"}\n', encoding="utf-8")
+            with self.assertRaisesRegex(backup.BackupError, "invalid"):
+                backup.recover_interrupted(root / backup.JOURNAL_NAME)
+            staged = root / ".webobs-restore-staged"
+            staged.mkdir()
+            (root / backup.JOURNAL_NAME).write_text(json.dumps({
+                "schema": 1, "state": "prepared", "configRoot": str(root / "webobs"),
+                "configActivated": str(staged)}), encoding="utf-8")
+            # Nothing had landed yet: the staged copy is dropped and the journal
+            # cleared, so the next restore can proceed.
+            self.assertEqual(backup.recover_interrupted(root / backup.JOURNAL_NAME), "rolled-back")
+            self.assertFalse(staged.exists())
+            self.assertEqual(self.read_pair(root), ('{"schemaVersion":4}\n', '{"sceneId":"current"}\n'))
+            # A journal whose staged copies are already gone describes a
+            # completed swap; the retained rollback directories are not deleted.
+            (root / backup.JOURNAL_NAME).write_text(json.dumps({
+                "schema": 1, "state": "prepared", "configRoot": str(root / "webobs"),
+                "configActivated": str(root / ".webobs-restore-gone"),
+                "nativeProfile": str(root / "native-profile"),
+                "nativeActivated": str(root / ".webobs-native-restore-gone")}), encoding="utf-8")
+            self.assertEqual(backup.recover_interrupted(root / backup.JOURNAL_NAME), "completed")
+            self.assertEqual(self.read_pair(root), ('{"schemaVersion":4}\n', '{"sceneId":"current"}\n'))
+            (root / backup.JOURNAL_NAME).write_text('{"schema":2,"state":"prepared"}\n', encoding="utf-8")
+            with self.assertRaisesRegex(backup.BackupError, "invalid"):
+                backup.recover_interrupted(root / backup.JOURNAL_NAME)
+            (root / backup.JOURNAL_NAME).write_text("not json\n", encoding="utf-8")
+            with self.assertRaisesRegex(backup.BackupError, "unreadable"):
+                backup.recover_interrupted(root / backup.JOURNAL_NAME)
+            self.assertTrue((root / "webobs" / "scene.json").is_file())
+            # A restore refuses to run while an unreadable journal is present.
+            with self.assertRaisesRegex(backup.BackupError, "unreadable"):
+                backup.restore(root / "webobs", archive, key, self.sodium, True,
+                               root / "native-profile")
 
     def test_nonlocal_backup_uses_pinned_s3_module_and_digest_key(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

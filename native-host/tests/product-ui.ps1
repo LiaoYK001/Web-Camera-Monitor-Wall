@@ -23,9 +23,23 @@ public static class ProductTestWindow {
     $operation = [Console]::In.ReadToEnd() | ConvertFrom-Json
     $code = 'product-window'
     if ($RootHwnd -notmatch '^[0-9a-f]{1,16}$') { throw 'Invalid owned root handle.' }
-    $window = [System.Windows.Automation.AutomationElement]::FromHandle(
-        [IntPtr]::new([Convert]::ToInt64($RootHwnd,16)))
-    if ($null -eq $window -or $window.Current.ProcessId -ne $FrontendPid) {
+    $ownedHandle = [IntPtr]::new([Convert]::ToInt64($RootHwnd,16))
+    # UI Automation answers null for a handle that is being recreated. Re-asking is safe
+    # only because no control has been touched yet; run 44599567300 refused the resume
+    # toggle with one shared code, which could not separate a recreated handle from a
+    # window belonging to another process.
+    $window = $null
+    for ($attempt = 0; $attempt -lt 3; $attempt++) {
+        $window = [System.Windows.Automation.AutomationElement]::FromHandle($ownedHandle)
+        if ($null -ne $window) { break }
+        Start-Sleep -Milliseconds 400
+    }
+    if ($null -eq $window) {
+        $code = 'window-handle-gone'
+        throw 'Owned root handle is no longer a window.'
+    }
+    if ($window.Current.ProcessId -ne $FrontendPid) {
+        $code = 'window-pid-mismatch'
         throw 'Product window process identity mismatch.'
     }
     $null = [ProductTestWindow]::ShowWindow([IntPtr]$window.Current.NativeWindowHandle, 9)
@@ -55,6 +69,14 @@ public static class ProductTestWindow {
                 'webobsFixedProjector2' { '固定场景投影 2' }
                 'webobsCloseProjectors' { '关闭固定投影' }
                 'webobsProgramProjector' { '打开 Program 投影' }
+                'webobsRecordProgram' { '录制 Program' }
+                'webobsStreamProgram' { '推流 Program' }
+                'webobsOutputHealth' { $kind = [System.Windows.Automation.ControlType]::Text; '' }
+                'webobsSupportBundle' { '生成支持包' }
+                # Both LAN controls change their visible text, so match the
+                # object name the Qt provider exposes instead of the caption.
+                'webobsLanShare' { $kind = [System.Windows.Automation.ControlType]::Button; '' }
+                'webobsLanHealth' { $kind = [System.Windows.Automation.ControlType]::Text; '' }
                 'webobsHostStats' { 'OBS 宿主统计' }
                 'webobsManageDevices' { '设备与来源管理' }
                 'webobsManageAudio' { '音频与监听' }
@@ -223,6 +245,9 @@ public static class ProductTestWindow {
         }
         'projector-close' { Invoke-Control 'webobsCloseProjectors' }
         'program-projector' { Invoke-Control 'webobsProgramProjector' }
+        'record-program' { Invoke-Control 'webobsRecordProgram' }
+        'stream-program' { Invoke-Control 'webobsStreamProgram' }
+        'support-bundle' { Invoke-Control 'webobsSupportBundle' }
         'projector-window-close' {
             # OBSProjector does not expose a reliable UIA WindowPattern.Close
             # action on Windows. Exercise the same WM_CLOSE path as the title bar.
@@ -265,6 +290,15 @@ public static class ProductTestWindow {
             if ($value.Current.Value -ne $operation.fixtureName) { throw 'Studio fixture selection was not committed.' }
             Invoke-Control 'webobsWatchScene'
         }
+        'lan-state' {
+            # The owner's LAN/Web entry must be reachable from the product window
+            # before any account login; only fixed stage names are reported.
+            $null = Find-Control 'webobsLanHealth'
+            $button = Find-Control 'webobsLanShare'
+            if (-not $button.Current.IsEnabled) { throw 'LAN sharing switch is disabled.' }
+            $code = 'lan-state'
+        }
+        'lan-toggle' { Invoke-Control 'webobsLanShare' }
         'logout' { Invoke-Control 'webobsLogout' }
         'refresh' { Invoke-Control 'webobsRefreshCatalog' }
         'close' { $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close() }

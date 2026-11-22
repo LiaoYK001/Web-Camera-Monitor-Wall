@@ -333,6 +333,200 @@ class PixelContractTests(unittest.TestCase):
             self.assertEqual(list(Path(temporary).glob("*.rgb")),[])
 
 
+
+def _ffmpeg_available():
+    pinned = os.environ.get("WEBOBS_TEST_FFMPEG")
+    if pinned:
+        return Path(pinned)
+    found = shutil.which("ffmpeg")
+    return Path(found) if found else None
+
+
+class AudioWindowContractTests(unittest.TestCase):
+    """The window a Program recording is judged in; not Windows audio qualification.
+
+    These run the product's own mix chain (adelay then volume then amix with
+    normalize=0) over synthetic two-track tones and decode the result with a real
+    FFmpeg, so the measurement rule is falsifiable without a Windows host.
+    """
+
+    def _two_tone(self, ffmpeg, root, *, frequencies=(440, 880)):
+        source = root / f"two-tone-{frequencies[0]}-{frequencies[1]}.mkv"
+        completed = subprocess.run([str(ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin",
+            "-f", "lavfi", "-i",
+            f"sine=frequency={frequencies[0]}:sample_rate=48000:duration=8",
+            "-f", "lavfi", "-i",
+            f"sine=frequency={frequencies[1]}:sample_rate=48000:duration=8",
+            "-map", "0:a:0", "-map", "1:a:0", "-c:a", "aac", "-b:a", "64k", "-y", str(source)],
+            capture_output=True, timeout=120)
+        self.assertEqual(completed.returncode, 0, completed.stderr[-300:].decode("utf-8", "replace"))
+        return source
+
+    def _mix(self, ffmpeg, source, name, gains, lead_ms):
+        graph = ""
+        labels = ""
+        for index, gain in enumerate(gains):
+            graph += f"[0:a:{index}]adelay=delays={lead_ms[index]}:all=1,volume={gain}[m{index}];"
+            labels += f"[m{index}]"
+        graph += labels + f"amix=inputs={len(gains)}:normalize=0[amixed]"
+        output = source.parent / name
+        completed = subprocess.run([str(ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin",
+            "-i", str(source), "-filter_complex", graph, "-map", "[amixed]", "-vn",
+            "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2", "-y", str(output)],
+            capture_output=True, timeout=120)
+        self.assertEqual(completed.returncode, 0, completed.stderr[-300:].decode("utf-8", "replace"))
+        return output
+
+    @unittest.skipUnless(_ffmpeg_available() is not None, "FFmpeg unavailable")
+    def test_lead_in_silence_no_longer_understates_every_pitch(self):
+        ffmpeg = _ffmpeg_available()
+        with tempfile.TemporaryDirectory() as temporary:
+            source = self._two_tone(ffmpeg, Path(temporary))
+            steady = self._mix(ffmpeg, source, "steady.mp4", [1, 1], [0, 0])
+            lead_in = self._mix(ffmpeg, source, "lead-in.mp4", [1, 1], [1250, 1850])
+            window = gate.steady_tone_window(ffmpeg, str(lead_in), 0, steady=(440, 880))
+            self.assertGreaterEqual(window["start"], 1.5)
+            for pitch in ("440", "880"):
+                reference = gate.tone_amplitude(ffmpeg, str(steady), 0, float(pitch), start=window["start"])
+                self.assertLess(abs(window["amplitudes"][pitch] - reference) / reference, 0.12)
+                naive = gate.tone_amplitude(ffmpeg, str(lead_in), 0, float(pitch))
+                self.assertLess(naive / window["amplitudes"][pitch], 0.85)
+
+    @unittest.skipUnless(_ffmpeg_available() is not None, "FFmpeg unavailable")
+    def test_one_track_gain_scales_only_that_track_in_a_steady_window(self):
+        ffmpeg = _ffmpeg_available()
+        with tempfile.TemporaryDirectory() as temporary:
+            source = self._two_tone(ffmpeg, Path(temporary))
+            reference = gate.steady_tone_window(ffmpeg, str(self._mix(ffmpeg, source, "one.mp4", [1, 1], [0, 0])),
+                0, steady=(440, 880))["amplitudes"]
+            reduced = gate.steady_tone_window(ffmpeg, str(self._mix(ffmpeg, source, "low.mp4", [1, 0.2], [0, 0])),
+                0, steady=(440,), measure=(880,))["amplitudes"]
+            self.assertLess(abs(reduced["440"] / reference["440"] - 1.0), 0.1)
+            self.assertLess(abs(reduced["880"] / reference["880"] - 0.2), 0.06)
+
+    @unittest.skipUnless(_ffmpeg_available() is not None, "FFmpeg unavailable")
+    def test_the_gain_bounds_still_reject_a_wrong_track_and_an_ignored_gain(self):
+        ffmpeg = _ffmpeg_available()
+        with tempfile.TemporaryDirectory() as temporary:
+            source = self._two_tone(ffmpeg, Path(temporary))
+            reference = gate.steady_tone_window(ffmpeg, str(self._mix(ffmpeg, source, "one.mp4", [1, 1], [0, 0])),
+                0, steady=(440, 880))["amplitudes"]
+            wrong = gate.steady_tone_window(ffmpeg, str(self._mix(ffmpeg, source, "wrong.mp4", [0.2, 1], [0, 0])),
+                0, steady=(440,), measure=(880,))["amplitudes"]
+            self.assertFalse(0.6 <= wrong["440"] / reference["440"] <= 1.5)
+            self.assertFalse(0.05 < wrong["880"] / reference["880"] < 0.55)
+            ignored = gate.steady_tone_window(ffmpeg, str(self._mix(ffmpeg, source, "ignored.mp4", [1, 1], [0, 0])),
+                0, steady=(440,), measure=(880,))["amplitudes"]
+            self.assertFalse(0.05 < ignored["880"] / reference["880"] < 0.55)
+
+    def _rebuilt(self, ffmpeg, source, name, *, graph, maps):
+        """Re-encode both tracks through an explicit filter graph, keeping two streams."""
+        output = source.parent / name
+        completed = subprocess.run([str(ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin",
+            "-i", str(source), "-filter_complex", graph, *maps, "-vn",
+            "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-y", str(output)],
+            capture_output=True, timeout=120)
+        self.assertEqual(completed.returncode, 0, completed.stderr[-300:].decode("utf-8", "replace"))
+        return output
+
+    def _dropped_chunk(self, ffmpeg, source, name, *, start, dropped):
+        """Rebuild both tracks with one audio chunk removed, as a jittery hand-over does.
+
+        The tone stays plainly audible on both sides of the gap; only the phase after
+        the gap changes. A projection over the whole window reads that as the tone
+        getting quieter, which is how run 44577184643 scored its own gain control step.
+        """
+        graph = ""
+        maps = []
+        for index in range(2):
+            graph += (f"[0:a:{index}]atrim=start=0:end={start},asetpts=PTS-STARTPTS[s{index}];"
+                f"[0:a:{index}]atrim=start={round(start + dropped, 3)},asetpts=PTS-STARTPTS[g{index}];"
+                f"[s{index}][g{index}]concat=n=2:v=0:a=1[c{index}];")
+            maps += ["-map", f"[c{index}]"]
+        return self._rebuilt(ffmpeg, source, name, graph=graph, maps=maps)
+
+    @unittest.skipUnless(_ffmpeg_available() is not None, "FFmpeg unavailable")
+    def test_a_dropped_audio_chunk_does_not_cancel_the_tone_that_is_still_audible(self):
+        ffmpeg = _ffmpeg_available()
+        with tempfile.TemporaryDirectory() as temporary:
+            source = self._two_tone(ffmpeg, Path(temporary))
+            steady = self._mix(ffmpeg, source, "steady.mp4", [1, 1], [0, 0])
+            dropped = self._mix(ffmpeg, self._dropped_chunk(ffmpeg, source, "gap.mkv",
+                start=1.2, dropped=0.04), "gap.mp4", [1, 1], [0, 0])
+            reference = gate.steady_tone_window(ffmpeg, str(steady), 0, steady=(440, 880))
+            after = gate.steady_tone_window(ffmpeg, str(dropped), 0, steady=(440, 880))
+            # The same bounds the Program gain control step uses: a file that still
+            # carries both pitches may not measure as a different mix.
+            for pitch in ("440", "880"):
+                ratio = after["amplitudes"][pitch] / reference["amplitudes"][pitch]
+                self.assertGreaterEqual(ratio, 0.8,
+                    f"a 40 ms audio gap cancelled the {pitch} Hz tone in the measurement")
+                self.assertLessEqual(ratio, 1.25)
+            # The damaged segment stays visible in the receipt even though the reported
+            # amplitude no longer collapses: a real dropout is still readable there.
+            self.assertLess(after["toneReadings"]["440"]["weakestSegment"],
+                reference["amplitudes"]["440"] * 0.9)
+            self.assertGreater(after["amplitudes"]["440"],
+                after["toneReadings"]["440"]["weakestSegment"])
+
+    @unittest.skipUnless(_ffmpeg_available() is not None, "FFmpeg unavailable")
+    def test_a_pitch_that_arrives_off_nominal_still_measures_its_amplitude(self):
+        """Resampling leaves a tone centi-Hertz off, and the band has to keep up.
+
+        The mix resamples RTSP audio against the host audio clock, so the delivered
+        pitch is not exactly the fixture's. A projection locked to the nominal pitch
+        fades as the offset approaches one window length; run 44577184643 read that as
+        a mix that had changed. 0.4 Hz and 0.7 Hz are inside the band the measurement
+        searches, and the receipt names where the tone actually landed.
+        """
+        ffmpeg = _ffmpeg_available()
+        with tempfile.TemporaryDirectory() as temporary:
+            nominal = self._two_tone(ffmpeg, Path(temporary))
+            drifted = self._two_tone(ffmpeg, Path(temporary), frequencies=(440.4, 880.7))
+            for stream, pitch in ((0, 440), (1, 880)):
+                reference = gate.steady_tone_window(ffmpeg, str(nominal), stream, steady=(pitch,))
+                after = gate.steady_tone_window(ffmpeg, str(drifted), stream, steady=(pitch,))
+                ratio = after["amplitudes"][str(pitch)] / reference["amplitudes"][str(pitch)]
+                self.assertGreater(ratio, 0.8,
+                    f"a {pitch} Hz tone 0.4 Hz off nominal read as a changed mix")
+                self.assertLess(ratio, 1.25)
+                peak = after["toneReadings"][str(pitch)]["peakHz"]
+                self.assertGreater(peak, pitch)
+                self.assertLessEqual(peak, pitch + gate.TONE_BAND_TOLERANCE_HZ)
+
+    @unittest.skipUnless(_ffmpeg_available() is not None, "FFmpeg unavailable")
+    def test_a_neighbouring_pitch_still_reads_as_absent_through_the_band(self):
+        ffmpeg = _ffmpeg_available()
+        with tempfile.TemporaryDirectory() as temporary:
+            source = self._two_tone(ffmpeg, Path(temporary))
+            only_high = self._mix(ffmpeg, source, "high.mp4", [0, 1], [0, 0])
+            only_low = self._mix(ffmpeg, source, "low.mp4", [1, 0], [0, 0])
+            high = gate.steady_tone_window(ffmpeg, str(only_high), 0, steady=(880,),
+                measure=(440,))
+            low = gate.steady_tone_window(ffmpeg, str(only_low), 0, steady=(440,),
+                measure=(880,))
+            self.assertGreater(high["amplitudes"]["880"], 200)
+            self.assertLess(high["amplitudes"]["440"], 60)
+            self.assertGreater(low["amplitudes"]["440"], 200)
+            self.assertLess(low["amplitudes"]["880"], 60)
+            # The receipt shape the Program gate reads: one entry per measured pitch,
+            # bounded, naming the band peak and the readings behind the median.
+            for window in (high, low):
+                self.assertEqual(len(window["toneReadings"]), 2)
+                for reading in window["toneReadings"].values():
+                    self.assertLessEqual(len(reading["segmentAmplitudes"]), 4)
+                    self.assertIsInstance(reading["peakHz"], float)
+
+    @unittest.skipUnless(_ffmpeg_available() is not None, "FFmpeg unavailable")
+    def test_a_silent_mix_reports_no_steady_window_instead_of_passing(self):
+        ffmpeg = _ffmpeg_available()
+        with tempfile.TemporaryDirectory() as temporary:
+            source = self._two_tone(ffmpeg, Path(temporary))
+            silent = self._mix(ffmpeg, source, "silent.mp4", [0, 0], [0, 0])
+            with self.assertRaisesRegex(AssertionError, "no continuous"):
+                gate.steady_tone_window(ffmpeg, str(silent), 0, steady=(440,))
+
+
 class ProductSmokeContractTests(unittest.TestCase):
     def test_payload_has_five_bounded_cameras(self):
         payload = smoke.product_config_payload()

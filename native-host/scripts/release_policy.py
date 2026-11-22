@@ -1,5 +1,12 @@
-"""Explicit, scoped delivery identity; it never qualifies complete migration."""
+"""Explicit, scoped delivery identity; it never qualifies complete migration.
+
+A stable identity comes from a recorded acceptance file produced by an actual
+Windows qualification run, never from a version number. Packaging scripts read
+that one contract here instead of inventing their own gate checks.
+"""
+import json
 import re
+from pathlib import Path
 
 PREVIEW_VERSION = "4.5.0"
 PREVIEW_PROFILE = "native-monitor-preview"
@@ -106,6 +113,55 @@ def copy_delivery(manifest):
                 "fullFeatureMigrationQualified": manifest["fullFeatureMigrationQualified"],
                 "qualificationReceipt": manifest["qualificationReceipt"]}
     return {"publicationForbidden": True}
+
+
+ACCEPTANCE_KEYS = ("productIntegration", "installationQualified",
+                   "legacyUpgradeQualified", "fullFeatureMigrationQualified")
+
+
+def read_acceptance(path, *, version, repository=None, source_revision=None):
+    """Return the recorded acceptance gates bound to one release.
+
+    The acceptance file lives outside Git and is written by the qualification
+    run. Every product-integration, installation, legacy-upgrade and
+    full-feature-migration gate must be recorded as true for this version,
+    repository and source revision, together with a bounded receipt location.
+    """
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise ValueError(f"acceptance receipt is unreadable: {error}") from error
+    if not isinstance(payload, dict):
+        raise ValueError("acceptance receipt must be a JSON object")
+    if payload.get("version") != version:
+        raise ValueError("acceptance receipt belongs to another version")
+    if repository is not None and payload.get("repository") != repository:
+        raise ValueError("acceptance receipt belongs to another repository")
+    recorded = str(payload.get("sourceRevision") or "").lower()
+    if source_revision is not None:
+        if not recorded:
+            raise ValueError("acceptance receipt does not record its source revision")
+        if recorded != source_revision:
+            raise ValueError("acceptance receipt belongs to another source revision")
+    missing = [key for key in ACCEPTANCE_KEYS if payload.get(key) is not True]
+    if missing:
+        raise ValueError("acceptance receipt is missing recorded gates: " + ", ".join(missing))
+    receipt = payload.get("qualificationReceipt")
+    if not isinstance(receipt, str) or not 12 <= len(receipt) <= 512:
+        raise ValueError("acceptance receipt needs a bounded qualificationReceipt location")
+    accepted = {key: True for key in ACCEPTANCE_KEYS}
+    accepted["qualificationReceipt"] = receipt
+    return accepted
+
+
+def apply_acceptance(manifest, acceptance_path, *, repository=None, source_revision=None):
+    """Turn recorded acceptance into the stable identity for this manifest."""
+    accepted = read_acceptance(acceptance_path, version=manifest.get("version"),
+                               repository=repository, source_revision=source_revision)
+    receipt = accepted.pop("qualificationReceipt")
+    manifest.update(accepted)
+    configure_stable(manifest, qualification_receipt=receipt)
+    return {"releaseTag": manifest["releaseTag"], "qualificationReceipt": receipt}
 
 
 def configure_stable(manifest, *, qualification_receipt):
