@@ -1,6 +1,7 @@
 #include "product_window.hpp"
 #include "product_bootstrap.hpp"
 #include "product_http_client.hpp"
+#include "product_lan.hpp"
 #include "product_output.hpp"
 #include "product_scene.hpp"
 #include "renderer_device_qt.hpp"
@@ -174,6 +175,12 @@ class ProductWindow final : public QWidget {
 	QPushButton *support_bundle_ = nullptr;
 	QString last_support_bundle_;
 	QString support_bundle_error_;
+	std::unique_ptr<ProductLanSwitch> lan_switch_;
+	QPushButton *lan_share_ = nullptr;
+	QLabel *lan_health_ = nullptr;
+	QJsonObject lan_state_;
+	int lan_request_code_ = 0;
+	bool lan_busy_ = false;
 	QSystemTrayIcon *tray_ = nullptr;
 	bool quitting_ = false;
 	QPushButton *stats_button_ = nullptr;
@@ -422,6 +429,14 @@ class ProductWindow final : public QWidget {
 				{"attempts", program_apply_attempts_},
 				{"sceneId", program_scene_id_},
 				{"targetSceneId", program_target_scene_id_}}},
+			{"lan", QJsonObject{{"available", lan_switch_ ? true : false},
+				{"requestCode", lan_request_code_},
+				{"enabled", lan_state_.value("enabled").toBool()},
+				{"running", lan_state_.value("running").toBool()},
+				{"pendingRestart", lan_state_.value("pendingRestart").toBool()},
+				{"port", lan_state_.value("port").toInt()},
+				{"urlCount", lan_state_.value("urls").toArray().size()},
+				{"reason", lan_state_.value("reason").toString()}}},
 			{"windows", windows},
 			{"obsLogMarkers", marker_counts}};
 		const QByteArray payload = QJsonDocument(bundle).toJson(QJsonDocument::Compact) + '\n';
@@ -449,6 +464,87 @@ class ProductWindow final : public QWidget {
 		last_support_bundle_ = path;
 		status_->setText(tr("支持包已保存：%1").arg(path));
 	}
+	[[nodiscard]] static QString lan_summary_text(const QJsonObject &value)
+	{
+		const bool enabled = value.value("enabled").toBool();
+		const bool running = value.value("running").toBool();
+		const bool pending = value.value("pendingRestart").toBool();
+		QStringList urls;
+		for (const auto &entry : value.value("urls").toArray())
+			urls << entry.toString();
+		const QString reason = value.value("reason").toString();
+		if (!enabled)
+			return tr("局域网共享：关闭（只有这台电脑可以访问）。");
+		if (reason == "lan-address-unavailable")
+			return tr("局域网共享：已开启，但本机没有私有 IPv4 地址，暂时没有可用地址。");
+		if (reason == "lan-port-unavailable" || reason == "lan-proxy-unreachable")
+			return tr("局域网共享：已开启，但 HTTPS 入口未能启动（%1）。本机监看不受影响。").arg(reason);
+		if (running && !urls.isEmpty())
+			return pending ? tr("局域网共享：运行中，本次改动需重启后同步：%1").arg(urls.join(", "))
+			       : tr("局域网共享：运行中：%1。其他设备用同一账号通过 HTTPS 登录。").arg(urls.join(", "));
+		return tr("局域网共享：已开启，重启 WebOBS Wall 后生效（端口 %1）。").arg(value.value("port").toInt());
+	}
+
+	void apply_lan_state(int code, const QJsonObject &value)
+	{
+		if (code >= 200 && code < 300) {
+			lan_request_code_ = code;
+			lan_state_ = value;
+		} else {
+			lan_request_code_ = code;
+		}
+		if (!lan_health_ || !lan_share_)
+			return;
+		if (code == 0 || code >= 400) {
+			lan_health_->setText(tr("局域网共享：状态暂不可用，可重新读取。"));
+			lan_share_->setText(lan_state_.value("enabled").toBool() ? tr("关闭局域网共享")
+				: tr("开启局域网共享"));
+			return;
+		}
+		lan_health_->setText(lan_summary_text(lan_state_));
+		lan_share_->setText(lan_state_.value("enabled").toBool() ? tr("关闭局域网共享") : tr("开启局域网共享"));
+	}
+
+	void read_lan_state()
+	{
+		if (!lan_switch_ || lan_busy_)
+			return;
+		lan_busy_ = true;
+		if (lan_share_)
+			lan_share_->setEnabled(false);
+		lan_switch_->request("GET", {}, [this](int code, const QJsonObject &value) {
+			lan_busy_ = false;
+			apply_lan_state(code, value);
+			if (lan_share_)
+				lan_share_->setEnabled(true);
+		});
+	}
+
+	void toggle_lan_sharing()
+	{
+		if (!lan_switch_ || lan_busy_)
+			return;
+		const bool next = !lan_state_.value("enabled").toBool();
+		int port = lan_state_.value("port").toInt();
+		if (port < 1024 || port > 65535)
+			port = 18443;
+		// The supervisor accepts exactly this pair; the saved HTTPS port survives
+		// a toggle instead of silently resetting to the default.
+		const QJsonObject body{{"enabled", next}, {"port", port}};
+		lan_busy_ = true;
+		lan_share_->setEnabled(false);
+		lan_health_->setText(tr("正在更新局域网共享…"));
+		lan_switch_->request("POST", body, [this](int code, const QJsonObject &value) {
+			lan_busy_ = false;
+			apply_lan_state(code, value);
+			lan_share_->setEnabled(true);
+			if (code == 0 || code >= 400)
+				status_->setText(tr("局域网共享设置失败，已保留原设置，可重试。"));
+			else
+				status_->setText(tr("局域网共享设置已保存。"));
+		});
+	}
+
 	int media_source_count() const
 	{
 		int media_sources = 0;
@@ -2427,6 +2523,21 @@ public:
 			support_bundle_->setToolTip(tr("导出有界脱敏状态、计数和 OBS 标记统计；不包含摄像机地址、令牌、日志正文或媒体。"));
 			layout->addWidget(support_bundle_);
 			connect(support_bundle_, &QPushButton::clicked, this, [this] { generate_support_bundle(); });
+			lan_share_ = new QPushButton(tr("开启局域网共享"), this);
+			lan_share_->setObjectName("webobsLanShare");
+			lan_share_->setToolTip(tr(
+				"让同一私有网络里的其他设备用 HTTPS 打开本产品的 Web 界面；账号登录与权限不变。"));
+			layout->addWidget(lan_share_);
+			lan_health_ = new QLabel(tr("局域网共享：正在读取状态…"), this);
+			lan_health_->setObjectName("webobsLanHealth");
+			lan_health_->setWordWrap(true);
+			layout->addWidget(lan_health_);
+			// The switch address and this boot's host token only exist after the
+			// supervisor launched this host, so the client is bound below where
+			// those values are read. The button stays visible and disabled until
+			// then instead of pretending sharing is available.
+			lan_share_->setEnabled(false);
+			lan_health_->setText(tr("局域网共享：正在等待本机开关…"));
 			if (QSystemTrayIcon::isSystemTrayAvailable()) {
 				tray_ = new QSystemTrayIcon(windowIcon(), this);
 				auto *menu = new QMenu(this);
@@ -2536,6 +2647,20 @@ public:
 			return;
 		}
 		client_ = std::make_unique<ProductHttpClient>(origin_, host_secret_, this);
+		if (lan_share_ && lan_health_) {
+			// The receipt needs no account session: the owner can open or close
+			// sharing before logging in, and the token is this boot's host secret.
+			lan_switch_ = std::make_unique<ProductLanSwitch>(
+				QUrl(qEnvironmentVariable("WEBOBS_NATIVE_LAN_SWITCH")), host_secret_, this);
+			if (lan_switch_->usable()) {
+				connect(lan_share_, &QPushButton::clicked, this, [this] { toggle_lan_sharing(); });
+				read_lan_state();
+			} else {
+				lan_switch_.reset();
+				lan_share_->setEnabled(false);
+				lan_health_->setText(tr("局域网共享：本次启动没有提供本机开关，请从 WebOBS Wall 启动入口启动。"));
+			}
+		}
 		connect(login_, &QPushButton::clicked, this, [this] {
 			const QJsonObject credentials{{"username", username_->text()}, {"password", password_->text()}};
 			password_->clear();

@@ -2990,6 +2990,30 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     "program-projector-shows-real-program-not-preview",
                     "take-document-revision-and-program-receipt-match",
                     "empty-program-scene-clears-previous-output"])
+            if complete_services:
+                # R3-004 entry point: the owner opens the private LAN/Web entry
+                # from the product window itself, without a token or a restart.
+                phase = "lan-entry"
+                assert ui("lan-state"), "the native window has no usable LAN sharing switch"
+                closed = status()
+                assert closed.get("lanSwitchPort"), "the private LAN sharing switch is not listening"
+                assert closed.get("lan", {}).get("enabled") is False, \
+                    "the LAN/Web entry must stay closed until the owner opens it"
+                assert closed.get("lan", {}).get("urls") == [], "a closed LAN entry published an address"
+                evidence["checks"].append("native-lan-switch-readable-without-account-session")
+                checkpoint("lan-entry-closed-by-default")
+                assert ui("lan-toggle")
+                wait_for(lambda: status().get("lan", {}).get("enabled") is True,
+                    "the native LAN sharing button did not persist the owner's request", timeout=10)
+                checkpoint("lan-entry-enabled")
+                assert ui("lan-toggle")
+                wait_for(lambda: status().get("lan", {}).get("enabled") is False,
+                    "the native LAN sharing button did not close the entry again", timeout=10)
+                assert status().get("lan", {}).get("urls") == [], \
+                    "closing the entry still published a LAN address"
+                evidence["lanSwitchPort"] = closed.get("lanSwitchPort")
+                evidence["checks"].append("native-lan-share-switch-persists-and-restores-the-setting")
+                checkpoint("lan-entry-restored")
             phase = "logout"
             assert ui("logout")
             wait_for(lambda: state().get("phase") == "locked", "logout did not lock product UI")
