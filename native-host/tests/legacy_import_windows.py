@@ -329,8 +329,8 @@ def exercise(runtime, report):
             assert receipt.get("backupKeyMigrated") is True, \
                 "the old DPAPI backup key was not decrypted into the new profile"
             evidence["importedFiles"] = int(receipt.get("files") or 0)
-            assert (imported / "config/backup.key").read_bytes() == backup_key.encode("ascii"), \
-                "the migrated backup key is not the plaintext old key"
+            assert (imported / "config/backup.key").read_bytes() == bytes.fromhex(backup_key), \
+                "the migrated backup key bytes do not match the old key"
             evidence["backupKeyMigrated"] = True
             assert (imported / "config/nvr.json").is_file(), "the recording policy was not imported"
             evidence["checks"].append("shipped-importer-copied-databases-settings-and-backup-key")
