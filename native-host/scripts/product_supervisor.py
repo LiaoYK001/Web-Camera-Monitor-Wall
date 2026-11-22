@@ -229,6 +229,8 @@ class ProductSupervisor:
                 self.recordings = migrated_recording or (
                     Path(os.environ.get("USERPROFILE", str(self.root))) / "Videos" / "WebOBS")
             self.recordings.mkdir(parents=True, exist_ok=True)
+            self.program_recordings = self.recordings / "program"
+            self.program_recordings.mkdir(parents=True, exist_ok=True)
             detector_model = self.runtime / "web/models/ssd_mobilenet_v1_12.onnx"
             self.environment.update({
                 "WEBOBS_EVENT_DATABASE": str(config / "events.db"),
@@ -248,6 +250,7 @@ class ProductSupervisor:
                 "WEBOBS_ARCHIVE_QUEUE": str(config / "archive-queue.sqlite3"),
                 "WEBOBS_ARCHIVE_PYTHON_MODULE": str(self.runtime / "services/archive/s3_archive.py"),
                 "WEBOBS_BACKUP_CONFIG_ROOT": str(config),
+                "WEBOBS_BACKUP_NATIVE_PROFILE": str(self.root / "native-profile"),
                 "WEBOBS_BACKUP_ROOT": str(self.root / "backups"),
                 "WEBOBS_BACKUP_KEY_FILE": str(self.root / "run/backup.key"),
                 "WEBOBS_BACKUP_S3_CONFIG": str(config / "archive.json"),
@@ -264,6 +267,12 @@ class ProductSupervisor:
                 "WEBOBS_DETECTOR_PYTHON_MODULE": str(self.runtime / "services/analytics/detector_worker.py"),
                 "WEBOBS_CAMERA_BACKGROUND_PROBES": "true",
                 "WEBOBS_NVR_ENABLED": "true", "WEBOBS_GO2RTC_ENABLED": "true",
+                # Direct-only stays authoritative in webobsd: composite_enabled
+                # would switch the control server into the full OBS engine path
+                # (obs_startup, x264/WHIP outputs) and it exits during native
+                # startup. The native host owns Program recording/WHIP with a
+                # private MediaMTX on demand, so the core keeps advertising
+                # composite as disabled until its proxy can read that real state.
                 "WEBOBS_COMPOSITE_ENABLED": "false",
             })
             if detector_model.is_file():
@@ -488,6 +497,10 @@ class ProductSupervisor:
                 WEBOBS_NATIVE_PRODUCT_VERSION=self.version,
                 WEBOBS_NATIVE_PREVIEW="true" if self.preview else "false",
                 WEBOBS_NATIVE_PROFILE_ROOT=str(self.root / "native-profile"))
+            if self.complete and getattr(self, "program_recordings", None) is not None:
+                frontend_environment["WEBOBS_PROGRAM_RECORDINGS"] = str(self.program_recordings)
+                frontend_environment["WEBOBS_SUPPORT_BUNDLE_ROOT"] = str(self.root / "support")
+                (self.root / "support").mkdir(parents=True, exist_ok=True)
             frontend = self.start("frontend", [str(self.runtime / "bin/64bit/obs64.exe"),
                 "--portable", "--disable-updater"], environment=frontend_environment)
             self.status("running")

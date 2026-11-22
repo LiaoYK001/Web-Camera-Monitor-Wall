@@ -6,7 +6,9 @@ import ast
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -176,6 +178,382 @@ class BuildContractTests(unittest.TestCase):
             self.assertIn(expected, launcher)
         self.assertNotIn("Start-Process", launcher)  # Explicit child environment, fixed CWD.
         self.assertNotIn("--multi", launcher)  # Do not bypass upstream portable instance guard.
+
+    def test_program_output_relay_allocates_every_loopback_port(self):
+        """The private Program relay must never assume a fixed publish port.
+
+        The product's own distribution gateway MediaMTX binds WebRTC on 8889, and
+        Windows reserves dynamic port ranges that can make a fixed port unbindable
+        with nothing listening on it. Either case refused the publish start while
+        the host state still reported an empty streamError, so every relay
+        listener is allocated as a free loopback port and each refusal is recorded.
+        """
+        source = (ROOT / "native-host/src/product_output.cpp").read_text(encoding="utf-8")
+        for forbidden in ("webrtcAddress: 127.0.0.1:8889", "http://127.0.0.1:8889", "port_available(8889)"):
+            self.assertNotIn(forbidden, source)
+        self.assertIn("int webrtc_port = free_tcp_port();", source)
+        self.assertIn("int rtmp_port = free_tcp_port();", source)
+        self.assertIn("webrtcAddress: 127.0.0.1:%3", source)
+        self.assertIn('"rtmpAddress: 127.0.0.1:%5\\n"', source)
+        # The publish URL carries no app segment, so the relay maps the stream
+        # key onto the configured "program" path instead of "program/program".
+        self.assertIn('QStringLiteral("rtmp://127.0.0.1:%1/").arg(rtmp_port)', source)
+        start = source[source.index("bool start_media_mtx"):source.index("bool start_recording")]
+        for refusal in ("mediamtx-unavailable", "mediamtx-port-failed", "mediamtx-directory-failed",
+                        "mediamtx-config-failed", "mediamtx-start-failed", "mediamtx-exited",
+                        "mediamtx-timeout"):
+            self.assertIn('"%s"' % refusal, start)
+        # A refusal has to carry the relay's own last words. QProcess only notices a
+        # child exit through the event loop, and this wait runs inside a UI action,
+        # so an unobserved exit turned a rejected configuration into a bare
+        # "mediamtx-timeout" in run 44366851677.
+        self.assertIn("waitForFinished(0)", start)
+        self.assertIn("relay_log_tail", start)
+        self.assertIn("relay_log.append(media_mtx.readAll())", start)
+
+    def test_program_publishing_uses_only_services_the_windows_build_ships(self):
+        """The Program publish output must use OBS identifiers the installed runtime has.
+
+        desktop/scripts/build-obs-native.ps1 configures OBS with -DENABLE_WEBRTC=OFF,
+        and obs-webrtc's own CMakeLists returns early without LibDataChannel, so
+        neither whip_custom nor whip_output exists in the installed host: run
+        44374662264 reached "stream-service-unavailable" for exactly that reason.
+        rtmp_custom and rtmp_output are registered by the shipped rtmp-services.dll
+        and obs-outputs.dll, RTMP/FLV audio is AAC, and the same private relay
+        republishes the mix as RTSP plus WebRTC/WHEP for a real consumer.
+        """
+        source = (ROOT / "native-host/src/product_output.cpp").read_text(encoding="utf-8")
+        builder = (ROOT / "desktop/scripts/build-obs-native.ps1").read_text(encoding="utf-8")
+        self.assertIn("-DENABLE_WEBRTC=OFF", builder)
+        for shipped in ('"rtmp_custom"', '"rtmp_output"', '"ffmpeg_aac"', '"rtmp: true\\n"'):
+            self.assertIn(shipped, source)
+        for absent in ('"whip_custom"', '"whip_output"', '"ffmpeg_opus"'):
+            self.assertNotIn(absent, source)
+
+    def test_program_output_relay_log_destination_is_accepted(self):
+        """The private Program relay must only use log destinations the pinned MediaMTX accepts.
+
+        MediaMTX v1.18.2 accepts stdout, file and syslog. The relay config used
+        logDestinations: [stderr], printed "ERR: invalid log destination: stderr"
+        and exited before opening any listener, which the host reported as
+        mediamtx-timeout (run 44366851677). The shipped gateway config, which runs
+        in production, uses stdout; the private relay now matches it.
+        """
+        source = (ROOT / "native-host/src/product_output.cpp").read_text(encoding="utf-8")
+        self.assertIn('"logDestinations: [stdout]\\n"', source)
+        self.assertNotIn("[stderr]", source)
+        gateway = (ROOT / "gateway/mediamtx.yml").read_text(encoding="utf-8")
+        self.assertIn("logDestinations: [stdout]", gateway)
+
+    def test_published_program_video_gate_waits_past_a_keyframe_for_a_late_join(self):
+        """Both Program video gates must decode across keyframe intervals.
+
+        A consumer that joins after publishing starts lands inside the encoder's
+        current GOP, so its first packets are P-slices with no reference picture.
+        Reading 20 packets decoded zero frames twice (runs 44524750280 and
+        44534272424) with return code 0 and "co located POCs unavailable" while
+        the host advanced its render counter, and ffprobe reports pts_time as a
+        string, which the old numeric check dropped so the measured span always
+        read 0. Each gate now keeps at least ten strictly increasing decodable
+        frames over more than two publish keyframe intervals on one connection,
+        records when the first decodable frame arrived, and adds a packet probe
+        that answers whether the relay hands a late consumer an IDR at all.
+        """
+        encoder = (ROOT / "native-host/src/product_output.cpp").read_text(encoding="utf-8")
+        keyints = re.findall(r'obs_data_set_int\(video_settings\.get\(\), "keyint_sec", (\d+)\)', encoder)
+        self.assertTrue(keyints, "Program outputs must state their keyframe interval")
+        self.assertEqual(len(set(keyints)), 1, "recording and publishing must publish on one interval")
+        keyint = int(keyints[0])
+
+        gate = (ROOT / "native-host/tests/product_windows.py").read_text(encoding="utf-8")
+        self.assertEqual(int(re.search(r"PROGRAM_ENCODER_KEYINT_SECONDS = (\d+)", gate).group(1)), keyint,
+                         "the gate must read the interval the encoder actually uses")
+        multiplier = int(re.search(r"PROGRAM_VIDEO_WINDOW_SECONDS = PROGRAM_ENCODER_KEYINT_SECONDS \* (\d+)",
+                                   gate).group(1))
+        self.assertGreaterEqual(multiplier, 2, "the read window must span at least two keyframe intervals")
+
+        # One shared window reader for both the first publisher and the recovered one.
+        self.assertEqual(gate.count("published_video_window(runtime / \"bin/ffprobe.exe\""), 2)
+        self.assertEqual(gate.count("published_packet_window(runtime / \"bin/ffprobe.exe\""), 2)
+        self.assertNotIn('"-read_intervals", "%+#20"', gate)
+        for assertion in ("len(stamps) >= 10", "monotonic and span >= float(encoder_keyint_seconds)",
+                          'replay_window["frames"] >= 10', "firstDecodableFrameMs", "packetProbe",
+                          "unparsableStamps", "stamp = float(value)"):
+            self.assertIn(assertion, gate)
+
+
+    def test_mixer_identities_name_owned_helpers_without_leaking_the_run(self):
+        """A disappeared helper has to be named by its mix port, not by private paths.
+
+        Run 44548882087 reported only a PID diff for a lost FFmpeg audio mixer. The
+        command line is the identity available here, so camera URLs and this run's
+        private roots must be replaced before anything reaches a receipt, while each
+        helper's loopback mix port survives so the receipt can name the mix it starved.
+        The gate then compares live helper ports with the ports the host claims and gives
+        a retiring Scene graph a bounded grace period, because run 44548882087 lost a PID
+        that belonged to a released graph rather than to a mix the host still claimed.
+        """
+        if os.name == "nt":
+            self.skipTest("fake PowerShell needs a POSIX executable")
+        spec = importlib.util.spec_from_file_location("product_windows",
+            ROOT / "native-host/tests/product_windows.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        gate = (ROOT / "native-host/tests/product_windows.py").read_text(encoding="utf-8")
+        for wiring in ("audio_mix_helper_watch", "mixer_identities(powershell, rows",
+                       '"port": helper_port(clean)', "identities.get(pid) or MIXER_IDENTITY_UNAVAILABLE",
+                       "assert isinstance(row, dict)", 'return row',
+                       'mixers_before_stop["processes"]',
+                       "before-program-output-stop", "after-program-output-stop",
+                       '"mixerPort": entry.get("mixerPort")', "watched_ports(row)",
+                       "claimed_ports(row)", "current_live_ports()",
+                       "mix-ports-still-unresolved", "mixerPortSettleMs",
+                       "host still reports a live mix", "fixture publishers",
+                       "other helpers"):
+            self.assertIn(wiring, gate)
+        with tempfile.TemporaryDirectory() as temporary:
+            fake = Path(temporary) / "pwsh"
+            # A real mix helper line is ~509 characters with the loopback target at the
+            # end, so the fake one is padded past the recorded cap on purpose: the port
+            # has to survive the cap and the tail has to still name the mix target.
+            # Placeholder credentials on the TEST-NET documentation range, the form the public
+            # repository audit approves for test fixtures: the helper line must still carry a
+            # userinfo for the sanitizer assertion to mean anything.
+            filler = "-filter_complex amix=inputs=2:duration=longest " + "x" * 240
+            fake.write_text("#!/usr/bin/env python3\n"
+                "print('12|C:/run/bin/ffmpeg.exe -rtsp_transport tcp -i "
+                "rtsp://fixture-user:fixture-password@192.0.2.9:554/tone " + filler + " "
+                "-map [amixed] -c:a aac -f mpegts tcp://127.0.0.1:56?listen=1')\n"
+                "print('34|C:/run/bin/ffmpeg.exe -i tcp://192.0.2.9:1234/tone ' + 'y'*400)\n"
+                "print('not-a-pid|ignored')\n", encoding="utf-8")
+            fake.chmod(0o755)
+            identities = module.mixer_identities(fake, [12, 34, 99], ("C:/run/bin",))
+            self.assertEqual(sorted(identities), [12, 34])
+            self.assertIn("<url>", identities[12]["identity"])
+            self.assertNotIn("rtsp://", identities[12]["identity"])
+            self.assertNotIn("fixture-password", identities[12]["identity"])
+            self.assertNotIn("C:/run/bin", identities[12]["identity"])
+            # The loopback mix port is the key that ties this helper to its mix source,
+            # and it is read before the cap, so a long command line still reports it.
+            self.assertGreater(len(identities[12]["identity"]), 120)
+            self.assertEqual(len(identities[12]["identity"]), 160)
+            self.assertEqual(identities[12]["port"], 56)
+            self.assertIn("tcp:56", identities[12]["tail"])
+            self.assertNotIn("192.0.2.9", identities[12]["tail"])
+            self.assertIn("tcp:56", identities[12]["identity"] + identities[12]["tail"])
+            # A remote tcp endpoint stays masked and owns no mix; its tail is recorded so
+            # a port-less helper is still explainable, and the cap never leaks the host.
+            self.assertIn("<url>", identities[34]["identity"])
+            self.assertNotIn("192.0.2.9", identities[34]["identity"])
+            self.assertNotIn("192.0.2.9", identities[34]["tail"])
+            self.assertIsNone(identities[34]["port"])
+            self.assertEqual(len(identities[34]["identity"]), 160)
+            self.assertEqual(module.helper_port("tcp:56?listen=1"), 56)
+            self.assertIsNone(module.helper_port("ffmpeg -i <private>/a.mkv"))
+            self.assertEqual(module.mixer_identities(fake, []), {})
+            broken = module.mixer_identities(Path(temporary) / "absent", [7])
+            self.assertEqual(broken, {7: dict(module.MIXER_IDENTITY_UNAVAILABLE)})
+
+    def test_mix_port_ownership_sees_an_unserved_mix_and_a_duplicate_helper(self):
+        """Ports, not PIDs, decide whether every owned mix still has its helper.
+
+        The host reports the loopback port each mix source reads, so a helper that
+        exits unnoticed leaves a claimed port unserved and a respawn that leaves the
+        old one behind puts two helpers on one port. A short-lived AV remux child has
+        no mix port and must not be counted as a mixer.
+        """
+        if os.name == "nt":
+            self.skipTest("fake PowerShell needs a POSIX executable")
+        spec = importlib.util.spec_from_file_location("product_windows",
+            ROOT / "native-host/tests/product_windows.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        row = {"processes": [{"pid": 12, "port": 56, "identity": "ffmpeg ... tcp:56?listen=1"},
+                             {"pid": 13, "port": 56, "identity": "ffmpeg ... tcp:56?listen=1"},
+                             {"pid": 14, "port": None, "identity": "ffmpeg -i <private>/a.mkv"}],
+            "hostClaims": [{"sourceId": "scene-a.mix", "mixerPort": 56, "available": True},
+                           {"sourceId": "scene-b.mix", "mixerPort": 57, "available": True}],
+            "otherHelpers": [{"pid": 14, "identity": "ffmpeg -i <private>/a.mkv"}]}
+        self.assertEqual(module.watched_ports(row), [56, 56])
+        self.assertEqual(module.claimed_ports(row), [56, 57])
+        self.assertNotEqual(module.watched_ports(row), module.claimed_ports(row))
+        served = {"processes": [{"pid": 12, "port": 56, "identity": "tcp:56"},
+                                {"pid": 15, "port": 57, "identity": "tcp:57"}],
+            "hostClaims": row["hostClaims"], "otherHelpers": []}
+        self.assertEqual(module.watched_ports(served), module.claimed_ports(served))
+        self.assertEqual(module.claimed_ports({"hostClaims": [{"sourceId": "x", "mixerPort": None},
+                                                              {"sourceId": "y"}]}), [])
+        # Run 44568325933 handed the watch's helper PID list to these helpers and died on
+        # `list indices must be integers or slices, not str`, which hid whether any mix was
+        # actually starved. A wrong shape now says so in its own words.
+        for reader in (module.watched_ports, module.claimed_ports):
+            with self.assertRaises(AssertionError) as wrong_shape:
+                reader([12, 34])
+            self.assertIn("watch row", str(wrong_shape.exception))
+
+    def test_mix_watch_returns_the_recorded_row_so_the_port_chain_can_be_compared(self):
+        """Collect, record and compare mix state on one shape, replayed from rc.67's values.
+
+        Run 44568325933 already proved the ports are readable and that the host claimed
+        exactly one mix with `mixerPort=51389`, yet the round died on a TypeError because
+        the watch handed back the helper PID list and the port comparison then read
+        `row["hostClaims"]` off that list. This replays the whole chain - enumerate helpers,
+        name them, record the row, compare ports - against the receipt's own shapes, so the
+        chain that only ever ran on a Windows runner is checked on Linux too. With the
+        pre-fix watch it fails on the returned shape instead of reporting a mix verdict.
+        """
+        spec = importlib.util.spec_from_file_location("product_windows",
+            ROOT / "native-host/tests/product_windows.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        source = (ROOT / "native-host/tests/product_windows.py").read_text(encoding="utf-8")
+        node = next(item for item in ast.walk(ast.parse(source))
+            if isinstance(item, ast.FunctionDef) and item.name == "audio_mix_helper_watch")
+        code = ast.get_source_segment(source, node)
+        self.assertIn("def audio_mix_helper_watch", code)
+        exec(compile(code, str(ROOT / "native-host/tests/product_windows.py"), "exec"),
+            module.__dict__)
+
+        class AlivePublisher:
+            def poll(self):
+                return None
+
+        helpers = {}
+
+        def identity(port):
+            return {"identity": f"C:/<private>/bin/ffmpeg.exe -f mpegts tcp:{port}",
+                "tail": f"-c:a aac -f mpegts tcp:{port}", "port": port}
+
+        def fake_child_processes(powershell, pid):
+            return [(pid, "ffmpeg.exe") for pid in sorted(helpers)]
+
+        def fake_mixer_identities(powershell, pids, private_values=()):
+            return {pid: helpers[pid] for pid in pids}
+
+        claim = [{"sourceId": "fixture-alt-offset.fixture-alt-source", "mixers": 2,
+            "processExitCode": -1, "available": True, "active": True, "mixerPort": 51389}]
+        module.child_processes = fake_child_processes
+        module.mixer_identities = fake_mixer_identities
+        module.state = lambda: {"pid": 4321, "audioSources": claim}
+        module.rtsp = type("FixtureState", (), {"publishers": [AlivePublisher(), AlivePublisher()]})()
+        module.evidence = {}
+        module.powershell = "powershell"
+        module.private = module.runtime = module.profile = "C:/run/private"
+        # rc.67's first sample: one retiring graph still holds port 51078 while the only
+        # mix the host claims reads 51389, so nothing the host claims may be starved.
+        helpers.update({12: identity(51078), 13: identity(51389)})
+        start = module.audio_mix_helper_watch("publish-disconnect-start")
+        self.assertIsInstance(start, dict,
+            "the watch has to hand back the recorded row, not the helper PID list")
+        self.assertIs(module.evidence["audioMixHelperWatch"][-1], start)
+        self.assertEqual(module.watched_ports(start), [51078, 51389])
+        self.assertEqual(module.claimed_ports(start), [51389])
+        self.assertEqual(sorted(set(module.claimed_ports(start)) - set(module.watched_ports(start))),
+            [], "a mix the host claims must have a live helper at the first sample")
+        self.assertEqual([item["state"] for item in start["fixturePublishers"]], ["alive", "alive"])
+        self.assertEqual(start["otherHelpers"], [])
+        self.assertTrue(all(item["tail"].endswith("tcp:51078") or item["tail"].endswith("tcp:51389")
+            for item in start["processes"]), "the tail has to keep naming the mix target")
+        # rc.67's sample after Program output stopped: the retiring graph's helper is gone
+        # and the claimed port is still served, which the convergence bar accepts.
+        helpers.clear()
+        helpers.update({13: identity(51389)})
+        after = module.audio_mix_helper_watch("after-program-output-stop")
+        self.assertIsInstance(after, dict)
+        self.assertEqual(module.watched_ports(after), module.claimed_ports(after))
+        self.assertEqual(module.claimed_ports(after), [51389])
+        self.assertEqual(module.watched_ports(after), [51389])
+        # A claimed port that loses its helper must still read as an unserved mix, so the
+        # convergence verdict is not just the happy path of this replay.
+        helpers.clear()
+        helpers.update({13: identity(51078)})
+        starved = module.audio_mix_helper_watch("mix-ports-still-unresolved")
+        self.assertEqual(sorted(set(module.claimed_ports(starved)) - set(module.watched_ports(starved))),
+            [51389], "a claimed port without a live helper has to be reported as unserved")
+
+    def test_published_packet_window_formats_the_interval_and_reports_its_own_failure(self):
+        """The keyframe diagnostic must not break the measurement it accompanies.
+
+        Run 44544305133 lost the decodable-frame result because the packet probe
+        built its read interval with %-formatting, and MediaMTX's own "%+00:00:6"
+        made Python raise "unsupported format character" before the frames were
+        recorded. The interval is concatenated now, and a failing diagnostic returns
+        its error text instead of replacing the assertion.
+        """
+        if os.name == "nt":
+            self.skipTest("fake ffprobe needs a POSIX executable")
+        spec = importlib.util.spec_from_file_location("product_windows",
+            ROOT / "native-host/tests/product_windows.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        gate = (ROOT / "native-host/tests/product_windows.py").read_text(encoding="utf-8")
+        self.assertNotIn('"-read_intervals", "%+00:00:%d" %', gate)
+        self.assertIn('read_interval = "%+00:00:" + str(window_seconds)', gate)
+        with tempfile.TemporaryDirectory() as temporary:
+            argv_record = Path(temporary) / "argv.txt"
+            fake = Path(temporary) / "ffprobe"
+            fake.write_text("#!/usr/bin/env python3\n"
+                "import json, os, sys\n"
+                "with open(os.environ['FAKE_ARGV'], 'w', encoding='utf-8') as handle:\n"
+                "    handle.write(json.dumps(sys.argv[1:]))\n"
+                "print(json.dumps({'packets': [{'pts_time': '1.0', 'flags': '___'},"
+                " {'pts_time': '2.0', 'flags': 'K'}, {'pts_time': 'N/A', 'flags': 'K'},"
+                " {'pts_time': '4.0', 'flags': 'K'}]}))\n", encoding="utf-8")
+            fake.chmod(0o755)
+            os.environ["FAKE_ARGV"] = str(argv_record)
+            try:
+                summary = module.published_packet_window(fake, "rtsp://127.0.0.1:1/program", 6)
+            finally:
+                os.environ.pop("FAKE_ARGV", None)
+            argv = json.loads(argv_record.read_text(encoding="utf-8"))
+            self.assertEqual(argv[argv.index("-read_intervals") + 1], "%+00:00:6")
+            self.assertEqual(summary["readInterval"], "%+00:00:6")
+            self.assertEqual(summary["packets"], 4)
+            self.assertEqual(summary["keyframes"], 2, "an unparsable key stamp is not counted")
+            self.assertEqual(summary["firstKeyPacketPts"], 2.0)
+            self.assertFalse(summary["firstPacketIsKey"])
+            self.assertNotIn("diagnosticFailed", summary)
+            missing = module.published_packet_window(Path(temporary) / "absent",
+                "rtsp://127.0.0.1:1/program", 6)
+            self.assertIn("diagnosticFailed", missing)
+            self.assertEqual(missing["readInterval"], "%+00:00:6")
+
+    def test_published_video_window_parses_string_stamps_and_keeps_bounded_noise(self):
+        """The shared window reader must not drop ffprobe's string pts_time.
+
+        The rc.61/rc.62 receipt recorded a span of 0 because only int/float stamps
+        were accepted, while ffprobe writes pts_time as text. A fake ffprobe also
+        proves that an "N/A" row is reported instead of counted, that a repeating
+        stderr tail cannot block the window, and that the window ends by killing a
+        deliberately long-lived connection. This only checks the reader, not the
+        published Program, and it skips where a script cannot be executed.
+        """
+        if os.name == "nt":
+            self.skipTest("fake ffprobe needs a POSIX executable")
+        spec = importlib.util.spec_from_file_location("product_windows",
+            ROOT / "native-host/tests/product_windows.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as temporary:
+            fake = Path(temporary) / "ffprobe"
+            fake.write_text("#!/usr/bin/env python3\n"
+                "import sys, time\n"
+                "sys.stderr.write('co located POCs unavailable\\n' * 3)\n"
+                "sys.stderr.flush()\n"
+                "for stamp in ('1.000000', 'N/A', '1.033333', '1.066666', '1.100000'):\n"
+                "    print(stamp, flush=True)\n"
+                "time.sleep(0.2)\n", encoding="utf-8")
+            fake.chmod(0o755)
+            window = module.published_video_window(fake, "rtsp://127.0.0.1:1/program", 30)
+            self.assertEqual(window["frames"], 4)
+            self.assertEqual(window["unparsableStamps"], ["N/A"])
+            self.assertEqual(window["stamps"], [1.0, 1.033333, 1.066666, 1.1])
+            self.assertTrue(window["monotonicTimestamps"])
+            self.assertAlmostEqual(window["ptsSpanSeconds"], 0.1, places=3)
+            self.assertTrue(window["firstDecodableFrameMs"] >= 0)
+            self.assertFalse(window["windowTimedOut"])
+            self.assertEqual(window["returnCode"], 0)
+            self.assertIn("co located POCs unavailable", window["stderrTail"])
 
     def test_build_symbols_are_stripped_before_the_manifest(self):
         builder = (ROOT / "desktop/scripts/build-obs-native.ps1").read_text(encoding="utf-8")
@@ -932,6 +1310,197 @@ class BuildContractTests(unittest.TestCase):
                 path.write_text(json.dumps(changed), encoding="utf-8")
                 with self.subTest(wrong=wrong), self.assertRaises(AssertionError):
                     smoke_windows.check_product_receipt(path, expect_hardware_requests=5)
+
+    def test_the_gain_control_step_records_its_measurement_before_rejecting_it(self):
+        """A rejected Program control step still has to say what it measured.
+
+        Run 44577184643 failed its unchanged-gain control step and the receipt that
+        arrived carried only the two ratios. The reference amplitudes, the window each
+        was taken in and the per-segment readings behind them were written to the
+        evidence AFTER the assertion, so the next session had nothing to re-check. This
+        fixes the order of the statements, not the thresholds: the control step keeps
+        its 0.8-1.25 bound, the gain bounds stay as written, and the amplitude comes
+        from the shared measurement rule in pixel_windows rather than a local copy.
+        """
+        gate = (ROOT / "native-host/tests/product_windows.py").read_text(encoding="utf-8")
+        record = gate.index('evidence["programTrackGain"] = {')
+        reject = gate.index("measured differently twice")
+        self.assertLess(record, reject,
+            "the gain control step must record its measurement before rejecting it")
+        self.assertLess(gate.index('evidence["programTrackGain"].update('),
+            gate.index("did not scale the second track"),
+            "the reduced-gain reading has to be recorded before it is judged")
+        for wiring in ('"toneReadings"', '"steadyWindowStarts"', '"controlRatios"',
+                       '"reducedToneReadings"'):
+            self.assertIn(wiring, gate)
+        for bound in ("0.8 <= ratio <= 1.25", "0.05 < gain_low_880 / gain_full_880 < 0.55",
+                      "0.6 < gain_low_440 / gain_full_440 < 1.5",
+                      "muted_440 > 200 and muted_880 < 60"):
+            self.assertIn(bound, gate, "the Program audio acceptance bound changed")
+        # The amplitude rule lives in one place, so a Windows gate and a local FFmpeg
+        # fixture measure the same thing.
+        self.assertNotIn("def _correlate(", gate)
+        self.assertIn("pixel_windows.steady_tone_window", gate)
+
+
+    def test_the_publish_toggle_says_why_the_owned_window_was_unusable(self):
+        """Run 44587525224: the resume toggle failed with an empty AssertionError.
+
+        ui() answers False in two different situations - this boot's own state
+        observation was unusable, or UI Automation refused the owned window - and a bare
+        ``assert ui(...)`` reported neither, so the installed gate stopped at
+        ``program-publish-disconnect`` with detail ``AssertionError: ``. ui_control waits
+        only for the addressability case and records every reason; a real UI Automation
+        refusal is not retried, because the click never landed, and failure_detail only
+        appends the recorded verdict to an assert that had no message of its own. The
+        publish acceptance itself is unchanged.
+        """
+        source = (ROOT / "native-host/tests/product_windows.py").read_text(encoding="utf-8")
+        lines = source.splitlines()
+        start = next(index for index, line in enumerate(lines, 1)
+                     if 'phase = "program-publish-disconnect"' in line)
+        end = next(index for index, line in enumerate(lines, 1)
+                   if "restarted publisher never delivered frames again" in line)
+        tree = ast.parse(source)
+        bare = [node.lineno for node in ast.walk(tree) if isinstance(node, ast.Assert)
+            and isinstance(node.test, ast.Call) and getattr(node.test.func, "id", "") == "ui"
+            and start <= node.lineno <= end]
+        self.assertEqual(bare, [], "a publish toggle still has an unexplained bare assert")
+        self.assertEqual(source.count('ui_control("stream-program"'), 2,
+            "both publish toggles of the relay-loss probe have to record their reason")
+        for wiring in ('"lastUiUnavailable"', '"lastStateObservation"', '"productControlWaits"',
+                       "def window_owner"):
+            self.assertIn(wiring, source)
+        # Both refusal paths record the handle verdict, so a UI Automation refusal cannot
+        # read like a startup wait any more (run 44599567300 said only product-window).
+        self.assertEqual(source.count('"reportedHandles"'), 2,
+            "the unusable-window path and the UI Automation refusal path both have to name the handle verdict")
+        ui_automation = (ROOT / "native-host/tests/product-ui.ps1").read_text(encoding="utf-8")
+        gone, mismatch = ui_automation.index("'window-handle-gone'"), ui_automation.index("'window-pid-mismatch'")
+        self.assertLess(gone, ui_automation.index("Invoke-Control"),
+            "the UI Automation helper reports why the owned window was refused before touching any control")
+        self.assertLess(mismatch, ui_automation.index("Invoke-Control"))
+        self.assertLess(ui_automation.index("Start-Sleep -Milliseconds 400"), gone,
+            "a handle that is being recreated is re-asked before it is reported gone")
+
+        spec = importlib.util.spec_from_file_location("product_windows",
+            ROOT / "native-host/tests/product_windows.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        node = next(item for item in ast.walk(ast.parse(source))
+            if isinstance(item, ast.FunctionDef) and item.name == "ui_control")
+        exec(compile(ast.get_source_segment(source, node), str(ROOT / "native-host/tests/product_windows.py"),
+            "exec"), module.__dict__)
+
+        class FakeTime:
+            def __init__(self):
+                self.now = 0.0
+            def monotonic(self):
+                return self.now
+            def sleep(self, seconds):
+                self.now += seconds
+
+        def run(ui_results, *, unavailable=None, refusal=None, timeout=15):
+            module.time = FakeTime()
+            module.evidence = {}
+            # The product's own UI-thread account, as the state observation publishes it.
+            module.state = lambda: {"uiStallMs": 6100, "uiStallMaxMs": 6100,
+                "uiStallAtMs": 1700000000600, "publishedAtMs": 1700000000700,
+                "programOutput": {"teardown": {"relayStopMs": 6000, "relayStopMaxMs": 6000,
+                    "publishReleaseMs": 120, "publishReleaseMaxMs": 120,
+                    "publishStopWaitMs": 40, "publishStopWaitMaxMs": 40}}}
+            if refusal is not None:
+                module.evidence["lastUiFailure"] = refusal
+            seen = []
+            outcomes = list(ui_results)
+
+            def fake_ui(action, **fields):
+                seen.append(action)
+                passed = outcomes.pop(0)
+                # Only a failed call leaves a reason behind, exactly as ui() does.
+                if passed:
+                    module.evidence.pop("lastUiUnavailable", None)
+                elif unavailable is not None:
+                    module.evidence["lastUiUnavailable"] = unavailable
+                return passed
+            module.ui = fake_ui
+            return module.ui_control("stream-program", label="publish again after a relay loss",
+                timeout=timeout), seen
+
+        recovered, calls = run([False, False, True], unavailable={"stage": "stream-program",
+            "code": "owned-window-unavailable", "matchedWindows": 0, "reportedHandles": ["gone"],
+            "stateObservation": {"code": "state-file-unreadable"}})
+        self.assertTrue(recovered)
+        self.assertEqual(calls, ["stream-program", "stream-program", "stream-program"])
+        self.assertEqual(module.evidence["productControlWaits"][-1]["recoveredAfterAttempts"], 2)
+        self.assertEqual(module.evidence["productControlWaits"][-1]["unusableAttempts"][0]["code"],
+            "owned-window-unavailable")
+        self.assertEqual(module.evidence["productControlWaits"][-1]["uiThread"]["uiStallMaxMs"], 6100,
+            "a control that needed waits still has to say how long the UI thread was held")
+        self.assertEqual(module.evidence["productControlWaits"][-1]["uiThread"]["teardown"]["relayStopMs"], 6000)
+        self.assertNotIn("lastUiUnavailable", module.evidence)
+
+        refused, calls = run([False], unavailable=None, refusal={"stage": "initialize",
+            "code": "product-window"})
+        self.assertFalse(refused, "a UI Automation refusal must not be retried or hidden")
+        self.assertEqual(calls, ["stream-program"], "a refusal means the click never landed, so retrying would double it")
+        self.assertIsNone(module.evidence["productControlWaits"][-1]["lastUnavailable"])
+        self.assertEqual(module.evidence["productControlWaits"][-1]["lastUiFailure"]["code"], "product-window")
+        refusal_wait = module.evidence["productControlWaits"][-1]["uiThread"]
+        self.assertEqual(refusal_wait["uiStallAtMs"], 1700000000600,
+            "the refusal has to carry when the product's own heartbeat last came back late")
+        self.assertEqual(refusal_wait["teardown"]["publishReleaseMaxMs"], 120,
+            "the refusal has to carry the Program teardown durations behind it")
+
+        never, calls = run([False] * 40, unavailable={"stage": "stream-program",
+            "code": "owned-window-unavailable", "matchedWindows": 0, "reportedHandles": ["gone"]},
+            timeout=6)
+        self.assertFalse(never, "a window that stays unusable still fails the gate")
+        self.assertGreater(len(calls), 1)
+        self.assertLessEqual(len(module.evidence["productControlWaits"][-1]["unusableAttempts"]), 4)
+        self.assertEqual(module.evidence["productControlWaits"][-1]["recoveredAfterAttempts"], 0)
+
+        empty = module.failure_detail(AssertionError(""), {"lastUiUnavailable":
+            {"stage": "stream-program", "code": "owned-window-unavailable",
+             "reportedHandles": ["gone", "other-process(4321)"]}})
+        self.assertIn("owned-window-unavailable", empty)
+        self.assertIn("gone", empty)
+        self.assertEqual(module.failure_detail(AssertionError("publish control could not resume"),
+            {"lastUiUnavailable": {"code": "owned-window-unavailable"}}),
+            "AssertionError: publish control could not resume",
+            "an assertion that already explains itself must not be rewritten")
+
+
+    def test_publish_control_refusal_names_the_ui_thread_owner(self):
+        """A refused Program control has to say whether the product held its own UI thread.
+
+        Runs 44587525224 and 44599567300 refused the resume toggle after a relay loss with
+        one shared UI Automation code, which cannot separate a window the product destroyed
+        from a UI thread the product is holding inside a Program teardown. The host now
+        measures its own late heartbeat ticks and every Program teardown duration, and the
+        gate records both beside the refusal so the next round names the layer instead of
+        guessing it.
+        """
+        output = (ROOT / "native-host/src/product_output.cpp").read_text(encoding="utf-8")
+        header = (ROOT / "native-host/src/product_output.hpp").read_text(encoding="utf-8")
+        window = (ROOT / "native-host/src/product_window.cpp").read_text(encoding="utf-8")
+        gate = (ROOT / "native-host/tests/product_windows.py").read_text(encoding="utf-8")
+
+        self.assertIn("struct TeardownSpan", output)
+        for span in ("TeardownSpan span(relay_stop_last_ms, relay_stop_max_ms);",
+                     "TeardownSpan span(publish_release_last_ms, publish_release_max_ms);",
+                     "TeardownSpan span(publish_stop_wait_last_ms, publish_stop_wait_max_ms);"):
+            self.assertIn(span, output, "every Program teardown the UI thread waits for must be measured")
+        for field in ("relay_stop_last_ms", "publish_release_last_ms", "publish_stop_wait_max_ms"):
+            self.assertIn(field, header)
+            self.assertIn("value.%s = impl_->%s;" % (field, field), output)
+        # The private state observation is the only channel the installed gate can read.
+        for key in ("uiStallMs", "uiStallMaxMs", "uiStallAtMs", "teardown"):
+            self.assertIn('"%s"' % key, window)
+        self.assertIn("now_ms - heartbeat_last_ms_ - heartbeat_interval_ms", window)
+        self.assertIn("def ui_thread_snapshot", gate)
+        self.assertEqual(gate.count('"uiThread": ui_thread_snapshot()'), 2,
+            "both the refusal and a control that needed waits carry the product's own account")
 
 
 if __name__ == "__main__":

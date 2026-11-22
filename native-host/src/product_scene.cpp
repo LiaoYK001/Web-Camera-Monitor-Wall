@@ -107,6 +107,7 @@ struct ProductSceneSource {
 	std::vector<FilterState> filters;
 #ifdef WEBOBS_NATIVE_PRODUCT_MODE
 	std::unique_ptr<QProcess> audio_mix_process;
+	int audio_mix_port = 0;
 	obs_source_t *audio_source = nullptr;
 	std::string audio_settings;
 	obs_volmeter_t *audio_volmeter = nullptr;
@@ -224,6 +225,8 @@ struct ProductSceneSource {
 			  << QStringLiteral("tcp://127.0.0.1:%1?listen=1").arg(port);
 		auto process = std::make_unique<QProcess>();
 		process->setProcessChannelMode(QProcess::MergedChannels);
+		// The mixer never needs product tokens or camera secrets. Do not pass
+		// the frontend's private WEBOBS_* environment to a long-lived child.
 		QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
 		for (const auto &key : environment.keys())
 			if (key.startsWith("WEBOBS_"))
@@ -235,6 +238,7 @@ struct ProductSceneSource {
 			return false;
 		}
 		audio_mix_process = std::move(process);
+		audio_mix_port = port;
 		Data settings(obs_data_create(), &obs_data_release);
 		obs_data_set_bool(settings.get(), "is_local_file", false);
 		obs_data_set_string(settings.get(), "input",
@@ -249,11 +253,16 @@ struct ProductSceneSource {
 		obs_data_set_bool(settings.get(), "restart_on_activate", false);
 		obs_data_set_bool(settings.get(), "close_when_inactive", false);
 		obs_data_set_int(settings.get(), "buffering_mb", 1);
-		obs_data_set_int(settings.get(), "reconnect_delay_sec", 2);
+		// ffmpeg only binds its listen socket after it has opened the camera input, so the
+		// first open of this endpoint can fail while the mixer is still connecting. One
+		// second instead of the upstream default (10) or the previous 2 keeps that
+		// lead-in short; the receipt still measures when audio actually became live.
+		obs_data_set_int(settings.get(), "reconnect_delay_sec", 1);
 		const std::string name = "WebOBS audio mix " + camera.id;
 		audio_source = obs_source_create("ffmpeg_source", name.c_str(), settings.get(), nullptr);
 		if (!audio_source) {
 			audio_mix_process.reset();
+			audio_mix_port = 0;
 			error = "scene-audio-mixer-source-failed";
 			return false;
 		}
@@ -274,6 +283,7 @@ struct ProductSceneSource {
 			obs_source_release(audio_source);
 			audio_source = nullptr;
 			audio_mix_process.reset();
+			audio_mix_port = 0;
 			error = "scene-audio-meter-unavailable";
 			return false;
 		}
@@ -383,10 +393,18 @@ std::vector<ProductVideoProgress> ProductSceneGraph::video_progress() const
 		calldata_init(&data);
 		const bool called = proc_handler_call(obs_source_get_proc_handler(entry->source),
 			"webobs_get_video_progress", &data);
-		long long schema = 0, serial = -1;
-		const bool available = called && calldata_get_int(&data, "schema", &schema) && schema == 1 &&
+		long long schema = 0, serial = -1, frame_ts = -1, frame_ms = -1, frame_hash = -1;
+		// Schema 1 carries only the serial; schema 2 adds the delivered-frame timestamp,
+		// arrival millisecond and content digest. Anything else is treated as no telemetry.
+		const bool available = called && calldata_get_int(&data, "schema", &schema) && schema >= 1 && schema <= 2 &&
 			calldata_get_int(&data, "serial", &serial) && serial >= 0;
-		result.push_back({uuid, available, available ? serial : 0});
+		if (available && schema == 2) {
+			calldata_get_int(&data, "frameTs", &frame_ts);
+			calldata_get_int(&data, "frameMs", &frame_ms);
+			calldata_get_int(&data, "frameHash", &frame_hash);
+		}
+		result.push_back({uuid, available, available ? serial : 0, available ? frame_ts : -1,
+			available ? frame_ms : -1, available ? frame_hash : -1});
 		calldata_free(&data);
 	}
 	return result;
@@ -422,10 +440,39 @@ std::vector<ProductAudioProgress> ProductSceneGraph::audio_progress()
 			obs_source_muted(entry->audio_source),
 			unsigned(obs_source_get_audio_mixers(entry->audio_source)),
 			std::int64_t(obs_source_get_sync_offset(entry->audio_source)),
-			std::move(log)});
+			[&entry] {
+				std::vector<ProductAudioInputProgress> inputs;
+				const int normalization = audio_normalization(entry->configuration);
+				for (const auto &input : entry->configuration.audio_inputs)
+					inputs.push_back({input.track, input.gain, input.muted, input.sync_offset_ms,
+						(std::max)(0, normalization + input.sync_offset_ms)});
+				return inputs;
+			}(),
+			std::move(log), entry->audio_mix_port});
 	}
 #endif
 	return result;
+}
+
+std::uint32_t ProductSceneGraph::audio_output_tracks()
+{
+	std::uint32_t tracks = 0;
+	for (const auto &entry : sources_) {
+		if (!entry)
+			continue;
+		// A Scene that declares audioInputs mutes the camera source and feeds the
+		// buses through its dedicated per-track mix source, so the mix source has
+		// to be consulted on its own. Skipping the whole entry whenever the camera
+		// source is muted reported an empty mask, and the AV muxer then refused
+		// obs_output_start() without any output-level error.
+		if (entry->source && !obs_source_muted(entry->source))
+			tracks |= obs_source_get_audio_mixers(entry->source);
+#ifdef WEBOBS_NATIVE_PRODUCT_MODE
+		if (entry->audio_source && !obs_source_muted(entry->audio_source))
+			tracks |= obs_source_get_audio_mixers(entry->audio_source);
+#endif
+	}
+	return tracks;
 }
 
 std::unique_ptr<ProductSceneGraph> create_product_scene(ProductSourcePool &pool,

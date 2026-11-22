@@ -12,12 +12,20 @@ using namespace webobs;
 using namespace webobs::native_host;
 std::atomic_int created = 0, destroyed = 0;
 long long progress_schema = 1, progress_serial = 0;
+long long progress_frame_ts = -1, progress_frame_ms = -1, progress_frame_hash = -1;
 int progress_queries = 0;
+// Mirrors the owned ffmpeg source: schema 1 is serial-only, schema 2 adds the
+// delivered-frame timestamp, arrival millisecond and content digest.
 void fixture_progress(void *, calldata_t *data)
 {
 	++progress_queries;
 	calldata_set_int(data, "schema", progress_schema);
 	calldata_set_int(data, "serial", progress_serial);
+	if (progress_schema >= 2) {
+		calldata_set_int(data, "frameTs", progress_frame_ts);
+		calldata_set_int(data, "frameMs", progress_frame_ms);
+		calldata_set_int(data, "frameHash", progress_frame_hash);
+	}
 }
 const std::string owner(32, 'a'), other_owner(32, 'b');
 const char *fixture_name(void *) { return "Inert graph ownership fixture"; }
@@ -112,15 +120,27 @@ void run()
 	require(progress.size() == 1 && progress.front().uuid == first->uuids.front() && !progress.front().available,
 		"unavailable frame callback telemetry was invented or shared sources were counted twice");
 	proc_handler_add(obs_source_get_proc_handler(live_source),
-		"void webobs_get_video_progress(out int schema, out int serial)", fixture_progress, nullptr);
+		"void webobs_get_video_progress(out int schema, out int serial, out int frameTs, out int frameMs, out int frameHash)",
+		fixture_progress, nullptr);
 	progress = first->video_progress();
-	require(progress_queries == 1 && progress.size() == 1 && progress.front().available && progress.front().serial == 0,
-		"zero callbacks were not distinguished from missing telemetry");
+	require(progress_queries == 1 && progress.size() == 1 && progress.front().available && progress.front().serial == 0 &&
+			progress.front().frame_timestamp == -1 && progress.front().frame_ms == -1 && progress.front().frame_hash == -1,
+		"zero callbacks were not distinguished from missing telemetry or absent frame identity was invented");
 	progress_serial = 17;
 	progress = first->video_progress();
-	require(progress_queries == 2 && progress.front().available && progress.front().serial == 17,
+	require(progress_queries == 2 && progress.front().available && progress.front().serial == 17 &&
+			progress.front().frame_timestamp == -1,
 		"owned source callback serial was not read through the real proc handler");
 	progress_schema = 2;
+	progress_frame_ts = 123456;
+	progress_frame_ms = 987654;
+	progress_frame_hash = -987654321;
+	progress = first->video_progress();
+	require(progress_queries == 3 && progress.front().available && progress.front().serial == 17 &&
+			progress.front().frame_timestamp == 123456 && progress.front().frame_ms == 987654 &&
+			progress.front().frame_hash == -987654321,
+		"delivered-frame identity was not read through the real proc handler");
+	progress_schema = 3;
 	require(!first->video_progress().front().available, "unsupported telemetry schema was accepted");
 	progress_schema = 1;
 	progress_serial = -1;

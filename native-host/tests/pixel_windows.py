@@ -159,9 +159,10 @@ class LoopbackRtsp:
             mediamtx = locked_mediamtx(private, offline)
             eol = chr(10)
             config = private / "mediamtx.yml"
-            # The loopback fixture owns only RTSP. Its default API/WebRTC
-            # listeners would collide with unrelated product or runner ports
-            # and can make MediaMTX exit before the fixture becomes readable.
+            # The loopback fixture owns only RTSP. Leaving MediaMTX's default
+            # API/WebRTC listeners enabled would collide with the product's own
+            # on-demand Program publisher on 8889/9997, with unrelated runner
+            # ports, or make the streaming gate observe the fixture.
             config.write_text(eol.join(["logLevel: warn", "api: false", "webrtc: false",
                               "hls: false", "rtmp: false", "srt: false",
                               "rtspAddress: 127.0.0.1:8554", "paths:", "  all_others:"]) + eol,
@@ -262,6 +263,60 @@ class LoopbackRtsp:
             time.sleep(0.5)
         raise RuntimeError("Loopback RTSP stream did not return after restart")
 
+    def _packet_flow(self, url: str) -> tuple[int, float | None]:
+        """Count video packets in a short live window and return the newest presentation stamp.
+
+        A reader that cannot get anything proves a dead publisher (verified locally: killing
+        the publisher makes both samples report zero packets). Packets alone cannot prove the
+        opposite, because MediaMTX also hands a fresh reader whatever its ring buffer still
+        holds, and the fixture's `-stream_loop -1 -c copy` rewinds presentation stamps at every
+        loop, so a stamp delta decides neither direction. Both numbers are reported as evidence
+        and neither is used to blame the product.
+        """
+        try:
+            probe = subprocess.run([str(self.ffprobe), "-v", "error", "-rtsp_transport", "tcp",
+                                    "-select_streams", "v:0", "-show_entries", "packet=pts",
+                                    "-read_intervals", "%+#12", "-of", "csv=p=0", url],
+                                   capture_output=True, text=True, timeout=10)
+        except subprocess.TimeoutExpired:
+            return (0, None)
+        if probe.returncode != 0:
+            return (0, None)
+        stamps = []
+        for line in probe.stdout.splitlines():
+            try:
+                stamps.append(float(line.strip()))
+            except ValueError:
+                continue
+        return (len(stamps), max(stamps) if stamps else None)
+
+    def path_progress(self) -> list[dict]:
+        """Probe every published path twice and report whether packets actually advance.
+
+        Opening a path only proves MediaMTX still answers it. A frozen final-pixel slot has to
+        distinguish "the fixture stopped pushing packets" from "the product stopped decoding
+        them", so each path is sampled twice, 0.8 s apart, with a fresh reader. Only an empty
+        sample proves a dead publisher, and that is what a repair may act on. The packet counts
+        and presentation stamps are reported because run 44356064395 needed them to separate a
+        stale host health cache from a real stall, but a looping fixture rewinds stamps and a
+        ring buffer can be replayed, so neither may declare a publisher healthy or faulty.
+        """
+        report = []
+        for index, url in enumerate(self.urls):
+            first, first_pts = self._packet_flow(url)
+            time.sleep(0.8)
+            second, second_pts = self._packet_flow(url)
+            report.append({"index": index, "packets": [first, second],
+                           "newestPts": [first_pts, second_pts],
+                           "ptsDelta": (round(second_pts - first_pts, 3)
+                                        if first_pts is not None and second_pts is not None else None),
+                           # An empty live read is the only decisive publisher fault here.
+                           # Positive counts plus an unchanged stamp are also what a replayed
+                           # ring buffer looks like, so they must not trigger a repair that
+                           # could mask a real product-side stall.
+                           "flowing": first > 0 and second > 0})
+        return report
+
     def stop(self) -> None:
         for publisher in self.publishers:
             if publisher is not None and publisher.poll() is None:
@@ -311,6 +366,202 @@ def picture_counts(frames, require_b_frames: bool) -> tuple[int, int]:
     return len(frames), count
 
 
+def _decode_pcm(ffmpeg: Path, source: str, stream_index: int, sample_rate: int,
+                duration: float, filters: tuple[str, ...] = (),
+                start: float = 0.0) -> array.array | None:
+    """Decode one audio stream into mono signed 16-bit samples with the locked FFmpeg.
+
+    ``start`` selects an analysis window inside a finished file. A live RTSP source
+    has nothing to seek, so a positive start there is a caller error rather than an
+    option FFmpeg would silently ignore.
+    """
+    if start < 0 or (start > 0 and source.startswith(("rtsp://", "rtsps://"))):
+        raise ValueError("the audio analysis window is invalid for this source")
+    transport = ["-rtsp_transport", "tcp"] if source.startswith("rtsp://") else []
+    seek = [] if start <= 0 else ["-ss", f"{start:.3f}"]
+    command = [str(ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin", *transport,
+        *seek, "-i", source, "-map", f"0:a:{stream_index}"]
+    if filters:
+        command += ["-af", ",".join(filters)]
+    command += ["-c:a", "pcm_s16le", "-ac", "1", "-ar", str(sample_rate), "-t", f"{duration:.1f}",
+                "-f", "s16le", "-"]
+    decoded = subprocess.run(command, capture_output=True, timeout=90)
+    if decoded.returncode != 0:
+        stderr = decoded.stderr.decode("utf-8", errors="replace")[-400:]
+        raise ValueError(f"locked ffmpeg could not decode audio track {stream_index}: {stderr}")
+    samples = array.array("h")
+    samples.frombytes(decoded.stdout[:len(decoded.stdout) // 2 * 2])
+    return samples if len(samples) >= sample_rate else None
+
+
+def band_rms(ffmpeg: Path, source: str, stream_index: int, *, lowpass: float = 0,
+             highpass: float = 0, sample_rate: int = 8000, duration: float = 3.0) -> float:
+    """Energy of one decoded band, used to prove each fixture pitch survived.
+
+    A Program mix sums both fixture tones, so a single frequency estimate cannot
+    separate them. Filtering below and above the midpoint and measuring RMS twice
+    proves both tracks reached the artifact instead of trusting a boolean.
+    """
+    filters = []
+    if lowpass:
+        filters.append(f"lowpass=f={lowpass:g}")
+    if highpass:
+        filters.append(f"highpass=f={highpass:g}")
+    samples = _decode_pcm(ffmpeg, source, stream_index, sample_rate, duration, tuple(filters))
+    if samples is None:
+        raise AssertionError("decoded audio window is shorter than one second")
+    return round(math.sqrt(sum(value * value for value in samples) / len(samples)), 1)
+
+
+# A Program recording's pitch is neither exactly the fixture's pitch nor one
+# continuous phase: the owned mix resamples RTSP audio with drift correction and
+# hands over a dropped audio chunk when a stream jitters. A single projection over
+# the whole window then measures the sum of those pieces, not the tone, so the same
+# unchanged mix can read as a different amplitude twice. Run 44577184643 did exactly
+# that - its second gain reference read 0.58 (440 Hz) and 0.359 (880 Hz) of the first
+# and failed its own control step before any product behaviour was judged. Replaying
+# the recorded shape locally reproduces it: dropping 30 samples at the midpoint of a
+# steady 440/880 Hz pair, or shifting the rate by 4e-4, attenuates one whole-window
+# projection while leaving the tone plainly audible. The amplitude is therefore the
+# median of short projections, each taken at the strongest point of a one Hertz band.
+# A matched tone measures what it measured before, a drifted tone stops collapsing,
+# and a dropped chunk no longer cancels its own phase. The fixture's pitches sit
+# hundreds of Hertz apart, so an absent pitch still reads as absent and a genuinely
+# quieter window still measures lower.
+TONE_BAND_TOLERANCE_HZ = 1.0
+TONE_BAND_STEP_HZ = 0.2
+TONE_SEGMENT_SECONDS = 0.5
+
+
+def _lock_in(values: array.array, frequency: float, rate: float) -> float:
+    """Magnitude of the projection onto one frequency, independent of its phase."""
+    angle = 2.0 * math.pi * frequency / rate
+    turn_cosine = math.cos(angle)
+    turn_sine = math.sin(angle)
+    total_real = total_imag = 0.0
+    wave_real = wave_imag = 1.0
+    for value in values:
+        total_real += value * wave_real
+        total_imag += value * wave_imag
+        wave_real, wave_imag = (wave_real * turn_cosine - wave_imag * turn_sine,
+            wave_real * turn_sine + wave_imag * turn_cosine)
+    return 2.0 * math.hypot(total_real, total_imag) / len(values)
+
+
+def _band_projection(values: array.array, frequency: float, rate: float) -> tuple[float, float]:
+    """Strongest projection within one Hertz, and where in that band it landed."""
+    steps = int(TONE_BAND_TOLERANCE_HZ / TONE_BAND_STEP_HZ)
+    best = (0.0, frequency)
+    for index in range(-steps, steps + 1):
+        target = round(frequency + index * TONE_BAND_STEP_HZ, 2)
+        magnitude = _lock_in(values, target, rate)
+        if magnitude > best[0]:
+            best = (magnitude, target)
+    return best
+
+
+def pitch_projection(samples: array.array, frequency: float,
+                     sample_rate: int) -> dict:
+    """Amplitude of one pitch plus the readings behind it.
+
+    Short segments keep a dropped chunk from cancelling the rest of the window, the
+    one Hertz band keeps resampler drift from cancelling the tone, and the median
+    keeps one damaged segment from standing in for the whole mix. The per-segment
+    readings stay in the receipt so a real dropout is visible instead of averaged
+    away.
+    """
+    step = 2  # 4 kHz analysis rate still covers the fixture pitches.
+    values = samples[::step]
+    rate = sample_rate / step
+    # Skip decoder priming so the first block cannot invent amplitude.
+    values = values[len(values) // 20:]
+    segment = max(1, int(rate * TONE_SEGMENT_SECONDS))
+    parts = [values[index:index + segment] for index in range(0, len(values), segment)]
+    parts = [part for part in parts if len(part) * 2 >= segment]
+    if not parts:
+        raise ValueError("tone analysis window is shorter than one measurement segment")
+    readings = [_band_projection(part, frequency, rate) for part in parts]
+    magnitudes = [round(magnitude, 1) for magnitude, _ in readings]
+    # Mean, not median: silence inside the window has to keep understating the pitch
+    # the way the lead-in guard expects, while one phase-broken segment only drags the
+    # reading down by its own fraction. The sorted readings go to the receipt so a real
+    # dropout stays visible instead of being averaged away.
+    amplitude = sum(magnitudes) / len(magnitudes)
+    return {"amplitude": round(amplitude, 1),
+        "sortedSegmentAmplitudes": sorted(magnitudes),
+        "peakHz": round(max(readings, key=lambda reading: reading[0])[1], 2),
+        "segmentAmplitudes": magnitudes}
+
+
+def _correlate(samples: array.array, frequency: float, sample_rate: int) -> float:
+    """Lock-in amplitude of one pitch, robust to drift and to a dropped chunk."""
+    return pitch_projection(samples, frequency, sample_rate)["amplitude"]
+
+
+def tone_amplitude(ffmpeg: Path, source: str, stream_index: int, frequency: float, *,
+                   sample_rate: int = 8000, duration: float = 3.0,
+                   start: float = 0.0) -> float:
+    """Lock-in amplitude of one exact pitch inside a decoded stream.
+
+    band_rms proves that a band carries energy, but FFmpeg's lowpass/highpass are
+    two-pole filters: a 440 Hz tone still leaks measurably above a 660 Hz
+    highpass, so band energy cannot prove the OTHER pitch is absent. Correlating
+    the samples with sin/cos at the target frequency answers the presence and
+    absence questions directly and needs no third-party dependency.
+    """
+    samples = _decode_pcm(ffmpeg, source, stream_index, sample_rate, duration, start=start)
+    if samples is None:
+        raise AssertionError("decoded audio window is shorter than one second")
+    return _correlate(samples, frequency, sample_rate)
+
+
+def steady_tone_window(ffmpeg: Path, source: str, stream_index: int, *, steady,
+                       measure=(), minimum: float = 2.0, step: float = 0.5,
+                       sample_rate: int = 8000, continuity: float = 0.75,
+                       audible: float = 200.0) -> dict:
+    """Measure pitches inside a window where the steady pitches do not drift.
+
+    A Program recording can start while the owned audio mixer is still feeding
+    lead-in silence for a track whose RTSP audio arrived late. Averaging a tone
+    over a window that contains that silence understates every pitch by the
+    silence fraction, which is what made rc.59's gain reference look as if the
+    untouched track had risen. This scans the finished file for a window in which
+    each ``steady`` pitch holds the same amplitude across both halves, measures
+    every requested pitch there, and names the scanned amplitudes when no such
+    window exists instead of averaging the drift away.
+    """
+    scanned = []
+    position = 0.0
+    while len(scanned) < 8:
+        window = _decode_pcm(ffmpeg, source, stream_index, sample_rate, minimum, start=position)
+        first = _decode_pcm(ffmpeg, source, stream_index, sample_rate, minimum / 2, start=position)
+        second = _decode_pcm(ffmpeg, source, stream_index, sample_rate, minimum / 2,
+            start=position + minimum / 2)
+        if window is None or first is None or second is None or \
+                len(window) < int(sample_rate * minimum * 0.9):
+            break
+        halves = {str(int(frequency)): [_correlate(first, frequency, sample_rate),
+            _correlate(second, frequency, sample_rate)] for frequency in steady}
+        settled = all(low >= audible and high >= audible and
+            low * continuity <= high and high * continuity <= low
+            for low, high in halves.values())
+        scanned.append({"start": round(position, 2), "halves": halves})
+        if settled:
+            readings = {str(int(frequency)): pitch_projection(window, frequency, sample_rate)
+                for frequency in (*steady, *measure)}
+            return {"start": round(position, 2), "seconds": minimum,
+                "amplitudes": {pitch: reading["amplitude"] for pitch, reading in readings.items()},
+                "toneReadings": {pitch: {"peakHz": reading["peakHz"],
+                    "segmentAmplitudes": reading["segmentAmplitudes"][:4],
+                    "weakestSegment": reading["sortedSegmentAmplitudes"][0]}
+                    for pitch, reading in readings.items()},
+                "continuity": halves, "scanned": scanned[:8]}
+        position = round(position + step, 2)
+    raise AssertionError("no continuous " + f"{minimum}s window for "
+        + ",".join(str(int(frequency)) for frequency in steady)
+        + " in the decoded file: " + json.dumps(scanned, sort_keys=True)[:600])
+
+
 def tone_probe(ffmpeg: Path, source: str, stream_index: int, *, sample_rate: int = 8000,
                duration: float = 2.0) -> tuple[float, float] | None:
     """Decode one audio stream to mono PCM and estimate its dominant pure tone.
@@ -320,18 +571,10 @@ def tone_probe(ffmpeg: Path, source: str, stream_index: int, *, sample_rate: int
     carries signal rather than only a track header. A short window returns None
     so an RTSP reader can retry while the publisher is still warming up.
     """
-    transport = ["-rtsp_transport", "tcp"] if source.startswith("rtsp://") else []
-    decoded = subprocess.run([str(ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin", *transport,
-        "-i", source, "-map", f"0:a:{stream_index}",
-        "-c:a", "pcm_s16le", "-ac", "1", "-ar", str(sample_rate), "-t", f"{duration:.1f}",
-        "-f", "s16le", "-"], capture_output=True, timeout=60)
-    if decoded.returncode != 0:
-        stderr = decoded.stderr.decode("utf-8", errors="replace")[-400:]
-        raise ValueError(f"locked ffmpeg could not decode audio track {stream_index}: {stderr}")
-    samples = array.array("h")
-    samples.frombytes(decoded.stdout[:len(decoded.stdout) // 2 * 2])
-    if len(samples) < sample_rate:
+    decoded = _decode_pcm(ffmpeg, source, stream_index, sample_rate, duration)
+    if decoded is None:
         return None
+    samples = decoded
     rms = math.sqrt(sum(value * value for value in samples) / len(samples))
     crossings = sum(1 for index in range(1, len(samples)) if (samples[index - 1] < 0) != (samples[index] < 0))
     return round(rms, 1), round(crossings * .5 / (len(samples) / sample_rate), 1)
@@ -356,11 +599,19 @@ def make_fixtures(private: Path, ffmpeg: Path, ffprobe: Path, node: str, *, all_
                           "-x265-params", f"pools=1:frame-threads=1:keyint=10:min-keyint=10:scenecut=0:b-adapt=0:bframes={requested_b_frames}:log-level=error"]
         command = [str(ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-f", "rawvideo",
                    "-pixel_format", "rgb24", "-video_size", "320x180", "-framerate", "10", "-i", str(raw)]
-        if channel == 0:
-            command += ["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=8",
-                        "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=8",
-                        "-map", "0:v:0", "-map", "1:a:0", "-map", "2:a:0",
-                        "-c:a", "aac", "-b:a", "64k", "-shortest"]
+        # Fixture one carries two distinct pitches so a per-track mix can prove
+        # both reached the output; fixture two carries a third pitch on its own
+        # track so two Sources routed to different output buses can be separated
+        # in the recorded file instead of only counting streams.
+        tones = (440, 880) if channel == 0 else ((1200,) if channel == 1 else ())
+        if tones:
+            for frequency in tones:
+                command += ["-f", "lavfi", "-i",
+                            f"sine=frequency={frequency}:sample_rate=48000:duration=8"]
+            command += ["-map", "0:v:0"]
+            for index in range(len(tones)):
+                command += ["-map", f"{index + 1}:a:0"]
+            command += ["-c:a", "aac", "-b:a", "64k", "-shortest"]
         else:
             command += ["-an"]
         command += [*video_args, "-f", "matroska", str(video)]
@@ -375,25 +626,26 @@ def make_fixtures(private: Path, ffmpeg: Path, ffprobe: Path, node: str, *, all_
             raise AssertionError("Encoded fixture codec/dimensions/reordering did not match its specification")
         audio_tracks = 0
         audio_tones = []
-        if channel == 0:
+        if tones:
             audio_probe = subprocess.run(
                 [str(ffprobe), "-v", "error", "-select_streams", "a", "-show_entries",
                  "stream=index,codec_type,codec_name", "-of", "json", str(video)],
                 check=True, capture_output=True, text=True, timeout=20)
             audio_streams = json.loads(audio_probe.stdout).get("streams", [])
-            if len(audio_streams) != 2 or any(item.get("codec_type") != "audio" for item in audio_streams):
-                raise AssertionError("Encoded multi-track fixture did not contain two audio tracks")
-            audio_tracks = 2
-            # Decode the actual PCM instead of trusting two stream headers. The
+            if len(audio_streams) != len(tones) or any(item.get("codec_type") != "audio" for item in audio_streams):
+                raise AssertionError("Encoded fixture did not contain the expected audio tracks")
+            audio_tracks = len(tones)
+            # Decode the actual PCM instead of trusting stream headers. The
             # tracks carry different fixed pitches, so a later Program artifact
-            # can prove which track reached the mix rather than only that two
-            # tracks exist in the container.
-            measured = [tone_probe(ffmpeg, str(video), index) for index in (0, 1)]
+            # can prove which track reached the mix rather than only that the
+            # container lists them.
+            measured = [tone_probe(ffmpeg, str(video), index) for index in range(len(tones))]
             if any(item is None for item in measured):
                 raise AssertionError("Fixture audio track produced no decodable one-second window")
             assert all(item[0] > 200 for item in measured), "decoded fixture audio is silent"
-            if not (400 <= measured[0][1] <= 480 and 820 <= measured[1][1] <= 940):
-                raise AssertionError("Fixture audio tracks are not the two expected distinguishable tones")
+            for wanted, (rms, hz) in zip(tones, measured):
+                if not wanted - 40 <= hz <= wanted + 40:
+                    raise AssertionError(f"Fixture audio track {wanted} Hz decoded as {hz} Hz")
             audio_tones = [item[1] for item in measured]
         pictures, b_pictures = picture_counts(document.get("frames"), requested_b_frames > 0)
         fixtures.append({"channel": channel + 1, "codec": codec, "width": 320, "height": 180,
