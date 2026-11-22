@@ -179,16 +179,58 @@
  		char path[512];
 --- a/frontend/widgets/OBSBasicPreview.hpp
 +++ b/frontend/widgets/OBSBasicPreview.hpp
-@@ -33,6 +33,9 @@
+@@ -4,6 +4,9 @@
+ 
+ #include <graphics/matrix4.h>
+ 
++#ifdef WEBOBS_PRODUCT_FRONTEND
++#include <atomic>
++#endif
+ #include <mutex>
+ 
+ #define ITEM_LEFT (1 << 0)
+@@ -33,11 +36,18 @@
  
  class OBSBasicPreview : public OBSQTDisplay {
  	Q_OBJECT
 +#ifdef WEBOBS_PRODUCT_FRONTEND
 +	Q_PROPERTY(bool webobsPreviewLocked READ Locked)
++	Q_PROPERTY(qulonglong webobsPreviewDrawFrames READ WebobsPreviewDrawFrames)
 +#endif
  
  	friend class SourceTree;
  	friend class SourceTreeItem;
+ 
+ private:
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	std::atomic<qulonglong> webobsPreviewDrawFrames{0};
++#endif
+ 	obs_sceneitem_crop startCrop;
+ 	vec2 startItemPos;
+ 	vec2 cropSize;
+@@ -121,6 +131,10 @@
+ 	bool changed;
+ 
+ public:
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	qulonglong WebobsPreviewDrawFrames() const { return webobsPreviewDrawFrames.load(std::memory_order_relaxed); }
++	void WebobsRecordPreviewDraw() { webobsPreviewDrawFrames.fetch_add(1, std::memory_order_relaxed); }
++#endif
+ 	OBSBasicPreview(QWidget *parent, Qt::WindowFlags flags = Qt::WindowFlags());
+ 	~OBSBasicPreview();
+ 
+--- a/frontend/widgets/OBSBasic_Preview.cpp
++++ b/frontend/widgets/OBSBasic_Preview.cpp
+@@ -197,6 +197,9 @@
+ 	gs_projection_pop();
+ 	gs_viewport_pop();
+ 
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	window->ui->preview->WebobsRecordPreviewDraw();
++#endif
+ 	GS_DEBUG_MARKER_END();
+ }
+ 
 --- a/libobs/obs-source.c
 +++ b/libobs/obs-source.c
 @@ -3500,6 +3500,9 @@ static void clean_cache(obs_source_t *source)

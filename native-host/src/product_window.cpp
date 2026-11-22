@@ -876,6 +876,11 @@ class ProductWindow final : public QWidget {
 			{"lastLock", last_lock_}, {"lockCode", last_lock_code_}, {"renewTransient", transient_renewals_},
 			{"videoAvailable", video_available}, {"hardwareDecodeVerified", false}};
 		state.insert("previewLocked", preview_ && preview_->property("webobsPreviewLocked").toBool());
+	if (render_probe_enabled_ && preview_) {
+		const QVariant draws = preview_->property("webobsPreviewDrawFrames");
+		if (draws.isValid())
+			state.insert("previewDrawFrames", qint64(draws.toULongLong()));
+	}
 		// Bounded per-input progress and scene item counts. A frozen preview can mean a
 		// decoder stopped feeding frames or that this Scene no longer renders the item,
 		// and the two need different fixes; only uuid prefixes, counters and counts

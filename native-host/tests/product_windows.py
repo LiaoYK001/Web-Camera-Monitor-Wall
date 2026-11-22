@@ -1018,6 +1018,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
 
             def __init__(self):
                 self.samples = []
+                self.preview_draws = {}
                 # Every distinct publishedAtMs this poll actually observed: the product
                 # publishes on its own heartbeat, and a reader must not mistake a publish
                 # gap for an input that stopped delivering frames.
@@ -1046,6 +1047,9 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                         published = snapshot.get("publishedAtMs")
                         if type(published) is int and (not self.publishes or published != self.publishes[-1]):
                             self.publishes.append(published)
+                        draws = snapshot.get("previewDrawFrames")
+                        if type(published) is int and type(draws) is int:
+                            self.preview_draws[published] = draws
                         probe = snapshot.get("renderProbe")
                         if isinstance(probe, dict) and probe.get("enabled") is True:
                             for channel in ("preview", "program"):
@@ -1135,6 +1139,10 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     # OBS's PLAYING state: a reopen/reconnect shows up here directly.
                     "inputNotPlayingSamples": unhealthy,
                     "inputs": inputs}
+                if self.preview_draws:
+                    draw_frames = list(self.preview_draws.values())
+                    report["previewDrawFrames"] = {"before": draw_frames[0], "after": draw_frames[-1],
+                        "stateSamples": len(draw_frames)}
                 # The render probe runs on the host wall clock. Align it to this window by
                 # the last publish we saw, so the scene-render timeline covers exactly the
                 # frames the capture process read.
@@ -1626,7 +1634,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     # position depends on this capture's order, and only that camera's
                     # feed can explain the tile.
                     if order.startswith("quick-"):
-                        channels = [int(value) for value in order[len("quick-"):].split(",") if value.isdigit()]
+                        channels = [int(value) - 1 for value in order[len("quick-"):].split(",") if value.isdigit()]
                     else:
                         channels = {"repeat-first": [0, 0, 0, 0, 0], "reverse": [4, 3, 2, 1, 0]}.get(
                             order, [0, 1, 2, 3, 4])
@@ -1657,7 +1665,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     attribution = []
                     for tile in stale_tiles:
                         camera = stale_camera[tile]
-                        slot = slots[camera] if camera < len(slots) else {}
+                        slot_index = tile if role == "main-preview" else camera
+                        slot = slots[slot_index] if 0 <= slot_index < len(slots) else {}
                         uuid = str(slot.get("uuid") or "")
                         feed_entry = feed.get(uuid) or {}
                         scene = scene_tiles[tile] if tile < len(scene_tiles) else None
