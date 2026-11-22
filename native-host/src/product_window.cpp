@@ -656,8 +656,7 @@ class ProductWindow final : public QWidget {
 	static void render_probe_tick(void *param, float)
 	{
 		auto *self = static_cast<ProductWindow *>(param);
-		if (!self->render_probe_attached_ || self->tearing_down_)
-			return;
+		// libobs synchronizes callback removal with the video thread.
 		// Reading a few bytes at most four times per second keeps the window request
 		// responsive without putting file I/O on the graphics thread every tick.
 		const qint64 now = QDateTime::currentMSecsSinceEpoch();
@@ -712,11 +711,11 @@ class ProductWindow final : public QWidget {
 		if (!scene)
 			return;
 		obs_video_info info{};
-		uint32_t width = 0, height = 0;
-		if (obs_get_video_info(&info)) {
-			width = info.base_width;
-			height = info.base_height;
+		if (!obs_get_video_info(&info)) {
+			obs_source_release(scene);
+			return;
 		}
+		uint32_t width = info.base_width, height = info.base_height;
 		if (width > 960u) {
 			height = uint32_t((uint64_t(height) * 960u) / uint64_t(width));
 			width = 960u;
@@ -739,19 +738,22 @@ class ProductWindow final : public QWidget {
 			obs_source_release(scene);
 			return;
 		}
-		if (gs_texrender_begin(slot.target, slot.width, slot.height)) {
-			vec4 zero;
-			vec4_zero(&zero);
-			gs_clear(GS_CLEAR_COLOR, &zero, 0.0f, 0);
-			gs_ortho(0.0f, float(slot.width), 0.0f, float(slot.height), -100.0f, 100.0f);
-			gs_blend_state_push();
-			gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
-			obs_source_inc_showing(scene);
-			obs_source_video_render(scene);
-			obs_source_dec_showing(scene);
-			gs_blend_state_pop();
-			gs_texrender_end(slot.target);
+		gs_texrender_reset(slot.target);
+		if (!gs_texrender_begin(slot.target, slot.width, slot.height)) {
+			obs_source_release(scene);
+			return;
 		}
+		vec4 zero;
+		vec4_zero(&zero);
+		gs_clear(GS_CLEAR_COLOR, &zero, 0.0f, 0);
+		gs_ortho(0.0f, float(info.base_width), 0.0f, float(info.base_height), -100.0f, 100.0f);
+		gs_blend_state_push();
+		gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
+		obs_source_inc_showing(scene);
+		obs_source_video_render(scene);
+		obs_source_dec_showing(scene);
+		gs_blend_state_pop();
+		gs_texrender_end(slot.target);
 		gs_stage_texture(slot.stage, gs_texrender_get_texture(slot.target));
 		slot.staged = true;
 		slot.staged_frames = qint64(obs_get_total_frames());
@@ -874,6 +876,11 @@ class ProductWindow final : public QWidget {
 			{"lastLock", last_lock_}, {"lockCode", last_lock_code_}, {"renewTransient", transient_renewals_},
 			{"videoAvailable", video_available}, {"hardwareDecodeVerified", false}};
 		state.insert("previewLocked", preview_ && preview_->property("webobsPreviewLocked").toBool());
+	if (render_probe_enabled_ && preview_) {
+		const QVariant draws = preview_->property("webobsPreviewDrawFrames");
+		if (draws.isValid())
+			state.insert("previewDrawFrames", qint64(draws.toULongLong()));
+	}
 		// Bounded per-input progress and scene item counts. A frozen preview can mean a
 		// decoder stopped feeding frames or that this Scene no longer renders the item,
 		// and the two need different fixes; only uuid prefixes, counters and counts

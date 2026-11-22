@@ -77,6 +77,8 @@ public static class ObsPixelCapture {
     [DllImport("user32.dll",SetLastError=true)] static extern bool GetClientRect(IntPtr hwnd,out Rect rect);
     [DllImport("user32.dll",SetLastError=true)] static extern bool ClientToScreen(IntPtr hwnd,ref Point point);
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hwnd,int command);
+    [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr hwnd);
     [DllImport("user32.dll",SetLastError=true)] static extern bool SetWindowPos(IntPtr hwnd,IntPtr after,int x,int y,int w,int h,uint flags);
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hwnd);
     [DllImport("user32.dll",SetLastError=true)] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
@@ -127,9 +129,11 @@ public static class ObsPixelCapture {
             Mark("expose","interactive-screen");
             int screenWidth=GetSystemMetrics(0),screenHeight=GetSystemMetrics(1);
             if (screenWidth<=0 || screenHeight<=0) throw Failure("expose","interactive-screen");
-            ShowWindow(root,9);
+            // Restore only minimized windows. Resizing an already maximized OBS
+            // display churns its DXGI buffers just before the pixel check.
+            if (IsIconic(root)) ShowWindow(root,9);
             if (role=="main-preview") {
-                ShowWindow(root,3); // Maximize the main UI, not its child widget.
+                if (!IsZoomed(root)) ShowWindow(root,3);
                 if (!SetWindowPos(root,new IntPtr(-1),0,0,0,0,0x0001|0x0002|0x0040)) throw Failure("expose","main-preview-expose",Marshal.GetLastWin32Error());
             } else if (role=="program-fullscreen" || role=="fixed-scene-fullscreen-1" || role=="fixed-scene-fullscreen-2") {
                 // Keep the OBS fullscreen geometry; only ensure it is on top and visible.

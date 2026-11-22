@@ -179,16 +179,58 @@
  		char path[512];
 --- a/frontend/widgets/OBSBasicPreview.hpp
 +++ b/frontend/widgets/OBSBasicPreview.hpp
-@@ -33,6 +33,9 @@
+@@ -4,6 +4,9 @@
+ 
+ #include <graphics/matrix4.h>
+ 
++#ifdef WEBOBS_PRODUCT_FRONTEND
++#include <atomic>
++#endif
+ #include <mutex>
+ 
+ #define ITEM_LEFT (1 << 0)
+@@ -33,11 +36,18 @@
  
  class OBSBasicPreview : public OBSQTDisplay {
  	Q_OBJECT
 +#ifdef WEBOBS_PRODUCT_FRONTEND
 +	Q_PROPERTY(bool webobsPreviewLocked READ Locked)
++	Q_PROPERTY(qulonglong webobsPreviewDrawFrames READ WebobsPreviewDrawFrames)
 +#endif
  
  	friend class SourceTree;
  	friend class SourceTreeItem;
+ 
+ private:
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	std::atomic<qulonglong> webobsPreviewDrawFrames{0};
++#endif
+ 	obs_sceneitem_crop startCrop;
+ 	vec2 startItemPos;
+ 	vec2 cropSize;
+@@ -121,6 +131,10 @@
+ 	bool changed;
+ 
+ public:
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	qulonglong WebobsPreviewDrawFrames() const { return webobsPreviewDrawFrames.load(std::memory_order_relaxed); }
++	void WebobsRecordPreviewDraw() { webobsPreviewDrawFrames.fetch_add(1, std::memory_order_relaxed); }
++#endif
+ 	OBSBasicPreview(QWidget *parent, Qt::WindowFlags flags = Qt::WindowFlags());
+ 	~OBSBasicPreview();
+ 
+--- a/frontend/widgets/OBSBasic_Preview.cpp
++++ b/frontend/widgets/OBSBasic_Preview.cpp
+@@ -197,6 +197,9 @@
+ 	gs_projection_pop();
+ 	gs_viewport_pop();
+ 
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	window->ui->preview->WebobsRecordPreviewDraw();
++#endif
+ 	GS_DEBUG_MARKER_END();
+ }
+ 
 --- a/libobs/obs-source.c
 +++ b/libobs/obs-source.c
 @@ -3500,6 +3500,9 @@ static void clean_cache(obs_source_t *source)
@@ -273,11 +315,11 @@
  
 +/* Content digest of one delivered frame: sampled bytes only, never a copy of the
 + * frame. A frame whose visible timecode or markers differ changes this digest. */
-+static long webobs_frame_digest(const struct obs_source_frame *f)
++static uint32_t webobs_frame_digest(const struct obs_source_frame *f)
 +{
 +	if (!f || !f->data[0] || !f->linesize[0] || !f->width || !f->height)
 +		return 0;
-+	unsigned long hash = 2166136261UL;
++	uint32_t hash = 2166136261U;
 +	const uint32_t row_bytes = f->linesize[0] < f->width ? f->linesize[0] : f->width;
 +	for (uint32_t y = 0; y < f->height; y += 17) {
 +		const uint8_t *row = f->data[0] + (size_t)y * (size_t)f->linesize[0];
@@ -293,7 +335,7 @@
 +		for (uint32_t x = 0; x + 1 < chroma_bytes; x += 41)
 +			hash = (hash ^ row[x]) * 16777619UL;
 +	}
-+	return (long)hash;
++	return hash;
 +}
 +
  static void get_frame(void *opaque, struct obs_source_frame *f)
@@ -308,7 +350,7 @@
 +			os_atomic_inc_long(&s->webobs_video_serial);
 +		s->webobs_last_frame_ts = (long long)f->timestamp;
 +		s->webobs_last_frame_ms = (long long)(os_gettime_ns() / 1000000ULL);
-+		s->webobs_last_frame_hash = webobs_frame_digest(f);
++		os_atomic_store_long(&s->webobs_last_frame_hash, (long)webobs_frame_digest(f));
 +	}
  }
  
@@ -324,7 +366,7 @@
 +	calldata_set_int(cd, "serial", os_atomic_load_long(&s->webobs_video_serial));
 +	calldata_set_int(cd, "frameTs", (long long)s->webobs_last_frame_ts);
 +	calldata_set_int(cd, "frameMs", (long long)s->webobs_last_frame_ms);
-+	calldata_set_int(cd, "frameHash", (long long)s->webobs_last_frame_hash);
++	calldata_set_int(cd, "frameHash", (uint32_t)os_atomic_load_long(&s->webobs_last_frame_hash));
 +}
 +
  static void *ffmpeg_source_create(obs_data_t *settings, obs_source_t *source)
@@ -339,3 +381,50 @@
  	proc_handler_add(ph, "void restart()", restart_proc, s);
  	proc_handler_add(ph, "void preload_first_frame()", preload_first_frame_proc, s);
  	proc_handler_add(ph, "void get_duration(out int duration)", get_duration, s);
+--- a/frontend/widgets/OBSQTDisplay.cpp
++++ b/frontend/widgets/OBSQTDisplay.cpp
+@@ -150,7 +150,17 @@
+ 	if (!QTToGSWindow(windowHandle(), info.window))
+ 		return;
+ 
++#if defined(_WIN32) && defined(WEBOBS_PRODUCT_FRONTEND)
++	// Scope the swap-chain policy to the product's monitoring preview.
++	const HWND hwnd = static_cast<HWND>(info.window.hwnd);
++	const bool has_preview_marker = property("webobsPreviewLocked").isValid() &&
++				   SetPropW(hwnd, L"WebOBS.MonitorPreview", reinterpret_cast<HANDLE>(1));
++#endif
+ 	display = obs_display_create(&info, backgroundColor);
++#if defined(_WIN32) && defined(WEBOBS_PRODUCT_FRONTEND)
++	if (has_preview_marker)
++		RemovePropW(hwnd, L"WebOBS.MonitorPreview");
++#endif
+ 
+ 	emit DisplayCreated(this);
+ }
+--- a/libobs-d3d11/d3d11-subsystem.cpp
++++ b/libobs-d3d11/d3d11-subsystem.cpp
+@@ -233,7 +233,10 @@
+ 		initData.num_backbuffers = std::max(data->num_backbuffers, (uint32_t)2);
+ 
+ 		effect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+-		flags |= DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
++		// Retain flip presentation for the monitoring preview without requiring
++		// a frame-latency signal before its draw callback can run.
++		if (!GetPropW(hwnd, L"WebOBS.MonitorPreview"))
++			flags |= DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
+ 	}
+ 
+ 	space = make_swap_desc(device, swapDesc, &initData, effect, flags);
+@@ -2325,7 +2328,11 @@
+ 		device->curFramebufferInvalidate = true;
+ 
+ 		const UINT interval = curSwapChain->hWaitable ? 1 : 0;
+-		const HRESULT hr = curSwapChain->swap->Present(interval, 0);
++		const UINT flags = !curSwapChain->hWaitable &&
++					   curSwapChain->swapDesc.SwapEffect == DXGI_SWAP_EFFECT_FLIP_DISCARD
++				   ? DXGI_PRESENT_DO_NOT_WAIT
++				   : 0;
++		const HRESULT hr = curSwapChain->swap->Present(interval, flags);
+ 		if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
+ 			device->RebuildDevice();
+ 		}
